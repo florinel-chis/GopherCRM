@@ -67,6 +67,24 @@ func (r *refreshTokenRepository) HasLaterInFamily(token *models.RefreshToken) (b
 	return count > 0, nil
 }
 
+// LiveUserIDsByProviderSession returns the distinct owners of the live
+// tokens that signed in under the provider session hash refers to, in
+// ascending order. An empty hash is refused without a statement: it would
+// match every password session.
+func (r *refreshTokenRepository) LiveUserIDsByProviderSession(hash string) ([]uint, error) {
+	if hash == "" {
+		return nil, errors.New("refresh token provider session hash is empty")
+	}
+	var ids []uint
+	err := r.db.Model(&models.RefreshToken{}).
+		Where("provider_session_hash = ? AND is_revoked = ? AND expires_at > ?", hash, false, time.Now()).
+		Distinct().Order("user_id").Pluck("user_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // RevokeFamily revokes every live token of the user's family. An empty
 // family id is refused without a statement: it would match every legacy row
 // that carries no family.

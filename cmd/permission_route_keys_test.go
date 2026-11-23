@@ -118,7 +118,7 @@ func TestEveryRouteRequiresItsOwnKey(t *testing.T) {
 	assert.Len(t, permissions.RouteKeys, 165)
 	assert.Len(t, routeKeysEscalationRefused, 5)
 	assert.Len(t, routeKeysAuthOnly, 10)
-	assert.Len(t, routeMatrixPublic, 32)
+	assert.Len(t, routeMatrixPublic, 33)
 	assert.Len(t, h.router.Routes(), len(permissions.RouteKeys)+len(routeKeysAuthOnly)+len(routeMatrixPublic))
 	if t.Failed() {
 		t.Fatal("the route lists and the router disagree; the key checks below were not run")

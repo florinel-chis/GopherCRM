@@ -1,12 +1,14 @@
 // oidc-issuer is the disposable OpenID Connect issuer of the browser tests
 // (`make e2e`, gocrm-ui/e2e/tests/sso.spec.ts). It serves discovery, a JWKS,
-// an authorization endpoint with a small identity form and a token endpoint,
-// over the run's per-run test certificate on a loopback port, and it enforces
-// what a real issuer enforces on the client: the registered client id and
-// secret, the exact registered redirect_uri, PKCE with S256 and a nonce that
-// is echoed in the ID token. It is a test tool: one client, in-memory grants,
-// a signing key generated at start. Codes, secrets and tokens are never
-// logged.
+// an authorization endpoint with a small identity form, a token endpoint and
+// an end-session endpoint, over the run's per-run test certificate on a
+// loopback port, and it enforces what a real issuer enforces on the client:
+// the registered client id and secret, the exact registered redirect_uri,
+// PKCE with S256 and a nonce that is echoed in the ID token, and at sign-out
+// an id_token_hint it signed for the client and the exact registered
+// post_logout_redirect_uri. Every ID token carries a random sid. It is a test
+// tool: one client, in-memory grants, a signing key generated at start.
+// Codes, secrets, tokens and sids are never logged.
 package main
 
 import (
@@ -47,8 +49,10 @@ type grant struct {
 	nonce       string
 	clientID    string
 	claims      identity
-	expires     time.Time
-	spent       bool
+	// sid is the random provider session id of this sign-in.
+	sid     string
+	expires time.Time
+	spent   bool
 }
 
 // identity is what the sign-in page lets the test choose.
@@ -58,20 +62,24 @@ type identity struct {
 }
 
 type issuer struct {
-	url          string
-	clientID     string
-	clientSecret string
-	redirectURI  string
-	key          *rsa.PrivateKey
-	now          func() time.Time
+	url                   string
+	clientID              string
+	clientSecret          string
+	redirectURI           string
+	postLogoutRedirectURI string
+	key                   *rsa.PrivateKey
+	now                   func() time.Time
 
 	mu     sync.Mutex
 	grants map[string]*grant
+	// lastLogout is the outcome of the latest end-session request:
+	// "accepted" or "refused: <reason>", "" before the first.
+	lastLogout string
 }
 
-func newIssuer(issuerURL, clientID, clientSecret, redirectURI string) (*issuer, error) {
-	if clientID == "" || clientSecret == "" || redirectURI == "" {
-		return nil, errors.New("client id, client secret and redirect URI are required")
+func newIssuer(issuerURL, clientID, clientSecret, redirectURI, postLogoutRedirectURI string) (*issuer, error) {
+	if clientID == "" || clientSecret == "" || redirectURI == "" || postLogoutRedirectURI == "" {
+		return nil, errors.New("client id, client secret, redirect URI and post-logout redirect URI are required")
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -79,7 +87,7 @@ func newIssuer(issuerURL, clientID, clientSecret, redirectURI string) (*issuer, 
 	}
 	return &issuer{
 		url: issuerURL, clientID: clientID, clientSecret: clientSecret, redirectURI: redirectURI,
-		key: key, now: time.Now, grants: map[string]*grant{},
+		postLogoutRedirectURI: postLogoutRedirectURI, key: key, now: time.Now, grants: map[string]*grant{},
 	}, nil
 }
 
@@ -90,6 +98,8 @@ func (i *issuer) handler() http.Handler {
 	mux.HandleFunc("GET /authorize", i.authorizePage)
 	mux.HandleFunc("POST /authorize", i.authorizeSubmit)
 	mux.HandleFunc("POST /token", i.token)
+	mux.HandleFunc("GET /logout", i.endSession)
+	mux.HandleFunc("GET /test/last-logout", i.lastLogoutOutcome)
 	return mux
 }
 
@@ -105,6 +115,7 @@ func (i *issuer) discovery(w http.ResponseWriter, _ *http.Request) {
 		"issuer":                                i.url,
 		"authorization_endpoint":                i.url + "/authorize",
 		"token_endpoint":                        i.url + "/token",
+		"end_session_endpoint":                  i.url + "/logout",
 		"jwks_uri":                              i.url + "/jwks",
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
@@ -252,10 +263,15 @@ func (i *issuer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	sid, err := randomCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	i.mu.Lock()
 	i.grants[code] = &grant{
 		challenge: params.CodeChallenge, redirectURI: params.RedirectURI, nonce: params.Nonce,
-		clientID: params.ClientID, claims: who, expires: i.now().Add(codeLifetime),
+		clientID: params.ClientID, claims: who, sid: sid, expires: i.now().Add(codeLifetime),
 	}
 	i.mu.Unlock()
 	target, err := url.Parse(params.RedirectURI)
@@ -349,6 +365,7 @@ func (i *issuer) sign(g *grant) (string, error) {
 		"iat":   now.Unix(),
 		"exp":   now.Add(tokenLifetime).Unix(),
 		"nonce": g.nonce,
+		"sid":   g.sid,
 	}
 	for name, value := range map[string]string{
 		"email": g.claims.email, "given_name": g.claims.givenName, "family_name": g.claims.familyName,
@@ -379,12 +396,92 @@ func (i *issuer) sign(g *grant) (string, error) {
 	return signed.CompactSerialize()
 }
 
+// hintValid reports whether raw is an ID token this issuer signed for the
+// registered client: an RS256 signature by the issuer's key, iss = this
+// issuer and aud naming the client. Its expiry is not checked, as a hint is
+// usually presented after the ID token expired.
+func (i *issuer) hintValid(raw string) bool {
+	signed, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil {
+		return false
+	}
+	payload, err := signed.Verify(&i.key.PublicKey)
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Iss string          `json:"iss"`
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Iss != i.url {
+		return false
+	}
+	var single string
+	if json.Unmarshal(claims.Aud, &single) == nil {
+		return single == i.clientID
+	}
+	var many []string
+	if json.Unmarshal(claims.Aud, &many) != nil {
+		return false
+	}
+	for _, aud := range many {
+		if aud == i.clientID {
+			return true
+		}
+	}
+	return false
+}
+
+// endSession is the RP-initiated sign-out: a valid id_token_hint, a client_id
+// (when sent) equal to the registered one and the exact registered
+// post_logout_redirect_uri redirect there with 302; anything else is 400 and
+// never redirects. The outcome is logged without any token or URL value.
+func (i *issuer) endSession(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	reason := ""
+	switch {
+	case !i.hintValid(query.Get("id_token_hint")):
+		reason = "id_token_hint is not an ID token of this issuer for the registered client"
+	case query.Has("client_id") && query.Get("client_id") != i.clientID:
+		reason = "unknown client_id"
+	case query.Get("post_logout_redirect_uri") != i.postLogoutRedirectURI:
+		reason = "post_logout_redirect_uri is not the registered one"
+	}
+	i.mu.Lock()
+	if reason == "" {
+		i.lastLogout = "accepted"
+	} else {
+		i.lastLogout = "refused: " + reason
+	}
+	i.mu.Unlock()
+	if reason != "" {
+		log.Printf("oidc-issuer: end-session request refused: %s", reason)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, "End-session request refused: %s\n", reason)
+		return
+	}
+	log.Printf("oidc-issuer: end-session request accepted")
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, i.postLogoutRedirectURI, http.StatusFound)
+}
+
+// lastLogoutOutcome is the test hook of the browser tests: the outcome of the
+// latest end-session request.
+func (i *issuer) lastLogoutOutcome(w http.ResponseWriter, _ *http.Request) {
+	i.mu.Lock()
+	outcome := i.lastLogout
+	i.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
+}
+
 func run() error {
 	listen := flag.String("listen", "", "loopback address to serve on, 127.0.0.1:<port>")
 	certFile := flag.String("cert", "", "PEM certificate of the run's test CA")
 	keyFile := flag.String("key", "", "PEM private key of that certificate")
 	clientID := flag.String("client-id", "", "the one registered client id")
 	redirectURI := flag.String("redirect-uri", "", "the one registered redirect URI, matched exactly")
+	postLogoutRedirectURI := flag.String("post-logout-redirect-uri", "", "the one registered post-logout redirect URI, matched exactly")
 	flag.Parse()
 
 	host, port, err := net.SplitHostPort(*listen)
@@ -399,7 +496,7 @@ func run() error {
 	if secret == "" {
 		return errors.New("E2E_OIDC_CLIENT_SECRET must be set")
 	}
-	iss, err := newIssuer("https://"+*listen, *clientID, secret, *redirectURI)
+	iss, err := newIssuer("https://"+*listen, *clientID, secret, *redirectURI, *postLogoutRedirectURI)
 	if err != nil {
 		return err
 	}

@@ -40,6 +40,17 @@ const (
 	CodeTokenExchangeFailed = "token_exchange_failed"
 )
 
+// Codes of the sign-out log lines (logout.go). They are never answered to a
+// client: EndSessionURL answers "" and FrontChannelLogout a count.
+const (
+	CodeEndSessionTimeout     = "end_session_timeout"
+	CodeHintInvalid           = "hint_invalid"
+	CodeHintUnlinked          = "hint_unlinked"
+	CodeHintOtherAccount      = "hint_other_account"
+	CodeEndSessionUnsupported = "end_session_unsupported"
+	CodeIssuerMismatch        = "issuer_mismatch"
+)
+
 // The method, outcomes and the two reasons of an audit event that are not a
 // refusal or unavailable code.
 const (

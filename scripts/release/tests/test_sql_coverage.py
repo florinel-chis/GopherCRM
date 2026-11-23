@@ -62,6 +62,8 @@ class MigrationCoverageTests(unittest.TestCase):
                     'TestAuthAuditLogAPIKeyIDMigration',
                     'TestWebhookEventTypesWidthMigrationFiles',
                     'TestWebhookEventTypesWidthMigration',
+                    'TestRefreshTokenProviderSessionMigrationFiles',
+                    'TestRefreshTokenProviderSessionMigration',
                     'TestSchemaParityAllowList',
                     'TestSchemaParityMigration',
                 ],
@@ -101,7 +103,7 @@ class MigrationCoverageTests(unittest.TestCase):
                          migrations_only=True)
 
     def test_accepts_complete_sql_and_sqlite_evidence(self):
-        self.assertEqual(len(self.check()), 68)
+        self.assertEqual(len(self.check()), 70)
 
     def test_unavailable_database_cannot_pass_as_skips(self):
         for event in self.events:

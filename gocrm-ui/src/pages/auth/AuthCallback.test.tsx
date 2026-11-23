@@ -107,6 +107,20 @@ describe('AuthCallback', () => {
     expect(container.innerHTML).not.toContain(ACCESS);
   });
 
+  it('keeps the ID token of the sign-in with the session record for the logout', async () => {
+    const ID_TOKEN = 'sso-id-token-value';
+    mockOIDCCallback.mockResolvedValue({ token: ACCESS, refresh_token: REFRESH, user: { id: 7 }, id_token: ID_TOKEN });
+    mockGetCurrentUser.mockResolvedValue({ id: 7, email: 'sso@example.com', role: 'sales', permissions: [] });
+    const { container } = renderCallback('?code=c&state=s');
+
+    expect(await screen.findByText('Home Page')).toBeInTheDocument();
+    const record = JSON.parse(sessionStorage.getItem('gophercrm_session') ?? '{}');
+    expect(record.idToken).toBe(ID_TOKEN);
+    expect(record.access).toBe(ACCESS);
+    expect(dump(localStorage)).not.toContain(ID_TOKEN);
+    expect(container.innerHTML).not.toContain(ID_TOKEN);
+  });
+
   it('removes the query from the address with a replace navigation while the request is pending', async () => {
     mockOIDCCallback.mockReturnValue(new Promise(() => {}));
     const { memoryRouter, container } = renderCallback('?code=secret-code&state=secret-state');

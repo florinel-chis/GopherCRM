@@ -61,3 +61,18 @@ func TestOIDCProfileNames(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionID(t *testing.T) {
+	for raw, want := range map[string]string{
+		`"s-1"`:                              "s-1",
+		``:                                   "",
+		`""`:                                 "",
+		`7`:                                  "",
+		`null`:                               "",
+		`["a"]`:                              "",
+		`"` + strings.Repeat("s", 256) + `"`: strings.Repeat("s", 256),
+		`"` + strings.Repeat("s", 257) + `"`: "",
+	} {
+		assert.Equal(t, want, SessionID(json.RawMessage(raw)), raw)
+	}
+}

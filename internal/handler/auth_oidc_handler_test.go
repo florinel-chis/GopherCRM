@@ -41,6 +41,33 @@ type fakeOIDCService struct {
 	callbackRequestID string
 	// callbackClient is what utils.ClientInfoFromContext returned (#454).
 	callbackClient utils.ClientInfo
+	// endSessionURL and endSessionErr answer EndSessionURL; endSessionCalls
+	// records what reached it.
+	endSessionURL   string
+	endSessionErr   error
+	endSessionCalls []fakeEndSessionCall
+	// frontChannelErr answers FrontChannelLogout; frontChannelCalls records
+	// its (iss, sid) pairs.
+	frontChannelErr   error
+	frontChannelCalls [][2]string
+}
+
+type fakeEndSessionCall struct {
+	userID uint
+	hint   string
+}
+
+func (f *fakeOIDCService) EndSessionURL(_ context.Context, userID uint, idTokenHint string) (string, error) {
+	f.endSessionCalls = append(f.endSessionCalls, fakeEndSessionCall{userID: userID, hint: idTokenHint})
+	return f.endSessionURL, f.endSessionErr
+}
+
+func (f *fakeOIDCService) FrontChannelLogout(_ context.Context, iss, sid string) (int, error) {
+	f.frontChannelCalls = append(f.frontChannelCalls, [2]string{iss, sid})
+	if f.frontChannelErr != nil {
+		return 0, f.frontChannelErr
+	}
+	return 1, nil
 }
 
 func (f *fakeOIDCService) Start(ctx context.Context) (*service.OIDCAuthorization, error) {
@@ -180,7 +207,7 @@ func TestOIDCHandler(t *testing.T) {
 
 	t.Run("callback_ok", func(t *testing.T) {
 		fake := &fakeOIDCService{tokens: &service.AuthTokens{AccessToken: "jwt", RefreshToken: "refresh",
-			User: &models.User{BaseModel: models.BaseModel{ID: 7}, Email: "sso@example.test", Role: models.RoleSales}}}
+			User: &models.User{BaseModel: models.BaseModel{ID: 7}, Email: "sso@example.test", Role: models.RoleSales}, IDToken: "raw-id-token"}}
 		recorder, envelope := doWith(t, fake, "/auth/oidc/callback", validBody,
 			&http.Cookie{Name: OIDCStateCookieName, Value: "xyz"})
 		assert.Equal(t, http.StatusOK, recorder.Code)
@@ -199,6 +226,7 @@ func TestOIDCHandler(t *testing.T) {
 		assert.Equal(t, "jwt", data["token"])
 		assert.Equal(t, "refresh", data["refresh_token"])
 		assert.Equal(t, float64(7), data["user"].(map[string]interface{})["id"])
+		assert.Equal(t, "raw-id-token", data["id_token"], "the ID token of the sign-in")
 	})
 
 	invalid := []struct {

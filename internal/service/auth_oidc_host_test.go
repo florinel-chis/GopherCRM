@@ -267,6 +267,26 @@ func TestIDKitSessionIssuer(t *testing.T) {
 		return auth, issuer
 	}
 
+	t.Run("records_the_provider_session", func(t *testing.T) {
+		db := openIDKitHostDB(t)
+		user := idkitCreateUser(t, db, "sid@example.com")
+		auth, issuer := newIssuer(t, db)
+		accountID := strconv.FormatUint(uint64(user.ID), 10)
+		const iss = "https://issuer.example.test"
+		for sid, want := range map[string]string{
+			"sid-host-0634": hashOpaqueToken(iss+"\n"+"sid-host-0634", auth.sessionTokenSecret()),
+			"":              "",
+		} {
+			session, err := issuer.Issue(ctx, idkit.SessionRequest{AccountID: accountID, Method: idkit.SignInMethodOIDC,
+				SignedInAt: time.Now(), Issuer: iss, ProviderSessionID: sid})
+			require.NoError(t, err)
+			assert.Empty(t, session.IDToken, "the issuer never sets the ID token")
+			var row models.RefreshToken
+			require.NoError(t, db.Where("token_hash = ?", hashOpaqueToken(session.RefreshToken, auth.sessionTokenSecret())).First(&row).Error)
+			assert.Equal(t, want, row.ProviderSessionHash, "sid %q", sid)
+		}
+	})
+
 	t.Run("issues_oidc_session", func(t *testing.T) {
 		db := openIDKitHostDB(t)
 		user := idkitCreateUser(t, db, "a@example.com")

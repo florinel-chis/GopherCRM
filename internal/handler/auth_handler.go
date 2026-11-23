@@ -22,6 +22,15 @@ type AuthHandler struct {
 	// resetQueue, when set, takes every valid password reset request; the
 	// queue issues the reset and writes its audit row after the answer.
 	resetQueue PasswordResetSubmitter
+	// oidc, when set, gives a logout that sends an id_token_hint the
+	// identity provider's end-session URL.
+	oidc LogoutEndSession
+}
+
+// LogoutEndSession finds the identity provider's end-session URL of a
+// single sign-on logout (service.OIDCService).
+type LogoutEndSession interface {
+	EndSessionURL(ctx context.Context, userID uint, idTokenHint string) (string, error)
 }
 
 // PasswordResetSubmitter takes a password reset request for later issuing
@@ -53,6 +62,14 @@ func (h *AuthHandler) WithAudit(audit service.AuthAuditService) *AuthHandler {
 // always sets the queue; the synchronous path serves handler-only setups.
 func (h *AuthHandler) WithPasswordResetQueue(q PasswordResetSubmitter) *AuthHandler {
 	h.resetQueue = q
+	return h
+}
+
+// WithEndSession makes Logout answer the identity provider's end-session URL
+// when the request carries an id_token_hint (#634). Without it Logout never
+// answers one.
+func (h *AuthHandler) WithEndSession(oidc LogoutEndSession) *AuthHandler {
+	h.oidc = oidc
 	return h
 }
 
@@ -135,6 +152,31 @@ type LogoutRequest struct {
 	// caller is revoked. A token that is unknown, already revoked or owned by
 	// another user is ignored.
 	RefreshToken string `json:"refresh_token" example:"Jx3k9QeV0m2b5sT8wY1zA4cD7fG0hJ3kL6nP9qR2tU5"`
+	// The raw ID token a single sign-on sign-in returned (id_token of POST
+	// /auth/oidc/callback), at most 16384 bytes. When it verifies for the
+	// configured issuer and client (an expired one included) and its
+	// identity is linked to the caller, the answer carries end_session_url.
+	// It never changes what is revoked.
+	IDTokenHint string `json:"id_token_hint" maxLength:"16384" example:"eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL2lkcC5leGFtcGxlLmNvbSIsInN1YiI6IjI0NDAwMzIwIn0.c2lnbmF0dXJl"`
+}
+
+// logoutIDTokenHintMaxBytes bounds LogoutRequest.IDTokenHint.
+const logoutIDTokenHintMaxBytes = 16384
+
+// LogoutResponse is the answer of POST /auth/logout.
+//
+// @Description Logged out; for a single sign-on session, where to send the browser next.
+type LogoutResponse struct {
+	// Human-readable confirmation; informational, not a stable value.
+	Message string `json:"message" example:"Logged out successfully"`
+	// The identity provider's end_session_endpoint (from discovery, its own
+	// query kept) with id_token_hint, post_logout_redirect_uri
+	// APP_BASE_URL/login and client_id. Present only when the request sent an
+	// id_token_hint that verifies for the configured issuer and client and
+	// whose (iss, sub) is linked to the caller, and the provider advertises
+	// an https end_session_endpoint; navigate the browser there so the
+	// provider's session ends too.
+	EndSessionURL string `json:"end_session_url,omitempty" format:"uri" example:"https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/logout?client_id=crm&id_token_hint=eyJhbGciOiJSUzI1NiJ9.e30.c2ln&post_logout_redirect_uri=https%3A%2F%2Fcrm.example.com%2Flogin"`
 }
 
 // ChangePasswordRequest carries the current browser session in the optional
@@ -367,15 +409,16 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // @Summary Log out (revoke refresh tokens)
 // @Description Revokes refresh tokens of the caller (any authenticated role, bearer or API-key). With no body, an empty body or no refresh_token, every refresh token of the caller is revoked; with a refresh_token only that token is revoked, and only when it belongs to the caller. Idempotent: an unknown, already revoked or foreign token still answers 200 and discloses nothing.
 // @Description Logout also ends every access token issued to the caller before it, with or without a refresh_token and for bearer and API-key callers alike: the account token_version is incremented in the same transaction as the revocation, and an older JWT is then refused with 401 Invalid credentials. A failure of either rolls both back and is a 500, as is a server whose session store is not wired. API keys are not affected.
+// @Description Single sign-on: with an id_token_hint (the id_token POST /auth/oidc/callback returned, at most 16384 bytes) and only after the revocation succeeded, the answer also carries end_session_url, the identity provider's end_session_endpoint with id_token_hint, post_logout_redirect_uri APP_BASE_URL/login and client_id, so the browser can end the provider's session too. It is present only while single sign-on is enabled and configured, the hint verifies for the configured issuer and client (signature, iss and aud; an expired hint is accepted), its exact (iss, sub) pair is linked to the caller, and discovery advertises an https end_session_endpoint without a fragment; otherwise the answer is the same as without a hint. The lookup is bounded to 5 seconds and its failure never fails the logout. The hint is not stored or logged, and it never changes what is revoked.
 // @Description Rate limit: the authenticated tier, 120 requests per minute with a burst of 30 per client IP, shared by every authenticated route and checked before authentication, so a request with a missing or refused credential is charged too and a 429 can answer before a 401.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param request body LogoutRequest false "Optional: the one refresh token to revoke"
-// @Success 200 {object} utils.APIResponse{data=MessageResponse} "Logged out (message: Logged out successfully)"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: a non-empty body that is not valid JSON (Invalid request format)"
+// @Param request body LogoutRequest false "Optional: the one refresh token to revoke, and the ID token of a single sign-on session"
+// @Success 200 {object} utils.APIResponse{data=LogoutResponse} "Logged out (message: Logged out successfully); end_session_url only for a usable id_token_hint"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: a non-empty body that is not valid JSON (Invalid request format). VALIDATION_ERROR: id_token_hint longer than 16384 bytes (details maps id_token_hint to a message); nothing is revoked"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded; details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the refresh tokens could not be revoked"
@@ -398,6 +441,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		}
 	}
 
+	if len(req.IDTokenHint) > logoutIDTokenHintMaxBytes {
+		utils.RespondValidationError(c, map[string]string{"id_token_hint": "must be at most 16384 bytes"})
+		return
+	}
+
 	err := h.authService.Logout(userID, req.RefreshToken)
 	if h.audit != nil {
 		h.audit.RecordLogout(auditContext(c), userID, err)
@@ -408,8 +456,18 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	response := MessageResponse{Message: "Logged out successfully"}
-	utils.LogHandlerResponse(logger, http.StatusOK, response)
+	response := LogoutResponse{Message: "Logged out successfully"}
+	// Asked only after the sessions ended; its failure never fails the
+	// logout, and the URL and the hint are never logged.
+	if req.IDTokenHint != "" && h.oidc != nil {
+		endSessionURL, err := h.oidc.EndSessionURL(utils.WithRequestID(c.Request.Context(), c.GetString("request_id")), userID, req.IDTokenHint)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Warn("Logout without the identity provider's end-session URL")
+		} else {
+			response.EndSessionURL = endSessionURL
+		}
+	}
+	utils.LogHandlerResponse(logger, http.StatusOK, "logged out")
 	utils.RespondSuccess(c, http.StatusOK, response)
 }
 

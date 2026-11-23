@@ -308,8 +308,11 @@ func (f *fixture) signIn(t *testing.T, claims oidctest.Claims) (idkit.Session, e
 	return f.svc.Callback(context.Background(), code, state, state)
 }
 
+// testSID is the provider session id every salesClaims sign-in carries.
+const testSID = "provider-session-0634"
+
 func salesClaims(subject, email string) oidctest.Claims {
-	return oidctest.Claims{Subject: subject, Email: email, Groups: []string{testGroupSales}}
+	return oidctest.Claims{Subject: subject, Email: email, Groups: []string{testGroupSales}, SID: testSID}
 }
 
 // TestSignInAccountLinkRule is the account link rule against in-memory
@@ -717,7 +720,7 @@ func TestCallbackLogPrivacy(t *testing.T) {
 					assert.Equal(t, want, idkitoidc.RefusalCode(err)+idkitoidc.UnavailableCode(err), "the scenario reaches its code")
 				}
 			}
-			s := secrets{values: []string{code, state, email, subject, group, f.issuer.URL(), testRedirectURL}}
+			s := secrets{values: []string{code, state, email, subject, group, f.issuer.URL(), testRedirectURL, testSID}}
 			require.NotEmpty(t, f.attempts.created)
 			for _, attempt := range f.attempts.created {
 				s.values = append(s.values, attempt.Nonce, attempt.Verifier, attempt.StateHash)

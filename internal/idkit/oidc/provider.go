@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,40 @@ func (d *Discovery) Verifier(clientID string) *gooidc.IDTokenVerifier {
 		return d.Provider.Verifier(&gooidc.Config{ClientID: clientID})
 	}
 	return gooidc.NewVerifier(d.Key.Issuer, d.appKeySet, &gooidc.Config{ClientID: clientID, SupportedSigningAlgs: d.appAlgs})
+}
+
+// VerifyHint checks an ID token presented back to the client as a hint (an
+// id_token_hint of a sign-out): its signature against the keys Verifier
+// uses, its iss and its aud (clientID). Its expiry is not checked, because a
+// hint is usually presented after the ID token expired.
+func (d *Discovery) VerifyHint(ctx context.Context, clientID, rawIDToken string) (*gooidc.IDToken, error) {
+	config := &gooidc.Config{ClientID: clientID, SkipExpiryCheck: true}
+	if d.appKeySet == nil {
+		return d.Provider.Verifier(config).Verify(ctx, rawIDToken)
+	}
+	config.SupportedSigningAlgs = d.appAlgs
+	return gooidc.NewVerifier(d.Key.Issuer, d.appKeySet, config).Verify(ctx, rawIDToken)
+}
+
+// EndSessionEndpoint is the end_session_endpoint of the discovery document
+// (OpenID Connect RP-Initiated Logout), or "" when the document has none or
+// it is not an absolute https URL without a fragment.
+func (d *Discovery) EndSessionEndpoint() string {
+	var document struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := d.Provider.Claims(&document); err != nil {
+		return ""
+	}
+	raw := document.EndSessionEndpoint
+	if raw == "" || strings.Contains(raw, "#") {
+		return ""
+	}
+	endpoint, err := url.Parse(raw)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.Opaque != "" {
+		return ""
+	}
+	return raw
 }
 
 // ProviderCache holds at most one discovered issuer. mu is held while a miss

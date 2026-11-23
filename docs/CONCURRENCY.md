@@ -565,7 +565,7 @@ Logout (`internal/service/auth_logout.go:30`) and password change
 (`internal/service/auth_password_change.go:47`) follow the same users → refresh_tokens order in one
 `WithTransaction` each, and decide on the locked owner row (the password change re-checks the
 verified hash and the active flag under the lock). The password change continues with the
-account's `api_keys` rows (`revokeAllCredentials`, `internal/service/auth_password_change.go:181`, #526):
+account's `api_keys` rows (`revokeAllCredentials`, `internal/service/auth_password_change.go:184`, #526):
 users → refresh_tokens → api_keys, and the successor `refresh_tokens` row is inserted after that.
 Logout never touches `api_keys`.
 

@@ -95,10 +95,10 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   deadline limits (`entra.GroupResolver`, `entra.EffectiveMaxPages`); it trusts one tenant, the
   configured issuer's, and likewise defines no refusal codes and logs nothing. The interfaces the
   host provides to the identity layer are declared in `internal/idkit/host.go`: `IdentityStore`,
-  `AccountStore`, `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `AuditSink`,
-  `ConfigSource`, `TxRunner`, `Clock` and `Logger`. `IdentityStore`, `AccountStore` and
-  `SessionIssuer` join a transaction carried by ctx; `AttemptStore`, `AuditSink` and
-  `ConfigSource` run only outside one. The OpenID Connect sign-in itself lives in
+  `AccountStore`, `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `SessionEnder`,
+  `AuditSink`, `ConfigSource`, `TxRunner`, `Clock` and `Logger`. `IdentityStore`, `AccountStore`
+  and `SessionIssuer` join a transaction carried by ctx; `AttemptStore`, `AuditSink`,
+  `ConfigSource` and `SessionEnder` run only outside one. The OpenID Connect sign-in itself lives in
   `internal/idkit/sso` and runs over those interfaces only: `sso.Service` (`internal/idkit/sso/service.go`)
   has the start and the callback (the attempt claim, the code exchange, the token and claim
   checks, the Graph and userinfo group reads, `rolemap.Match`, `entra.LinkHint`), one `TxRunner`
@@ -110,7 +110,7 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   `internal/service/auth_audit_vocabulary.go`, and `sso.RefuseAccount` attaches the account a
   refusal concerns. `NewOIDCService` (`internal/service/auth_oidc.go`) wires GopherCRM's adapters
   into it: `NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
-  `NewIDKitAuditSink` (only with `WithOIDCAudit`), `NewIDKitConfigSource`,
+  `NewIDKitAuditSink` (only with `WithOIDCAudit`), `NewIDKitSessionEnder`, `NewIDKitConfigSource`,
   `NewIDKitLogger` (component `oidc_sign_in`), the account store `oidcAccountStore` (the
   governed role write of an existing account and the provisioning of a new one) and the governed
   transaction `oidcSignInRunner` as the `TxRunner`, behind `oidcPasswordFirstRunner`, which
@@ -461,6 +461,30 @@ redirect URI; the Microsoft Graph fake and the second host stay in that test fil
 `TestUserIdentitiesMigration{Files,}` (`cmd/migrate`). The user-facing rules (first-match
 mapping, overage, subject whitespace, JIT, erasure) are in
 [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435).
+
+**Single sign-on sign-out (#634)** — the callback answers `id_token` next to the token pair, and
+the SPA keeps it in the session record (`idToken`). `POST /auth/logout` takes an optional
+`id_token_hint` (at most 16384 bytes, else 400 `VALIDATION_ERROR` before anything is revoked);
+only after `Logout` committed does the handler ask `OIDCService.EndSessionURL`
+(`sso.Service.EndSessionURL`, `internal/idkit/sso/logout.go`, its own 5 s deadline) and answer
+`end_session_url`; a refused hint or a failed lookup answers the plain message, and the logout
+itself is unchanged (same revocation, `token_version` increment and audit row). The SPA then calls
+`window.location.assign` with it, and the provider returns the browser to
+`APP_BASE_URL/login`. The unauthenticated `GET /auth/oidc/frontchannel-logout?sid=&iss=` (strict
+tier, `Cache-Control: no-cache, no-store`, `Pragma: no-cache`, no frame headers) runs
+`sso.Service.FrontChannelLogout`: an `iss` that is sent must equal the configured issuer, and the
+host's `idkitSessionEnder` (`internal/service/auth_oidc_host.go`) reads the distinct owners of
+the live refresh tokens whose `provider_session_hash` is the HMAC of `issuer + "\n" + sid` and
+calls `authService.Logout(userID, "")` for each, so every session of such an account ends, with
+one `logout` audit row each and no new lock order. The hash is written by `idkitSessionIssuer`
+from the verified `iss` and the ID token's `sid` (absent, non-string or over 256 bytes counts as
+none) and copied by rotation and the password-change renewal; the raw `sid` and the ID token are
+never stored or logged. MySQL/MariaDB get the column from
+`20261129120008_refresh_token_provider_session`. Roots: `TestCallbackProviderSession`,
+`TestEndSessionURL`, `TestFrontChannelLogout` (`internal/idkit/sso`), `TestRefreshProviderSession`,
+`TestFrontChannelLogout`, `TestFrontChannelLogoutMySQL` (`internal/service`),
+`TestLogoutEndSession`, `TestFrontChannelLogout` (`internal/handler`), `TestOIDCRoutesWired_SignOut`
+(`cmd`) and `sso.spec.ts` S16.
 
 **SCIM provider tokens and discovery (#468)** — `/scim/v2` is mounted in `setupRouter` outside
 the API prefix (`scimGroup`, passed to `setupDependencies`) behind `middleware.SCIMAuth`, which
@@ -2606,12 +2630,12 @@ covering MySQL and MariaDB behaviour of the handlers.
   administrator deactivating or deleting itself, an AEO call with no provider configured) the
   route's `note` says why; generation fails on a non-2xx admin `own` without a note.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
-  `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
-  OpenID Connect start and callback included), the six `/forms/public` routes, the two
+  `routeMatrixPublic` list in the test: `/health`, the nine unauthenticated `/auth` routes (the
+  OpenID Connect start, callback and front-channel sign-out included), the six `/forms/public` routes, the two
   `/quotes/public/response` routes and `POST /quotes/public/render`, and the fourteen `/scim/v2`
   routes (the discovery documents of #468, the Users read of #469, the Users create and replace
   of #470, the Users patch of #471, the Users delete of #504 and the five Groups routes of #506),
-  32 in all. A new route in neither
+  33 in all. A new route in neither
   fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its

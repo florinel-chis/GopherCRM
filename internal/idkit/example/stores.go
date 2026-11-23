@@ -3,6 +3,7 @@ package example
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -61,6 +62,10 @@ type state struct {
 	members map[string]map[string]bool
 	// sessions maps an issued access token to its account id.
 	sessions map[string]string
+	// providerSessions maps an issued access token to the reference of the
+	// provider session it signed in under (providerSessionRef), when the ID
+	// token carried a sid.
+	providerSessions map[string]string
 }
 
 func newState() state {
@@ -69,6 +74,8 @@ func newState() state {
 		identities: map[[2]string]identityRow{},
 		members:    map[string]map[string]bool{},
 		sessions:   map[string]string{},
+
+		providerSessions: map[string]string{},
 	}
 }
 
@@ -93,6 +100,10 @@ func (s state) clone() state {
 	c.sessions = make(map[string]string, len(s.sessions))
 	for k, v := range s.sessions {
 		c.sessions[k] = v
+	}
+	c.providerSessions = make(map[string]string, len(s.providerSessions))
+	for k, v := range s.providerSessions {
+		c.providerSessions[k] = v
 	}
 	return c
 }
@@ -194,6 +205,9 @@ func (s *Store) AuditSink() idkit.AuditSink { return auditSink{s} }
 
 // ConfigSource is the idkit.ConfigSource.
 func (s *Store) ConfigSource() idkit.ConfigSource { return configSource{s} }
+
+// SessionEnder is the idkit.SessionEnder.
+func (s *Store) SessionEnder() idkit.SessionEnder { return sessionEnder{s} }
 
 // TxRunner is the idkit.TxRunner.
 func (s *Store) TxRunner() idkit.TxRunner { return txRunner{s} }
@@ -449,7 +463,43 @@ func (i sessionIssuer) Issue(_ context.Context, request idkit.SessionRequest) (i
 	i.s.mu.Lock()
 	defer i.s.mu.Unlock()
 	i.s.st.sessions[access] = request.AccountID
+	if request.ProviderSessionID != "" {
+		i.s.st.providerSessions[access] = providerSessionRef(request.Issuer, request.ProviderSessionID)
+	}
 	return idkit.Session{AccountID: request.AccountID, AccessToken: access, RefreshToken: refresh}, nil
+}
+
+// providerSessionRef is what the store keeps of a provider session: a hash
+// of the issuer and the sid, never the sid itself.
+func providerSessionRef(issuer, sid string) string {
+	sum := sha256.Sum256([]byte("provider-session:" + issuer + "\n" + sid))
+	return hex.EncodeToString(sum[:])
+}
+
+// sessionEnder ends every session of each account that signed in under a
+// provider session.
+type sessionEnder struct{ s *Store }
+
+func (e sessionEnder) EndProviderSession(ctx context.Context, issuer, sid string) (int, error) {
+	if inTransaction(ctx) {
+		return 0, idkit.ErrInTransaction
+	}
+	ref := providerSessionRef(issuer, sid)
+	e.s.mu.Lock()
+	defer e.s.mu.Unlock()
+	accounts := map[string]bool{}
+	for access, held := range e.s.st.providerSessions {
+		if held == ref {
+			accounts[e.s.st.sessions[access]] = true
+		}
+	}
+	for access, accountID := range e.s.st.sessions {
+		if accounts[accountID] {
+			delete(e.s.st.sessions, access)
+			delete(e.s.st.providerSessions, access)
+		}
+	}
+	return len(accounts), nil
 }
 
 func randomToken() (string, error) {

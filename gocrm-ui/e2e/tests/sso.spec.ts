@@ -17,10 +17,13 @@ import {
   OIDC_CLIENT_ID,
   OIDC_CLIENT_SECRET,
   OIDC_ISSUER_URL,
+  OIDC_POST_LOGOUT_REDIRECT_URI,
   OIDC_REDIRECT_URI,
   SSO_FAILED_MESSAGE,
   SSO_OFF,
+  lastIssuerLogout,
   passwordResetMailLines,
+  sessionField,
   sessionToken,
   ssoEnabledStatus,
   uniqueIdentity,
@@ -928,6 +931,51 @@ test.describe('Single sign-on with the test issuer', () => {
         client_private_key: '',
       });
       await admin.dispose();
+    }
+  });
+
+  test('S16: logout of a single sign-on session also signs out at the issuer and returns to the login page', async ({
+    browser,
+  }) => {
+    const signIn = await ssoSignInOK(browser, { ...uniqueIdentity('logout'), roles: [CLAIM_SALES] });
+    try {
+      const { page } = signIn;
+      const refresh = await sessionField(page, 'refresh');
+      expect(refresh, 'the session has a refresh token').toBeTruthy();
+      expect(await sessionField(page, 'idToken'), 'the ID token is kept with the session').toBeTruthy();
+
+      const issuerLogout = page.waitForRequest(
+        (request) => request.url().startsWith(`${OIDC_ISSUER_URL}/logout?`),
+        { timeout: LOAD },
+      );
+      await page.getByRole('button', { name: 'Account menu' }).click();
+      await page.getByRole('menuitem', { name: 'Logout', exact: true }).click();
+
+      const sent = new URL((await issuerLogout).url());
+      expect(sent.searchParams.get('post_logout_redirect_uri')).toBe(OIDC_POST_LOGOUT_REDIRECT_URI);
+      expect(sent.searchParams.get('client_id')).toBe(OIDC_CLIENT_ID);
+      expect(sent.searchParams.get('id_token_hint')).toBeTruthy();
+      await page.waitForURL(OIDC_POST_LOGOUT_REDIRECT_URI, { timeout: LOAD });
+      await expect(page.getByRole('button', { name: 'Sign in with single sign-on' })).toBeVisible({
+        timeout: LOAD,
+      });
+      expect(await lastIssuerLogout(), 'the issuer accepted the hint and the return address').toBe(
+        'accepted',
+      );
+      expect(await sessionToken(page)).toBeNull();
+
+      // The ended session's refresh token no longer works.
+      const api = await request.newContext();
+      try {
+        const replay = await api.post(`${API_BASE_URL}/auth/refresh`, {
+          data: { refresh_token: refresh },
+        });
+        expect(replay.status()).toBe(401);
+      } finally {
+        await api.dispose();
+      }
+    } finally {
+      await signIn.context.close();
     }
   });
 });

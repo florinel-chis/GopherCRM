@@ -10,6 +10,8 @@ import (
 const (
 	// SubjectMaxBytes is the longest sub ValidSubject accepts.
 	SubjectMaxBytes = 255
+	// SessionIDMaxBytes is the longest sid SessionID accepts.
+	SessionIDMaxBytes = 256
 	// NameMaxBytes is the longest first or last name ProfileNames returns.
 	NameMaxBytes = 100
 )
@@ -27,6 +29,19 @@ type Claims struct {
 	// OID and TID are the Entra ID object id and tenant id.
 	OID json.RawMessage `json:"oid"`
 	TID json.RawMessage `json:"tid"`
+	// SID is the provider's session id (OpenID Connect Front-Channel
+	// Logout); SessionID reads it.
+	SID json.RawMessage `json:"sid"`
+}
+
+// SessionID is the sid claim, or "" when it is absent, not a string, empty
+// or longer than SessionIDMaxBytes.
+func SessionID(raw json.RawMessage) string {
+	sid := String(raw)
+	if len(sid) > SessionIDMaxBytes {
+		return ""
+	}
+	return sid
 }
 
 // StringArray decodes a claim that must be absent or a JSON array of

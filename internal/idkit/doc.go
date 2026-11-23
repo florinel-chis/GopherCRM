@@ -9,14 +9,16 @@
 // TestIDKitImportBoundary enforces this.
 //
 // host.go declares those interfaces: IdentityStore, AccountStore,
-// AttemptStore, SessionIssuer, AuditSink, ConfigSource, TxRunner, Clock and
-// Logger, with the types and errors they use. IdentityStore, AccountStore and
-// SessionIssuer join a transaction carried by ctx; AttemptStore, AuditSink
-// and ConfigSource run only outside one.
+// AttemptStore, SessionIssuer, SessionEnder, AuditSink, ConfigSource,
+// TxRunner, Clock and Logger, with the types and errors they use.
+// IdentityStore, AccountStore and SessionIssuer join a transaction carried by
+// ctx; AttemptStore, AuditSink, ConfigSource and SessionEnder run only outside
+// one.
 //
 // Package sso is the OpenID Connect sign-in over those interfaces: the start
-// and the callback, the token and claim checks, the role mapping and the
-// rule that decides which account an identity signs in as.
+// and the callback, the token and claim checks, the role mapping, the rule
+// that decides which account an identity signs in as, and the sign-out (the
+// provider's end-session URL and the front-channel sign-out).
 //
 // Package scim/server is the SCIM 2.0 provider over net/http on the
 // protocol package scim: the routes, the lenient body reading, the mapping of

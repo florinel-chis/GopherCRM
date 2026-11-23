@@ -175,6 +175,34 @@ func (_m *RefreshTokenRepository) RevokeFamily(userID uint, familyID string) err
 	return r0
 }
 
+// LiveUserIDsByProviderSession provides a mock function with given fields: hash
+func (_m *RefreshTokenRepository) LiveUserIDsByProviderSession(hash string) ([]uint, error) {
+	ret := _m.Called(hash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LiveUserIDsByProviderSession")
+	}
+
+	var r0 []uint
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) ([]uint, error)); ok {
+		return rf(hash)
+	}
+	if rf, ok := ret.Get(0).(func(string) []uint); ok {
+		r0 = rf(hash)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]uint)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(hash)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // RevokeAllForUser provides a mock function with given fields: userID
 func (_m *RefreshTokenRepository) RevokeAllForUser(userID uint) error {
 	ret := _m.Called(userID)

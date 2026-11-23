@@ -38,6 +38,7 @@ import (
 var _ idkit.IdentityStore = (*idkitIdentityStore)(nil)
 var _ idkit.AttemptStore = (*idkitAttemptStore)(nil)
 var _ idkit.SessionIssuer = (*idkitSessionIssuer)(nil)
+var _ idkit.SessionEnder = (*idkitSessionEnder)(nil)
 var _ idkit.AuditSink = (*idkitAuditSink)(nil)
 var _ idkit.ConfigSource = (*idkitConfigSource)(nil)
 var _ idkit.Logger = (*idkitLogger)(nil)
@@ -221,10 +222,11 @@ func NewIDKitSessionIssuer(auth AuthService, users repository.UserRepository, re
 }
 
 // Issue mints a single sign-on session for the account: a refresh token in a
-// new family whose start, and so whose lifetime cap, is req.SignedInAt, and
-// an access token signed now. It joins a transaction carried by ctx for the
-// account read and the refresh-token write. It performs no account checks:
-// the caller checked the account under its lock.
+// new family whose start, and so whose lifetime cap, is req.SignedInAt and
+// which records the keyed hash of req.Issuer and req.ProviderSessionID (empty
+// without a sid), and an access token signed now. It joins a transaction
+// carried by ctx for the account read and the refresh-token write. It
+// performs no account checks: the caller checked the account under its lock.
 func (s *idkitSessionIssuer) Issue(ctx context.Context, req idkit.SessionRequest) (idkit.Session, error) {
 	session, _, err := s.issue(ctx, req)
 	return session, err
@@ -257,7 +259,8 @@ func (s *idkitSessionIssuer) issue(ctx context.Context, req idkit.SessionRequest
 	if err != nil {
 		return idkit.Session{}, nil, err
 	}
-	session := refreshSession{FamilyID: familyID, SignInMethod: models.RefreshTokenSignInOIDC, StartedAt: req.SignedInAt}
+	session := refreshSession{FamilyID: familyID, SignInMethod: models.RefreshTokenSignInOIDC, StartedAt: req.SignedInAt,
+		ProviderSessionHash: providerSessionHash(req.Issuer, req.ProviderSessionID, s.auth.sessionTokenSecret())}
 	refresh, err := s.auth.issueRefreshToken(refreshTokens, user.ID, session)
 	if err != nil {
 		return idkit.Session{}, nil, err
@@ -267,6 +270,60 @@ func (s *idkitSessionIssuer) issue(ctx context.Context, req idkit.SessionRequest
 		return idkit.Session{}, nil, fmt.Errorf("failed to sign access token at single sign-on: %w", err)
 	}
 	return idkit.Session{AccountID: formatIDKitID(user.ID), AccessToken: access, RefreshToken: refresh}, user, nil
+}
+
+// ---------------------------------------------------------- session ender ---
+
+type idkitSessionEnder struct {
+	auth          *authService
+	refreshTokens repository.RefreshTokenRepository
+	audit         AuthAuditService
+}
+
+// NewIDKitSessionEnder returns the session ender of front-channel sign-out
+// over the session-issuing auth service and the refresh tokens; any other
+// AuthService is errOIDCNotWired at construction. audit, when set, gets one
+// logout row per account the sign-out reached.
+func NewIDKitSessionEnder(auth AuthService, refreshTokens repository.RefreshTokenRepository, audit AuthAuditService) (idkit.SessionEnder, error) {
+	impl, ok := auth.(*authService)
+	if !ok || impl == nil || refreshTokens == nil {
+		return nil, errOIDCNotWired
+	}
+	return &idkitSessionEnder{auth: impl, refreshTokens: refreshTokens, audit: audit}, nil
+}
+
+// EndProviderSession reads the distinct owners of the live refresh tokens
+// that record the provider session (issuer, sid) and logs each out as
+// POST /auth/logout without a body does (authService.Logout: every refresh
+// token revoked and token_version incremented, in the logout's own
+// transaction), so every session of such an account ends, not only the one
+// that signed in under sid. Each account gets one logout audit row. It
+// returns how many accounts it logged out; the first failure stops it. It
+// runs only outside a transaction.
+func (e *idkitSessionEnder) EndProviderSession(ctx context.Context, issuer, sid string) (int, error) {
+	if utils.InTransaction(ctx) {
+		return 0, idkit.ErrInTransaction
+	}
+	hash := providerSessionHash(issuer, sid, e.auth.sessionTokenSecret())
+	if hash == "" {
+		return 0, nil
+	}
+	userIDs, err := e.refreshTokens.LiveUserIDsByProviderSession(hash)
+	if err != nil {
+		return 0, fmt.Errorf("find the sessions of the provider session: %w", err)
+	}
+	ended := 0
+	for _, userID := range userIDs {
+		err := e.auth.Logout(userID, "")
+		if e.audit != nil {
+			e.audit.RecordLogout(ctx, userID, err)
+		}
+		if err != nil {
+			return ended, fmt.Errorf("end the sessions of a provider session: %w", err)
+		}
+		ended++
+	}
+	return ended, nil
 }
 
 // ----------------------------------------------------------------- audit ---

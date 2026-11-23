@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -62,8 +61,8 @@ func snapshotEndpointsBeforeWidening(t *testing.T, tdb *migrationTestDB) tableSc
 
 // TestWebhookEventTypesWidthMigrationFiles needs no database: the pair exists
 // with its headers, the up half is the one MODIFY, the down half the guarded
-// MODIFY back, the model declares varchar(512), and it is the newest
-// migration of the directory, which latestMigrationVersion names.
+// MODIFY back and the model declares varchar(512); a newer migration follows
+// it.
 func TestWebhookEventTypesWidthMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, webhookEventTypesWidthMigrationName+".up.sql"))
@@ -106,21 +105,9 @@ func TestWebhookEventTypesWidthMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "type:varchar(512);not null", tag)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAuthAuditLogAPIKeyIDMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, webhookEventTypesWidthMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, webhookEventTypesWidthVersion, version)
-	assert.Equal(t, webhookEventTypesWidthVersion, latestMigrationVersion)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestRefreshTokenProviderSessionMigrationFiles (#634).
+	assert.Less(t, webhookEventTypesWidthVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, webhookEventTypesWidthPreviousVersion+1, webhookEventTypesWidthVersion)
 }
 

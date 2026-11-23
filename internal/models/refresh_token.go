@@ -29,4 +29,12 @@ type RefreshToken struct {
 	// Rotation copies it. Nullable only so the column can be added to a
 	// populated table; the startup step fills legacy rows with created_at.
 	SessionStartedAt *time.Time `json:"-"`
+	// ProviderSessionHash refers to the identity provider's session a single
+	// sign-on sign-in started in: the keyed hash of the issuer, a newline and
+	// the ID token's sid, never the sid itself; '' for a password session and
+	// for a sign-in whose ID token carried no sid. Rotation and the
+	// single sign-on renewal of a password change copy it. Front-channel
+	// sign-out finds the sessions to end by it (migration
+	// 20261129120008_refresh_token_provider_session).
+	ProviderSessionHash string `gorm:"type:varchar(64);not null;default:'';index:idx_refresh_tokens_provider_session_hash" json:"-"`
 }

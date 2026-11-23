@@ -16,7 +16,7 @@ import (
 // A ctx handed to a host method may carry a transaction started through
 // TxRunner. IdentityStore, AccountStore and SessionIssuer join it.
 // AttemptStore, AuditSink and ConfigSource run only outside a transaction and
-// refuse a ctx that carries one.
+// refuse a ctx that carries one. SessionEnder is called only outside one.
 //
 // The sign-in itself (package sso) runs over these interfaces: it decides
 // which account an identity belongs to, and the host's AccountStore signs
@@ -177,6 +177,15 @@ type SessionRequest struct {
 	Method string
 	// SignedInAt is when the user signed in.
 	SignedInAt time.Time
+	// Issuer is the iss of the verified ID token, byte for byte the
+	// configured issuer.
+	Issuer string
+	// ProviderSessionID is the sid claim of the ID token: the provider's
+	// session the sign-in belongs to, "" when the token carries none. A
+	// host that ends sessions through SessionEnder keeps a reference to it
+	// and Issuer with the session (a keyed hash, never the raw value); a
+	// later EndProviderSession names the same pair.
+	ProviderSessionID string
 }
 
 // Session is an issued session.
@@ -184,6 +193,11 @@ type Session struct {
 	AccountID    string
 	AccessToken  string
 	RefreshToken string
+	// IDToken is the raw ID token of the sign-in, for the client to present
+	// back as the id_token_hint of a sign-out. sso.Service.Callback sets it
+	// after the transaction; a SessionIssuer never does, and a host never
+	// stores it.
+	IDToken string
 }
 
 // SessionIssuer issues sessions. Issue joins a transaction carried by ctx.
@@ -198,6 +212,17 @@ type Session struct {
 // its lock in the same transaction before asking for a session.
 type SessionIssuer interface {
 	Issue(ctx context.Context, request SessionRequest) (Session, error)
+}
+
+// SessionEnder ends the host's sessions that started in a provider session
+// (OpenID Connect Front-Channel Logout). It is called only outside a
+// transaction.
+type SessionEnder interface {
+	// EndProviderSession ends every live session of each account that has a
+	// live session signed in under issuer with the provider session id sid,
+	// and returns how many accounts it ended. Which of an account's sessions
+	// end with it is the host's decision.
+	EndProviderSession(ctx context.Context, issuer, sid string) (ended int, err error)
 }
 
 // AuditEvent is one sign-in outcome to record.

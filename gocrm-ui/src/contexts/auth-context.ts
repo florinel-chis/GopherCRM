@@ -13,7 +13,11 @@ export interface AuthContextType {
   // is kept in sessionStorage (no remember-me survives the redirect).
   loginWithSSO: (code: string, state: string) => Promise<void>;
   register: (data: RegisterRequest) => Promise<void>;
-  logout: () => Promise<void>;
+  // Ends the session. Resolves true when the browser is leaving for the
+  // identity provider's sign-out (a single sign-on session whose provider
+  // returned an end-session URL), false otherwise; the caller then goes to
+  // the login page itself.
+  logout: () => Promise<boolean>;
   refreshUser: () => Promise<void>;
 }
 

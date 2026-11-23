@@ -607,12 +607,17 @@ export class ApiClient {
    * for the session lock, so another tab's refresh cannot delay a sign-out —
    * and the server is asked to revoke every refresh session of the user. When
    * the access token has expired, it is renewed privately — without storing
-   * anything — so the revocation is still authenticated.
+   * anything — so the revocation is still authenticated. `revoke` also gets
+   * the ended session's ID token (single sign-on sessions only), and what it
+   * returns is returned; undefined when there was no session to revoke.
    */
-  public async endSession(revoke: (accessToken: string) => Promise<void>): Promise<void> {
+  public async endSession<T>(
+    revoke: (accessToken: string, idToken?: string) => Promise<T>
+  ): Promise<T | undefined> {
     const stored = this.readStored();
     const ending = this.captureSession();
     const access = stored?.record.access ?? null;
+    const idToken = stored?.record.idToken;
     const running = [...this.sessionOps].filter((op) => op.generation === ending.generation).map((op) => op.promise);
     this.clearTokens();
     // Let refreshes and password changes of this tab already running settle
@@ -626,16 +631,16 @@ export class ApiClient {
     const accessToken = successor?.token ?? access;
     const refreshToken = successor?.refresh_token ?? ending.refreshToken;
     if (!accessToken) {
-      return;
+      return undefined;
     }
     try {
-      await revoke(accessToken);
+      return await revoke(accessToken, idToken);
     } catch (error) {
       if (statusOf(error) !== 401 || !refreshToken) {
         throw error;
       }
       const pair = await this.requestRefresh(refreshToken);
-      await revoke(pair.token);
+      return await revoke(pair.token, idToken);
     }
   }
 
@@ -643,9 +648,10 @@ export class ApiClient {
    * Starts a new session (sign-in, registration): a new generation and a new
    * record with a fresh random id, in localStorage when `persist` is true and
    * in sessionStorage otherwise. Anything stored before, in either storage,
-   * is removed first. A response without a refresh token stores none.
+   * is removed first. A response without a refresh token stores none. The ID
+   * token of a single sign-on sign-in is kept with the record for the logout.
    */
-  public startSession(token: string, refreshToken: string | undefined, persist: boolean): void {
+  public startSession(token: string, refreshToken: string | undefined, persist: boolean, idToken?: string): void {
     this.clearTokens();
     this.writeRecord(persist ? this.localArea() : this.sessionArea(), {
       v: 1,
@@ -654,6 +660,7 @@ export class ApiClient {
       refresh: refreshToken ?? null,
       subject: tokenSubject(token),
       persist,
+      ...(idToken ? { idToken } : {}),
     });
   }
 

@@ -28,10 +28,14 @@
 // the same issuer; any other unknown pair provisions an account. Email never
 // links.
 //
+// Sign-out (logout.go): EndSessionURL builds the provider's end-session URL
+// for an ID token hint of the signed-out account, and FrontChannelLogout ends
+// the sessions of a provider session through idkit.SessionEnder.
+//
 // Every refusal is an oidc.RefusalError whose code is one of the Code
 // constants or a code of the host's AccountStore; RefuseAccount attaches the
 // account a refusal concerns. The log lines go only through idkit.Logger,
-// with fixed messages and the attempt_id, error_code, audit_id and user_id
-// fields, never a code, state, nonce, verifier, token, email, subject, name,
-// claim value or URL.
+// with fixed messages and the attempt_id, error_code, audit_id, user_id and
+// ended fields, never a code, state, nonce, verifier, token, sid, issuer,
+// email, subject, name, claim value or URL.
 package sso

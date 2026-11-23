@@ -18,6 +18,8 @@ export const OIDC_CLIENT_SECRET = process.env.E2E_OIDC_CLIENT_SECRET ?? '';
 export const BACKEND_LOG = process.env.E2E_BACKEND_LOG ?? '';
 /** The one redirect URI the test issuer accepts: the SPA's callback page. */
 export const OIDC_REDIRECT_URI = `${UI_BASE_URL}/auth/callback`;
+/** The one post-logout redirect URI the test issuer accepts: the SPA's login page. */
+export const OIDC_POST_LOGOUT_REDIRECT_URI = `${UI_BASE_URL}/login`;
 
 export const SSO_FAILED_MESSAGE = 'Single sign-on failed. Try again or sign in with your password.';
 
@@ -211,17 +213,40 @@ export async function ssoEnabledStatus(): Promise<boolean> {
 
 /** The access token of the page's stored session (`gophercrm_session`). */
 export async function sessionToken(page: Page): Promise<string | null> {
-  return page.evaluate(() => {
+  return sessionField(page, 'access');
+}
+
+/** One string field of the page's stored session record, null when absent. */
+export async function sessionField(
+  page: Page,
+  field: 'access' | 'refresh' | 'idToken',
+): Promise<string | null> {
+  return page.evaluate((name) => {
     const raw =
       sessionStorage.getItem('gophercrm_session') ?? localStorage.getItem('gophercrm_session');
     if (!raw) return null;
     try {
-      const record = JSON.parse(raw) as { access?: unknown };
-      return typeof record.access === 'string' ? record.access : null;
+      const record = JSON.parse(raw) as Record<string, unknown>;
+      return typeof record[name] === 'string' ? (record[name] as string) : null;
     } catch {
       return null;
     }
-  });
+  }, field);
+}
+
+/**
+ * The outcome of the test issuer's latest end-session request (its test
+ * hook): "accepted", "refused: <reason>", or "" before the first.
+ */
+export async function lastIssuerLogout(): Promise<string> {
+  const context = await request.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const response = await context.get(`${OIDC_ISSUER_URL}/test/last-logout`);
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).outcome as string;
+  } finally {
+    await context.dispose();
+  }
 }
 
 /**

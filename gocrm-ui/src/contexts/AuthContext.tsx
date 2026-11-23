@@ -182,7 +182,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     if (attempt !== signInAttemptRef.current) {
       return;
     }
-    apiClient.startSession(response.token, response.refresh_token, false);
+    // The ID token is kept with the session: its logout sends it back so
+    // the identity provider's session can end too.
+    apiClient.startSession(response.token, response.refresh_token, false, response.id_token);
     queryClient?.clear();
     await publishSignedIn(attempt);
   }, [queryClient, publishSignedIn]);
@@ -210,16 +212,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // store tokens for it any more — and the UI signs out immediately. The
     // server-side revocation of every refresh session follows; it is
     // authenticated with the access token captured before the tokens were
-    // dropped.
+    // dropped. A single sign-on session also sends its ID token; when the
+    // answer names the identity provider's end-session URL, the browser goes
+    // there so the provider's session ends too, and comes back to /login.
     signInAttemptRef.current += 1;
-    const revoked = apiClient.endSession((accessToken) => authApi.logout(accessToken));
+    const revoked = apiClient.endSession((accessToken, idToken) => authApi.logout(accessToken, idToken));
     queryClient?.clear();
     publishUser(null);
     try {
-      await revoked;
+      const endSessionURL = await revoked;
+      if (endSessionURL) {
+        window.location.assign(endSessionURL);
+        return true;
+      }
     } catch (error) {
       console.error('Logout error:', error);
     }
+    return false;
   }, [queryClient, publishUser]);
 
   const refreshUser = useCallback(async () => {

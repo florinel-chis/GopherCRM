@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -23,6 +24,7 @@ const (
 	testClientID    = "gophercrm-e2e"
 	testSecret      = "issuer-test-secret"
 	testRedirectURI = "http://localhost:15173/auth/callback"
+	testLogoutURI   = "http://localhost:15173/login"
 )
 
 type fixture struct {
@@ -34,7 +36,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	iss, err := newIssuer("", testClientID, testSecret, testRedirectURI)
+	iss, err := newIssuer("", testClientID, testSecret, testRedirectURI, testLogoutURI)
 	require.NoError(t, err)
 	server := httptest.NewUnstartedServer(iss.handler())
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -346,4 +348,113 @@ func TestSignInWithoutSubjectIsRefused(t *testing.T) {
 	text := body(t, response)
 	require.Equal(t, http.StatusBadRequest, response.StatusCode)
 	require.Contains(t, text, "Authorization request refused: subject is required")
+}
+
+// signedInIDToken runs a sign-in and returns its ID token.
+func (f *fixture) signedInIDToken(subject string) string {
+	f.t.Helper()
+	r := newRequest()
+	status, answer := f.token(good(f.signIn(r, subject), r))
+	require.Equal(f.t, http.StatusOK, status, answer)
+	return answer["id_token"].(string)
+}
+
+// logout sends an end-session request and returns the status, the Location
+// and the recorded outcome.
+func (f *fixture) logout(query url.Values) (int, string, string) {
+	f.t.Helper()
+	response, err := f.client.Get(f.server.URL + "/logout?" + query.Encode())
+	require.NoError(f.t, err)
+	_ = body(f.t, response)
+	hook, err := f.client.Get(f.server.URL + "/test/last-logout")
+	require.NoError(f.t, err)
+	var outcome struct {
+		Outcome string `json:"outcome"`
+	}
+	require.NoError(f.t, json.Unmarshal([]byte(body(f.t, hook)), &outcome))
+	return response.StatusCode, response.Header.Get("Location"), outcome.Outcome
+}
+
+// TestEndSession: discovery advertises the end-session endpoint, every ID
+// token carries a random sid, and the endpoint redirects to the registered
+// post-logout URI only for a hint it signed for the client; anything else is
+// 400 without a redirect. No log line carries the hint or the URI.
+func TestEndSession(t *testing.T) {
+	var logs strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	f := newFixture(t)
+	response, err := f.client.Get(f.server.URL + "/.well-known/openid-configuration")
+	require.NoError(t, err)
+	var doc map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(body(t, response)), &doc))
+	require.Equal(t, f.server.URL+"/logout", doc["end_session_endpoint"])
+
+	hint := f.signedInIDToken("subject-logout")
+	claims := f.verifyIDToken(hint)
+	sid, _ := claims["sid"].(string)
+	require.NotEmpty(t, sid, "the ID token carries a sid")
+	require.NotEqual(t, sid, f.verifyIDToken(f.signedInIDToken("subject-logout"))["sid"], "each sign-in gets its own sid")
+
+	_, _, before := f.logout(url.Values{})
+	require.Contains(t, before, "refused")
+
+	valid := url.Values{"id_token_hint": {hint}, "post_logout_redirect_uri": {testLogoutURI}, "client_id": {testClientID}}
+	status, location, outcome := f.logout(valid)
+	require.Equal(t, http.StatusFound, status)
+	require.Equal(t, testLogoutURI, location)
+	require.Equal(t, "accepted", outcome)
+
+	withoutClient := url.Values{"id_token_hint": {hint}, "post_logout_redirect_uri": {testLogoutURI}}
+	status, _, outcome = f.logout(withoutClient)
+	require.Equal(t, http.StatusFound, status, "client_id is optional")
+	require.Equal(t, "accepted", outcome)
+
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	signedHint := func(claims map[string]interface{}, key *rsa.PrivateKey) string {
+		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+		require.NoError(t, err)
+		payload, err := json.Marshal(claims)
+		require.NoError(t, err)
+		signed, err := signer.Sign(payload)
+		require.NoError(t, err)
+		compact, err := signed.CompactSerialize()
+		require.NoError(t, err)
+		return compact
+	}
+	base := map[string]interface{}{"iss": f.server.URL, "sub": "s", "aud": testClientID, "exp": time.Now().Add(-time.Hour).Unix()}
+	expired := signedHint(base, f.iss.key)
+	status, _, _ = f.logout(url.Values{"id_token_hint": {expired}, "post_logout_redirect_uri": {testLogoutURI}})
+	require.Equal(t, http.StatusFound, status, "an expired hint is accepted")
+
+	otherAud := map[string]interface{}{"iss": f.server.URL, "sub": "s", "aud": "another-client"}
+	otherIss := map[string]interface{}{"iss": "https://elsewhere.example.test", "sub": "s", "aud": testClientID}
+	for name, query := range map[string]url.Values{
+		"no_hint":           {"post_logout_redirect_uri": {testLogoutURI}},
+		"malformed_hint":    {"id_token_hint": {"not-a-token"}, "post_logout_redirect_uri": {testLogoutURI}},
+		"hint_other_key":    {"id_token_hint": {signedHint(base, otherKey)}, "post_logout_redirect_uri": {testLogoutURI}},
+		"hint_other_aud":    {"id_token_hint": {signedHint(otherAud, f.iss.key)}, "post_logout_redirect_uri": {testLogoutURI}},
+		"hint_other_iss":    {"id_token_hint": {signedHint(otherIss, f.iss.key)}, "post_logout_redirect_uri": {testLogoutURI}},
+		"other_client_id":   {"id_token_hint": {hint}, "post_logout_redirect_uri": {testLogoutURI}, "client_id": {"other"}},
+		"redirect_mismatch": {"id_token_hint": {hint}, "post_logout_redirect_uri": {testLogoutURI + "/"}},
+		"redirect_missing":  {"id_token_hint": {hint}},
+		"redirect_elsewhere": {"id_token_hint": {hint},
+			"post_logout_redirect_uri": {"https://other-app.example.test/login"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, location, outcome := f.logout(query)
+			require.Equal(t, http.StatusBadRequest, status)
+			require.Empty(t, location, "a refusal never redirects")
+			require.True(t, strings.HasPrefix(outcome, "refused: "), outcome)
+		})
+	}
+
+	require.Contains(t, logs.String(), "end-session request accepted")
+	require.Contains(t, logs.String(), "end-session request refused")
+	for _, value := range []string{hint, expired, sid, testLogoutURI, "other-app.example.test"} {
+		require.NotContains(t, logs.String(), value, "no log line carries a token, sid or URI")
+	}
 }

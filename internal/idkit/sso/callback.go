@@ -178,6 +178,7 @@ func (s *Service) callback(ctx context.Context, code, state, binding string) (id
 		linkHint: linkHint,
 		roleID:   roleID,
 		profile:  idkit.Profile{Email: idkitoidc.String(claims.Email), GivenName: firstName, FamilyName: lastName},
+		sid:      idkitoidc.SessionID(claims.SID),
 	}
 
 	// One transaction: the link rule, the account sign-in or provisioning,
@@ -195,5 +196,8 @@ func (s *Service) callback(ctx context.Context, code, state, binding string) (id
 	if err != nil {
 		return idkit.Session{}, facts, err
 	}
+	// The raw ID token goes back to the client only, as the hint of its
+	// sign-out; no store ever sees it.
+	session.IDToken = rawIDToken
 	return session, facts, nil
 }
