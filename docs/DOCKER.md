@@ -77,7 +77,7 @@ Compose interpolates these from the shell or the repo-root `.env`:
 | Variable           | Default                  | Notes                                        |
 | ------------------ | ------------------------ | -------------------------------------------- |
 | `JWT_SECRET`       | *(required)*             | ≥ 32 chars; startup fails otherwise          |
-| `API_KEY_SECRET`   | falls back to JWT_SECRET | HMAC secret for API-key hashing              |
+| `API_KEY_SECRET`   | falls back to JWT_SECRET | key for API keys, tokens and stored secrets ([FORKING.md](FORKING.md) section 4.2) |
 | `DB_PASSWORD`      | `gocrm-dev-password`     | app user password (`gocrm`)                  |
 | `DB_ROOT_PASSWORD` | `gocrm-dev-root-password`| MySQL root password                          |
 | `UI_PORT`          | `3000`                   | host port for the UI (set it if 3000 is busy)|
@@ -313,7 +313,14 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
 
 - `SMTP_*`: mail is logged, not sent (see the outbound email note above).
 - `PUBLIC_BASE_URL` (default `http://localhost:8080`): form confirmation links
-  point at localhost.
+  and the SCIM base URL (`PUBLIC_BASE_URL/scim/v2`) point at localhost.
+- The seven `OIDC_*` fallbacks (`OIDC_ENABLED`, `OIDC_ALLOW_PASSWORD`,
+  `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`,
+  `OIDC_ROLE_MAPPING`; these can be set in Settings → Single sign-on instead),
+  `OIDC_GRAPH_MAX_PAGES`, `OIDC_ENTRA_APP_SIGNING_KEYS`,
+  `SCIM_RATE_LIMIT_PER_MINUTE`, `SCIM_RATE_LIMIT_BURST` and
+  `AUTH_AUDIT_RETENTION_DAYS`: single sign-on, SCIM and the sign-in audit run
+  with their defaults (see [Single sign-on and SCIM](#single-sign-on-and-scim)).
 - `RECAPTCHA_*`: the reCAPTCHA spam layer is skipped.
 - `FORM_RETENTION_DAYS`: the form retention purge stays off, so spam and
   never-confirmed submissions are kept. To enable it, add the variable to the
@@ -420,6 +427,86 @@ docker compose -f docker-compose.yml -f docker-compose.production.example.yml up
 
 Use the SQLite file in the last command for that stack, and pass the same
 `-f` pair to every later `exec`, `logs` or `down`.
+
+### Single sign-on and SCIM
+
+Register these addresses with the identity provider (the user guide table
+[Values to exchange with the identity provider](user-guide/permissions-access/single-sign-on.md#values-to-exchange-with-the-identity-provider)
+says where each one goes):
+
+- the redirect URI `APP_BASE_URL/auth/callback`;
+- the post-logout redirect URI `APP_BASE_URL/login`;
+- the front-channel logout URL `<origin>/api/v1/auth/oidc/frontchannel-logout`,
+  where `<origin>` is the public origin of the UI proxy, for example
+  `https://crm.example.com/api/v1/auth/oidc/frontchannel-logout`.
+
+The SCIM base URL is `PUBLIC_BASE_URL/scim/v2`, outside `/api/v1`. The UI
+container's nginx already forwards `/scim/v2/` to the backend, next to
+`/api/v1/` (`gocrm-ui/docker/nginx.conf`). A TLS proxy on the host in front
+of the UI port must forward every path, `/scim/v2/` included, to the UI port.
+With the UI published on `127.0.0.1:3000`, the nginx form:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+and the Apache equivalent (`mod_proxy`, `mod_proxy_http` and `mod_headers`):
+
+```apache
+ProxyPreserveHost On
+ProxyAddHeaders Off
+RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
+RequestHeader set X-Forwarded-Proto "https"
+ProxyPass / http://127.0.0.1:3000/
+ProxyPassReverse / http://127.0.0.1:3000/
+```
+
+A proxy that forwards only `/api/v1/` answers `/scim/v2/` with its own
+content, and the identity provider receives a web page instead of SCIM JSON.
+The full sites for a host without Docker are in
+[SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#reverse-proxy-and-tls).
+
+Some settings exist only in the environment: `OIDC_GRAPH_MAX_PAGES` (default
+10), `OIDC_ENTRA_APP_SIGNING_KEYS` (default false),
+`SCIM_RATE_LIMIT_PER_MINUTE` and `SCIM_RATE_LIMIT_BURST` (default 1500 and
+150) and `AUTH_AUDIT_RETENTION_DAYS` (default 90). The seven `OIDC_*`
+fallbacks (`OIDC_ENABLED`, `OIDC_ALLOW_PASSWORD`, `OIDC_ISSUER_URL`,
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_ROLE_MAPPING`)
+apply only where Settings → Single sign-on holds no value, so set them there
+instead. `.env.example` describes each one.
+
+Neither the shipped Compose files nor the production example forward these
+variables. Add the ones you need to the backend `environment` of your
+override (a local `docker-compose.prod.yml` or `docker-compose.override.yml`),
+each as a `${...}` interpolation, and supply the values from the shell or the
+repo-root `.env`:
+
+```yaml
+services:
+  backend:
+    environment:
+      OIDC_GRAPH_MAX_PAGES: ${OIDC_GRAPH_MAX_PAGES:-}
+      OIDC_ENTRA_APP_SIGNING_KEYS: ${OIDC_ENTRA_APP_SIGNING_KEYS:-}
+      SCIM_RATE_LIMIT_PER_MINUTE: ${SCIM_RATE_LIMIT_PER_MINUTE:-}
+      SCIM_RATE_LIMIT_BURST: ${SCIM_RATE_LIMIT_BURST:-}
+      AUTH_AUDIT_RETENTION_DAYS: ${AUTH_AUDIT_RETENTION_DAYS:-}
+```
+
+An empty value keeps the backend default. In the SQLite stack `/data/.env`
+also works, for keys the override does not set.
+
+Both stacks set `TRUSTED_PROXIES` to their fixed subnet, so the backend sees
+the client address the UI nginx forwards: SCIM requests without a valid token
+are limited per client address.
+
+Rotating `API_KEY_SECRET` invalidates every SCIM token and leaves the stored
+single sign-on client secret and client certificate unreadable; see
+[FORKING.md](FORKING.md) section 4.2.
 
 ### Several installations on one host
 

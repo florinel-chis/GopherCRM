@@ -76,7 +76,8 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
 - **Repositories** accept `*gorm.DB` and implement `WithTx()` for transaction support
 - **Handlers** parse requests, call services, and return unified responses via
   `utils.RespondSuccess`/`RespondError`
-- **All API routes** are mounted under `/api/v1` (configurable via `API_PREFIX`)
+- **Route prefix**: API routes are mounted under `/api/v1` (configurable via `API_PREFIX`); `/health`
+  and `/scim/v2` are mounted outside it
 - **Identity layer**: `internal/idkit` and its subpackages hold the identity layer (OIDC sign-in,
   Entra rules, claim-to-role mapping, SCIM). They stay inside the main module until a second system
   uses them and must not reach gin, gorm, `internal/models`, `internal/repository`, `internal/utils`

@@ -193,6 +193,11 @@ GopherCRM does with each request.
    - **Tenant URL**: `PUBLIC_BASE_URL/scim/v2`, for example https://crm.example.com/scim/v2
    - **Secret Token**: the SCIM token from step 8.1
 
+   The reverse proxy in front of GopherCRM must forward every path under `/scim/v2` to the backend
+   ([nginx and Apache](../../SERVER_PROVISIONING.md#reverse-proxy-and-tls),
+   [Docker](../../DOCKER.md#single-sign-on-and-scim)). Without that rule **Test Connection**
+   receives the web page instead of SCIM JSON.
+
    Choose **Test Connection**, then **Save**.
 4. Under **Mappings**, open **Provision Microsoft Entra ID Users** and change the attribute
    mappings:
