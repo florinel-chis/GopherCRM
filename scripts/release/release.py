@@ -16,6 +16,9 @@ REPO = 'florinel-chis/GopherCRM'
 BUNDLE = 'gophercrm-linux-amd64.tgz'
 ASSETS = (BUNDLE, 'release-manifest.json', 'SHA256SUMS')
 VERSION = r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+# GitHub refuses a release body over 125,000 characters, and --generate-notes adds the merged
+# pull request list to ours, so a longer changelog entry is condensed to its titles.
+NOTES_LIMIT = 60000
 
 
 def run(*args):
@@ -34,6 +37,35 @@ def notes(text, heading):
     if not match or not re.search(r'^- \S', match[1], re.M):
         raise ValueError(f'Missing substantive changelog entry: {heading}')
     return match[1].strip() + '\n'
+
+
+def title(item):
+    lead = re.match(r'\*\*(.+?)\*\*', item)
+    text = lead[1] if lead else re.split(r'(?<=[.!?])\s', item, maxsplit=1)[0]
+    return '- ' + (text if len(text) <= 200 else text[:197].rstrip() + '...')
+
+
+def release_notes(entry, revision):
+    """Return the entry, or its headings and entry titles when GitHub could not hold it."""
+    if len(entry) <= NOTES_LIMIT:
+        return entry
+    out = [f'The full list of changes is in [CHANGELOG.md](https://github.com/{REPO}/blob/{revision}/CHANGELOG.md).']
+    item = None
+    for line in entry.splitlines() + ['']:
+        if item is not None and line.startswith((' ', '\t')) and line.strip():
+            item += ' ' + line.strip()
+            continue
+        if item is not None:
+            out.append(title(item))
+            item = None
+        if line.startswith('- '):
+            item = line[2:].strip()
+        elif line.startswith('#'):
+            out += ['', line.strip(), '']
+    result = '\n'.join(out).strip() + '\n'
+    if len(result) > NOTES_LIMIT:
+        raise ValueError('Release notes are too long even when condensed; shorten the changelog entry')
+    return result
 
 
 def api_versions(root, expected, replacement=None):
@@ -263,7 +295,7 @@ def main():
             ensure_new_tag('v' + args.version)
         args.folder.mkdir(parents=True, exist_ok=True)
         (args.folder / 'release-manifest.json').write_text(json.dumps(data, indent=2) + '\n')
-        (args.folder / 'release-notes.md').write_text(entry)
+        (args.folder / 'release-notes.md').write_text(release_notes(entry, data['revision']))
     elif args.action == 'seal':
         seal(args.folder)
         verify(args.folder)

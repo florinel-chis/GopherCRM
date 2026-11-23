@@ -78,6 +78,27 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'clean worktree'):
             release.prepare(self.root, '1.4.0')
 
+    def test_short_release_notes_are_kept_whole(self):
+        entry = '### Added\n\n- **One change (#1).** Detail.\n'
+        self.assertEqual(release.release_notes(entry, self.sha), entry)
+
+    def test_long_release_notes_keep_headings_and_titles_within_limit(self):
+        detail = 'word ' * 400
+        bullets = ''.join(f'- **Change {n} that\n  wraps (#{n}).** {detail}\n  more {detail}\n' for n in range(200))
+        entry = f'### Added\n\n{bullets}\n### Fixed\n\n- Plain fix without a bold lead. More detail.\n'
+        self.assertGreater(len(entry), release.NOTES_LIMIT)
+        notes = release.release_notes(entry, self.sha)
+        self.assertLessEqual(len(notes), release.NOTES_LIMIT)
+        self.assertIn(f'/blob/{self.sha}/CHANGELOG.md', notes)
+        self.assertIn('### Added\n\n- Change 0 that wraps (#0).\n', notes)
+        self.assertIn('- Change 199 that wraps (#199).\n\n### Fixed\n\n- Plain fix without a bold lead.\n', notes)
+        self.assertNotIn('word', notes)
+
+    def test_release_notes_refuse_an_entry_too_long_even_condensed(self):
+        entry = ''.join(f'- **{"x" * 150} {n}**\n' for n in range(500))
+        with self.assertRaisesRegex(ValueError, 'too long even when condensed'):
+            release.release_notes(entry, self.sha)
+
     def test_verify_checks_identity_checksum_and_archive_metadata(self):
         self.bundle()
         self.assertEqual(self.manifest, release.verify(self.root, self.sha, '123', 'v1.3.0'))
