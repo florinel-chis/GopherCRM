@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; the SCIM Groups read and members patch (`GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/{id}`) delivered by #506 |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Closed: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; the SCIM Groups read and members patch (`GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/{id}`) delivered by #506; the SCIM group create (`POST /scim/v2/Groups`), which only resolves an existing mapping value, delivered by #630 (PR #659); the certificate client credential delivered by #633 (PR #695); the sign-out at the identity provider delivered by #634 (PR #719) |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. It reads
@@ -232,6 +232,31 @@ Each grant has a scope:
 - `own`: it applies to the records the caller owns or is assigned. Only the sixteen leaves
   marked `all, own` above accept it; their handlers narrow by owner or assignee.
 
+The role API and the key each route asks for (`internal/permissions/routes.go` `RouteKeys`):
+
+| Route | Key |
+|---|---|
+| `GET /roles`, `GET /roles/{id}` | `roles.view` or `users.assign_role` |
+| `GET /permissions/catalogue` | `roles.view` or `users.assign_role` |
+| `POST /roles`, `PUT /roles/{id}`, `DELETE /roles/{id}`, `POST /roles/{id}/clone` | `roles.manage` |
+| `GET /roles/audit` | `roles.audit_view` |
+
+The role API and the user writes it governs (`POST /users`, `PUT /users/{id}`, the activation
+routes and `DELETE /users/{id}`) answer these codes
+(`internal/handler/role_handler.go` `respondRoleGovernanceError`):
+
+| Code | Status | When |
+|---|---|---|
+| `ROLE_NOT_FOUND` | 404 | No role has the id |
+| `SYSTEM_ROLE_IMMUTABLE` | 409 | The write names one of the four system roles, which are cloned, not edited or deleted |
+| `ROLE_ESCALATION` | 403 | The change reaches permissions above the caller's own |
+| `INVALID_PERMISSION` | 400 | The permission list is not valid; `details.keys` lists the offending keys |
+| `ROLE_NAME_TAKEN` | 409 | Another role already has the name |
+| `ROLE_IN_USE` | 409 | A live user still holds the role being deleted; `details.user_count` is the number of holders |
+| `INVALID_ROLE_ASSIGNMENT` | 400 | `role` `custom` without `role_id`, or `role_id` with a role other than `custom` |
+| `CUSTOMER_LOGIN_ROLE` | 409 | A customer login was given a custom role |
+| `LAST_ADMIN` | 409 | The last active administrator would be demoted, deactivated or erased |
+
 A system role can be cloned into a custom role (`POST /roles/{id}/clone`). A customer login
 cannot receive a custom role (409 `CUSTOMER_LOGIN_ROLE`). The permission set is resolved by
 `middleware.Auth` on every request, for `Authorization: Bearer` and `ApiKey` credentials alike, so
@@ -260,7 +285,13 @@ in either table panics at startup, naming the route. A caller that does not hold
 answered 403 `FORBIDDEN`. The permission check comes
 before any ownership check, so a caller without the key is refused on its own records too. A role
 with no permissions is refused on every route of `RouteKeys`
-(`TestZeroPermissionRoleIsDeniedEverywhere` and `TestEveryRouteRequiresItsOwnKey` in `cmd`).
+(`TestZeroPermissionRoleIsDeniedEverywhere` and `TestEveryRouteRequiresItsOwnKey` in `cmd`), with
+one exception: the caller's own account. `GET /users/{id}` and `PUT /users/{id}` are checked in
+the handler (`CheckedInHandler`), and `UserHandler` lets the caller's own id through without
+`users.view` or `users.update`; for another id it answers 403 'You can only view your own
+profile' or 'You can only update your own profile' (`internal/handler/user_handler.go`
+`UserHandler.Get`, `UserHandler.Update`). This is why
+`TestZeroPermissionRoleIsDeniedEverywhere` sends a foreign id to exactly these two routes.
 
 The ten self-service routes need authentication only:
 
@@ -271,6 +302,19 @@ The ten self-service routes need authentication only:
 | `GET /configurations/ui` | The settings the SPA needs to render |
 | `POST /auth/logout`, `POST /auth/change-password` | The caller's own session and password |
 
+`POST /api-keys` needs no key, but refuses three callers: an API-key caller (403 `FORBIDDEN`), a
+customer account (403 `FORBIDDEN`), and a session whose sign-in is more than 15 minutes old or a
+token from `POST /auth/refresh`, which carries no sign-in time (403 `REAUTHENTICATION_REQUIRED`)
+(`internal/handler/apikey_handler.go` `APIKeyHandler.Create`; see
+[Least-privilege integration user](#least-privilege-integration-user)).
+
+Two routes are outside both tables because they need no authentication. `POST /auth/register` is
+open only while the setting `security.allow_public_registration` is on: it ships off, and
+`middleware.RequireRegistrationEnabled` (`internal/middleware/registration.go`) answers 403 when
+it is off or cannot be read. The account it creates is always a `customer`, whatever role the
+client sends. `GET /auth/registration` reports `enabled` and `sso_enabled`
+(`internal/handler/auth_registration.go` `RegistrationStatus`).
+
 Adding a route or a permission: [EXTENDING.md](EXTENDING.md#10-add-a-role-or-a-permission),
 section 10.
 
@@ -279,9 +323,25 @@ section 10.
 A service call that a permission key governs receives the caller's id and the scope the caller
 holds that one key at: `all`, `own`, or not held. The handler reads it with `permissionScope` (or
 `viewerFor` for a `service.LeadViewer`), and a service that loads the actor itself reads
-`permissions.ForUser(actor).Scope(key)`. The service decides from that scope alone; no system role
-is passed through, so a custom role and a system role holding a key at the same scope get the same
-answer. On the system matrix admin holds all eight keys below at `all`, and the other roles hold
+`permissions.ForUser(actor).Scope(key)`. The service decides from that scope, so a custom role and
+a system role holding a key at the same scope get the same answer, except in three places where
+the system role still decides:
+
+- The dashboard aggregates `GET /dashboard/stats`, `/dashboard/leads-by-status`,
+  `/dashboard/tickets-by-priority`, `/dashboard/tasks-by-status` and
+  `/dashboard/sales-performance` are computed at `aggregateScope`
+  (`internal/handler/permission_context.go` `aggregateScope`): the four system roles get `all`
+  whatever scope they hold, and a custom role gets the scope it holds the key at, or zero when it
+  does not hold it.
+- Quote create: for a system role, `internal/handler/permission_context.go` `quoteCreateRole`
+  hands the role to `QuoteService.Create`, which lets only the admin role name another owner or
+  quote another owner's deal (`internal/service/quote_service.go` `quoteService.Create`); a custom
+  role goes through `CreateWithPolicy` with `internal/handler/permission_context.go`
+  `quoteCreatePolicy`.
+- `POST /leads/{id}/assign` (`internal/handler/permission_context.go` `mayAssignLeadTo`), described
+  under [Custom roles and scopes](#custom-roles-and-scopes).
+
+On the system matrix admin holds all eight keys below at `all`, and the other roles hold
 them as the matrix says (sales `own` on most, support `own` on `tickets.update` and
 `tasks.update`, customer `own` on `tasks.update`).
 
@@ -366,8 +426,9 @@ left alone on purpose and write no account row:
   `PUT` on the caller's own id that also carries `role` or `is_active` is governed and writes the
   row;
 - the erasure of a customer login through `DELETE /customers/{id}` or a lead erasure cascade, which
-  is not a governed write. The `migration` rows of #524 record
-the role's stored permission rows, which can include a key the catalogue no longer resolves;
+  is not a governed write.
+
+The `migration` rows of #524 record the role's stored permission rows, which can include a key the catalogue no longer resolves;
 the role API records the resolved set. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -426,9 +487,13 @@ each; NULL when the callback did not get that far or the claim was malformed); `
 and to the `/48` prefix for IPv6, empty when it does not parse); `user_agent_family`
 (`<browser> on <OS>` from fixed lists: Edge, Opera, Firefox, Chrome, Safari, curl or Other, on
 iOS, Android, ChromeOS, Windows, macOS, Linux or Other; empty without a `User-Agent`);
-`attempts` (1, or for an `api_key` row the number of refusals it counts); `aggregate_key`
-(internal and never returned or logged: `api_key|<reason>|<user id or 0>|<client network>|<UTC
-minute>` on an `api_key` row, NULL on every other row; unique, and NULLs never collide). There is
+`attempts` (1, or for a refused `password`, `refresh`, `scim` or `api_key` row the number of
+refusals it counts); `aggregate_key` (internal and never returned or logged:
+`<method>|<reason>|<user id or 0>|<client network>|<UTC minute>` on every refused `password`,
+`refresh`, `scim` and `api_key` row, NULL on every other row; unique, and NULLs never collide;
+`internal/service/auth_audit.go` `authAuditAggregateKey`, `authAuditService.recordAggregated`,
+`authAuditService.RecordPassword`, `authAuditService.RecordRefresh`,
+`authAuditService.RecordAPIKeyFailure`). There is
 no foreign key and no soft delete.
 
 **Never stored.** An email address, a name, a subject (`sub`), a password, an access, refresh,
@@ -532,10 +597,11 @@ value is no filter; an unknown value, a `user_id` that is not a positive integer
 that does not parse, or a `from` that is not before `to` is a 400 `VALIDATION_ERROR` with
 `error.details` keyed by the parameter (`to` for the range) and the value not echoed. Each row
 carries exactly the stored columns: `id`, `created_at`, `method`, `outcome`, `reason`, `user_id`,
-`attempt_id`, `request_id`, `subject_ref`, `claim_roles`, `claim_groups` (decoded to arrays),
-`client_network`, `user_agent_family` and `attempts`; the nullable ones are `null`, `aggregate_key`
-is not returned, and nothing is joined (no email, no name). An `api_key` row with `attempts`
-above 1 holds the first refusal of its minute: a later refusal of that minute cannot be found by
+`attempt_id`, `api_key_id`, `request_id`, `subject_ref`, `claim_roles`, `claim_groups`
+(decoded to arrays), `client_network`, `user_agent_family` and `attempts`; the nullable ones are `null`, `aggregate_key`
+is not returned, and nothing is joined (no email, no name); `api_key_id` is
+`internal/handler/auth_audit_log_handler.go` `AuthAuditEntryResponse.APIKeyID`. An aggregated refused row (`password`,
+`refresh`, `scim` or `api_key`) with `attempts` above 1 holds the first refusal of its minute: a later refusal of that minute cannot be found by
 its request id, and `created_at` is when the bucket's first refusal came, not its last. The SPA shows the same rows, with the same filters, under Settings > Sign-in
 audit (`/settings/sign-in-audit`, shown and opened only with `audit.sign_ins_view`).
 
@@ -607,7 +673,8 @@ below) and #470 its create and replace (see
 [Users create and replace](#users-create-and-replace-470)) and #471 its patch, which also
 deprovisions (see [Users patch](#users-patch-471)), and #504 its delete, a deactivation that never
 erases (see [Users delete](#users-delete-504)), and #506 the Groups read and members patch (see
-[Groups](#groups-506)). `/Schemas/{id}`,
+[Groups](#groups-506)), and #630 the group create, which only resolves an existing mapping value
+(`POST /scim/v2/Groups`). `/Schemas/{id}`,
 `/ResourceTypes/{id}` and a SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
 router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
@@ -1208,8 +1275,8 @@ and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the pat
 #504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases;
 #506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`), the groups-claim
 values of the role mapping, whose members patch recomputes the members' roles. SCIM bulk
-operations, `/Schemas/{id}`, `/ResourceTypes/{id}` and creating, renaming or deleting a group
-through SCIM are not implemented. The rest of the note
+operations, `/Schemas/{id}`, `/ResourceTypes/{id}` and creating a *new* group value, renaming or
+deleting a group through SCIM are not implemented; a POST only resolves an existing value (#630). The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)
@@ -1585,8 +1652,9 @@ a listener) when `SERVER_MODE` is `production`, whether it comes from the enviro
 
 ### Design conditions
 
-**Sign-in.** OIDC authorization code flow with PKCE, against one or more configured issuers (an
-Okta org or custom authorization server, an Entra ID tenant). The ID token is validated against
+**Sign-in.** OIDC authorization code flow with PKCE, against one configured issuer,
+`security.sso.issuer_url` (or `OIDC_ISSUER_URL` when that is empty): an Okta org or custom
+authorization server, or an Entra ID tenant. The ID token is validated against
 the issuer's published keys (issuer, audience, expiry, nonce).
 
 **Identity linking.** A `user_identities` table links an external identity to a `users` row. It
@@ -1603,7 +1671,8 @@ least-privilege account: it gets the role the mapping below yields and nothing m
 identity that matches no mapping gets no access (deny by default, as in phase 1).
 
 **Role mapping.** An IdP group or app role maps to a role id (a system role or a custom role),
-in a table an administrator edits. The mapping is by the provider's stable identifier, not by a
+held in the encrypted configuration entry `security.sso.role_mapping` (or `OIDC_ROLE_MAPPING` when
+that is empty), which an administrator edits in Settings > Single sign-on. The mapping is by the provider's stable identifier, not by a
 display name:
 
 - Entra ID sends groups as object ids, at most 200 in a token. Above that the groups claim is

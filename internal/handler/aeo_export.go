@@ -50,7 +50,7 @@ var aeoExportCSVColumns = []string{
 // @Description The success body is NOT the JSON envelope: it is the raw file. CSV: Content-Type text/csv; charset=utf-8, Content-Disposition attachment; filename=aeo-export-run-<id>.csv or aeo-export-<days>d-<YYYY-MM-DD>.csv, where the date is the last day of the window (UTC). Columns, in this order: run_id, run_trigger, run_status, run_started_at, answer_id, answer_created_at, prompt_id, prompt_text, provider, model, brand_mentioned, first_mention_pos, latency_ms, error, competitor_mentions, citation_id, citation_url, citation_domain, citation_is_owned, citation_competitor_name. One row per citation, and one row with empty citation cells per answer without citations; the answer text is not in the CSV. Timestamps are RFC 3339 UTC, booleans true/false, competitor_mentions is name=count pairs sorted by name and joined by ';'. A text cell starting with =, @, a tab, a carriage return, a line feed, a full-width ＝ ＋ － ＠, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula.
 // @Description JSON: Content-Type application/json; charset=utf-8, the same file names with .json; the body is models.AEOExport (format_version 1, generated_at, selection, runs, answers with answer_text, competitor_mentions as an object and citations as an array). The run-ownership columns are never exported. An empty selection is a 200 with the header row only, or empty arrays.
 // @Description At most 10,000 answers are exported; a larger selection is refused with 422 before any citation is read. Every row is read before the first byte is written, so a failure is a JSON error, never a truncated file. Errors use the JSON envelope and carry no Content-Disposition header.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce text/csv
 // @Produce json
@@ -62,7 +62,7 @@ var aeoExportCSVColumns = []string{
 // @Success 200 {object} models.AEOExport "The export file (raw body, not the envelope): CSV text, or this JSON document"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - invalid format, run_id or days, or run_id together with days; error.details is keyed by the parameter name (format, run_id, days) and never echoes the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - run_id names no run (message 'AEO run not found')"
 // @Failure 422 {object} utils.APIResponse{error=utils.APIError} "EXPORT_TOO_LARGE - the selection holds more than 10,000 answers; error.details.max_answers is 10000; choose a shorter window or a single run"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"

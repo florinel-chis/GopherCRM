@@ -47,7 +47,7 @@ func productExternalIDWriterRole(c *gin.Context) bool {
 
 // CreateExternalID godoc
 // @Summary Map an external identity to a product
-// @Description Admin only (route guard, repeated in the handler); sales gets 403, support and customer get 403 on every product route. Maps the (source, scope, external_id) triple to the live product, active or not, in one transaction that locks the product row and inserts the mapping (#239). The triple is unique across all products and compared exactly (case-sensitive): a triple already mapped, to this product or another one, is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or deleted product is 404 and nothing is written. Deleting the product later hard-deletes its mappings, after which the triple can be mapped again. products.sku is unrelated and stays non-unique. There is no update: delete and re-create instead.
+// @Description Needs products.update (the admin system role holds it), checked by the route guard and again in the handler; the sales, support and customer system roles do not hold it. Maps the (source, scope, external_id) triple to the live product, active or not, in one transaction that locks the product row and inserts the mapping (#239). The triple is unique across all products and compared exactly (case-sensitive): a triple already mapped, to this product or another one, is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or deleted product is 404 and nothing is written. Deleting the product later hard-deletes its mappings, after which the triple can be mapped again. products.sku is unrelated and stays non-unique. There is no update: delete and re-create instead.
 // @Tags products
 // @Accept json
 // @Produce json
@@ -58,7 +58,7 @@ func productExternalIDWriterRole(c *gin.Context) bool {
 // @Success 201 {object} utils.APIResponse{data=models.ProductExternalID} "Mapping created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid product ID, or a body that does not bind (Invalid request format). VALIDATION_ERROR: a refused field; details.field names it (source, scope or external_id) and details.reason the rule, never the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live product with this id ('Product not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the triple is already mapped to a product"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
@@ -118,7 +118,7 @@ func (h *ProductHandler) CreateExternalID(c *gin.Context) {
 
 // DeleteExternalID godoc
 // @Summary Delete an external identity mapping of a product
-// @Description Admin only (route guard, repeated in the handler); sales gets 403, support and customer get 403 on every product route. Hard-deletes the mapping when it belongs to the product at the path (#239); the triple can then be mapped again. A mapping id that does not exist or belongs to another product is 404 and nothing is deleted.
+// @Description Needs products.update (the admin system role holds it), checked by the route guard and again in the handler; the sales, support and customer system roles do not hold it. Hard-deletes the mapping when it belongs to the product at the path (#239); the triple can then be mapped again. A mapping id that does not exist or belongs to another product is 404 and nothing is deleted.
 // @Tags products
 // @Produce json
 // @Security BearerAuth
@@ -128,7 +128,7 @@ func (h *ProductHandler) CreateExternalID(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid product ID or Invalid mapping ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the product has no mapping with this id ('External id mapping not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the mapping could not be deleted"

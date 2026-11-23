@@ -130,7 +130,7 @@ type AutomationDryRunRequest struct {
 
 // CreateRule godoc
 // @Summary Create an automation rule
-// @Description Create a follow-up automation rule with its ordered steps. Roles: admin only. entity_type is lead, deal or ticket; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed (deal rules only), ticket_created, ticket_updated, ticket_status_changed (ticket rules only) or schedule; trigger carries from/to for a status, stage or ticket status change (ticket statuses on ticket rules), filters.ticket_status on a ticket schedule, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.
+// @Description Create a follow-up automation rule with its ordered steps. Needs automation.rules_manage (the admin system role holds it). entity_type is lead, deal or ticket; trigger_type is lead_created, lead_updated, lead_status_changed, lead_form_submitted (lead rules only), deal_created, deal_updated, deal_stage_changed (deal rules only), ticket_created, ticket_updated, ticket_status_changed (ticket rules only) or schedule; trigger carries from/to for a status, stage or ticket status change (ticket statuses on ticket rules), filters.ticket_status on a ticket schedule, an optional form_id for lead_form_submitted and hour_utc, filters and stale_days for a schedule. Steps are wait, condition, create_task, assign_owner, send_email and notify, numbered 1..n in the given order. Validation (nothing is written when it fails): name required, at most 200 characters; description at most 65535 bytes; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range else_position or an unknown placeholder is 400 INVALID_INPUT; an unknown, inactive or customer user id is 400 INVALID_REFERENCE when it is the first refusal. Every refused field is listed in error.details.fields as {field, code, message}: field is a path into the body (name, trigger.hour_utc, steps[i].config.title with i counted from zero), code one of required, too_long, line_break, invalid_value, out_of_range, not_applicable, unknown_placeholder, too_many, unknown_reference; error.message and error.code are those of the first refused field. An unknown entity_type stops the checks, an unknown trigger_type skips the trigger checks, and no steps or more than 20 skips the step checks. Defaults are stored: recipient owner, else stop. A new rule is version 1, records the caller as created_by_id, and is disabled unless enabled is true. Runs are started by the background worker, which matches each event against the rules that are enabled when it dispatches the event.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -140,7 +140,7 @@ type AutomationDryRunRequest struct {
 // @Success 201 {object} utils.APIResponse{data=models.AutomationRule} "Rule created with its steps"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /automation/rules [post]
@@ -166,7 +166,7 @@ func (h *AutomationHandler) CreateRule(c *gin.Context) {
 
 // ListRules godoc
 // @Summary List automation rules
-// @Description One page of live (not deleted) rules with their steps. Roles: admin only. Filters: entity_type and enabled; an unknown entity_type or a non-boolean enabled is 400. sort_by must be one of the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first.
+// @Description One page of live (not deleted) rules with their steps. Needs automation.rules_manage (the admin system role holds it). Filters: entity_type and enabled; an unknown entity_type or a non-boolean enabled is 400. sort_by must be one of the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -181,7 +181,7 @@ func (h *AutomationHandler) CreateRule(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.AutomationRule,meta=utils.APIMeta} "One page of rules; meta carries page, per_page, total and total_pages"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or enabled is not a boolean"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /automation/rules [get]
@@ -217,7 +217,7 @@ func (h *AutomationHandler) ListRules(c *gin.Context) {
 
 // GetRule godoc
 // @Summary Get an automation rule
-// @Description One live rule with its steps in position order. Roles: admin only. A deleted rule is 404.
+// @Description One live rule with its steps in position order. Needs automation.rules_manage (the admin system role holds it). A deleted rule is 404.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -226,7 +226,7 @@ func (h *AutomationHandler) ListRules(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRule} "The rule"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -248,7 +248,7 @@ func (h *AutomationHandler) GetRule(c *gin.Context) {
 
 // UpdateRule godoc
 // @Summary Update an automation rule
-// @Description Replace the rule wholesale with the same body as the create. Roles: admin only. The body is validated first (the same 400 answers and error.details.fields as the create, before the rule is looked up), then in one transaction the rule row is locked, the version incremented, the steps replaced (new step ids) and the rule's pending, waiting and running runs cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the row lock, so a disable committed meanwhile is not undone. created_by_id is kept. Any failure leaves the rule, its steps and its runs untouched.
+// @Description Replace the rule wholesale with the same body as the create. Needs automation.rules_manage (the admin system role holds it). The body is validated first (the same 400 answers and error.details.fields as the create, before the rule is looked up), then in one transaction the rule row is locked, the version incremented, the steps replaced (new step ids) and the rule's pending, waiting and running runs cancelled with cancel_reason rule_changed. enabled absent keeps the stored switch as read under the row lock, so a disable committed meanwhile is not undone. created_by_id is kept. Any failure leaves the rule, its steps and its runs untouched.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -259,7 +259,7 @@ func (h *AutomationHandler) GetRule(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRule} "Rule updated with its new version and steps"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -287,7 +287,7 @@ func (h *AutomationHandler) UpdateRule(c *gin.Context) {
 
 // EnableRule godoc
 // @Summary Enable an automation rule
-// @Description Switch the rule on and return it. Roles: admin only. Idempotent; the version is not changed. The background worker matches events against the rules enabled at dispatch time, so events recorded shortly before but not yet dispatched can also start runs.
+// @Description Switch the rule on and return it. Needs automation.rules_manage (the admin system role holds it). Idempotent; the version is not changed. The background worker matches events against the rules enabled at dispatch time, so events recorded shortly before but not yet dispatched can also start runs.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -296,7 +296,7 @@ func (h *AutomationHandler) UpdateRule(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRule} "The rule, enabled"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -307,7 +307,7 @@ func (h *AutomationHandler) EnableRule(c *gin.Context) {
 
 // DisableRule godoc
 // @Summary Disable an automation rule
-// @Description Switch the rule off and cancel its pending, waiting and running runs with cancel_reason rule_disabled, in one transaction, and return the rule. Roles: admin only. The version is not changed; disabling a disabled rule still cancels any active run.
+// @Description Switch the rule off and cancel its pending, waiting and running runs with cancel_reason rule_disabled, in one transaction, and return the rule. Needs automation.rules_manage (the admin system role holds it). The version is not changed; disabling a disabled rule still cancels any active run.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -316,7 +316,7 @@ func (h *AutomationHandler) EnableRule(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRule} "The rule, disabled"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -342,7 +342,7 @@ func (h *AutomationHandler) setEnabled(c *gin.Context, enabled bool) {
 
 // DeleteRule godoc
 // @Summary Delete an automation rule
-// @Description Soft-delete the rule and cancel its pending, waiting and running runs with cancel_reason rule_deleted, in one transaction. Roles: admin only. Runs and their logs stay readable; they report the rule's name with rule_deleted true.
+// @Description Soft-delete the rule and cancel its pending, waiting and running runs with cancel_reason rule_deleted, in one transaction. Needs automation.rules_manage (the admin system role holds it). Runs and their logs stay readable; they report the rule's name with rule_deleted true.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -351,7 +351,7 @@ func (h *AutomationHandler) setEnabled(c *gin.Context, enabled bool) {
 // @Success 204 "Rule deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -372,7 +372,7 @@ func (h *AutomationHandler) DeleteRule(c *gin.Context) {
 
 // DryRun godoc
 // @Summary Dry-run an automation rule
-// @Description Simulate a saved rule against one live record of its entity type and report each step's would-be outcome: the outcome, the simulated time, the resolved user ids, the task due date and link, the owner from/to and the branch taken. Roles: admin only. Waits advance the simulated clock without pausing, an earlier simulated assign feeds later conditions and recipients, and steps skipped by a condition branch are not listed. The rule is simulated whether or not it is enabled. Nothing is written, sent or notified. Order of checks: id, body binding, rule lookup, entity type match, record lookup.
+// @Description Simulate a saved rule against one live record of its entity type and report each step's would-be outcome: the outcome, the simulated time, the resolved user ids, the task due date and link, the owner from/to and the branch taken. Needs automation.rules_manage (the admin system role holds it). Waits advance the simulated clock without pausing, an earlier simulated assign feeds later conditions and recipients, and steps skipped by a condition branch are not listed. The rule is simulated whether or not it is enabled. Nothing is written, sent or notified. Order of checks: id, body binding, rule lookup, entity type match, record lookup.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -383,7 +383,7 @@ func (h *AutomationHandler) DeleteRule(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationDryRunReport} "Per-step report"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST when the id is not an unsigned integer (0 is not rejected here) or the body is not valid JSON; VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message); INVALID_INPUT when entity_type differs from the rule's"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live rule with this id, or no live record with this entity_id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -410,7 +410,7 @@ func (h *AutomationHandler) DryRun(c *gin.Context) {
 
 // DryRunDraft godoc
 // @Summary Dry-run an unsaved automation rule
-// @Description Simulate an unsaved rule body against one live record: the rule editor's current values, for a new rule or for unsaved edits of an existing one. Roles: admin only. The body goes through the same normalisation and validation as the create (400 INVALID_INPUT or INVALID_REFERENCE with error.details.fields), then is simulated like POST /automation/rules/{id}/dry-run. Nothing is saved, no transaction is started and nothing is written, sent or notified; a saved rule's version and steps are untouched. The report has draft true and rule_id and rule_version 0. enabled in the rule body is ignored.
+// @Description Simulate an unsaved rule body against one live record: the rule editor's current values, for a new rule or for unsaved edits of an existing one. Needs automation.rules_manage (the admin system role holds it). The body goes through the same normalisation and validation as the create (400 INVALID_INPUT or INVALID_REFERENCE with error.details.fields), then is simulated like POST /automation/rules/{id}/dry-run. Nothing is saved, no transaction is started and nothing is written, sent or notified; a saved rule's version and steps are untouched. The report has draft true and rule_id and rule_version 0. enabled in the rule body is ignored.
 // @Tags automation
 // @Accept json
 // @Produce json
@@ -420,7 +420,7 @@ func (h *AutomationHandler) DryRun(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationDryRunReport} "Per-step report of the draft"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError{details=AutomationRuleErrorDetails}} "VALIDATION_ERROR when entity_type is missing or not lead/deal/ticket or entity_id is missing or 0 (error.details maps EntityType or EntityID to a message; a missing rule object is not a binding error, it fails the rule checks instead); INVALID_INPUT - the rule body was refused (error.details.fields lists every refused field; error.message and error.code are those of the first); INVALID_REFERENCE - the same, when the first refusal is an unknown, deactivated or customer user_id; BAD_REQUEST (message Invalid request format) when the body is not valid JSON or a value has the wrong JSON type; INVALID_INPUT without details when entity_type differs from rule.entity_type"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.rules_manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no live record with this entity_id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
@@ -443,7 +443,7 @@ func (h *AutomationHandler) DryRunDraft(c *gin.Context) {
 
 // ListRuns godoc
 // @Summary List automation runs
-// @Description One page of runs, without their step logs. Roles: admin sees every run, ticket runs included; sales only runs whose lead or deal it currently owns, never a ticket run (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments); support and customers get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a sales user therefore sees the names of the rules that ran on its records.
+// @Description One page of runs, without their step logs. Needs automation.runs_view: at scope all every run, ticket runs included; at scope own only runs whose lead or deal the caller currently owns, never a ticket run (applied inside the query, so meta.total counts that set; ownership is read at request time, so it follows reassignments). The admin system role holds it at scope all, the sales system role at scope own; the support and customer system roles do not hold it and get 403 from the route guard. Filters: status, rule_id, entity_type, entity_id (each validated, 400 when malformed). sort_by is limited to the listed columns (anything else is 400). An absent sort_by sorts by created_at descending and then ignores sort_order; with a sort_by, sort_order is asc or desc and anything else means desc. Ties are broken by id in the same direction. Pagination: page (1-based) overrides offset when greater than 0; limit defaults to 20 and is clamped to 100; the checks run before any query, sort first. Each run carries rule_name, the rule's current name (also for a deleted rule, then with rule_deleted true), and never the rule's trigger or steps; a caller at scope own therefore sees the names of the rules that ran on its records.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -460,7 +460,7 @@ func (h *AutomationHandler) DryRunDraft(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.AutomationRun,meta=utils.APIMeta} "One page of runs; meta carries page, per_page, total and total_pages"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - sort_by is not an allowed column (message Invalid sort column), status is unknown, entity_type is not lead, deal or ticket (message entity_type must be lead, deal or ticket), or rule_id or entity_id is not a positive integer"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin or sales role required"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.runs_view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /automation/runs [get]
@@ -501,7 +501,7 @@ func (h *AutomationHandler) ListRuns(c *gin.Context) {
 
 // GetRun godoc
 // @Summary Get an automation run
-// @Description One run with its step log in position order, with rule_name and rule_deleted as in the list and never the rule's trigger or steps. Roles: admin any run; sales only runs on a lead or deal it currently owns (any other run is 404, indistinguishable from a missing one); support and customers get 403 from the route guard.
+// @Description One run with its step log in position order, with rule_name and rule_deleted as in the list and never the rule's trigger or steps. Needs automation.runs_view: at scope all any run; at scope own only runs on a lead or deal the caller currently owns (any other run is 404, indistinguishable from a missing one). The admin system role holds it at scope all, the sales system role at scope own; the support and customer system roles do not hold it and get 403 from the route guard.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -510,8 +510,8 @@ func (h *AutomationHandler) ListRuns(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRun} "The run with steps"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin or sales role required"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no run with this id, or (sales) a run outside the caller's records"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.runs_view (Insufficient permissions)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no run with this id, or (at scope own) a run outside the caller's records"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /automation/runs/{id} [get]
@@ -532,7 +532,7 @@ func (h *AutomationHandler) GetRun(c *gin.Context) {
 
 // CancelRun godoc
 // @Summary Cancel an automation run
-// @Description Cancel a pending, waiting or running run with cancel_reason manual and return it with its step log. Roles: admin only (sales gets 403 from the route guard). A running run performs no further step: its next conditional advance affects zero rows. A completed, failed or cancelled run, or one that finishes between the read and the cancel, is 409.
+// @Description Cancel a pending, waiting or running run with cancel_reason manual and return it with its step log. Needs automation.runs_cancel (the admin system role holds it; the sales system role does not and gets 403). A running run performs no further step: its next conditional advance affects zero rows. A completed, failed or cancelled run, or one that finishes between the read and the cancel, is 409.
 // @Tags automation
 // @Produce json
 // @Security BearerAuth
@@ -541,7 +541,7 @@ func (h *AutomationHandler) GetRun(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AutomationRun} "The run, cancelled"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer (0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - admin role required (route guard)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold automation.runs_cancel (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no run with this id"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "INVALID_STATUS_TRANSITION - the run is already finished"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"

@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The authorization guide (`docs/AUTHORIZATION.md`) and the API reference describe the permission
+  model the routes use (#738). Each permission-guarded operation's 403 response and description
+  name the `permissions.RouteKeys` key that opens it instead of a system role. The guide adds the
+  role routes and their error codes, the registration routes, the own-account rule on
+  `/users/{id}`, the `POST /api-keys` rules, the dashboard and quote-create behaviour of the system
+  roles, the sign-in audit aggregation of refused `password`, `refresh`, `scim` and `api_key` rows
+  and the `api_key_id` column, and the SCIM and single sign-on deliveries since #506. Two tests
+  hold the guide and the API reference to the permission table. Docs and annotations only; no API
+  behaviour changes.
 - The test-case catalog under `docs/testing/` is brought up to date (#742): the API key cases
   describe the finished settings page and its browser test; the users cases and the defect list
   record the fixed users-list total and the per-role creation tests; the cases that waited for a

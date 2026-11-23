@@ -120,9 +120,9 @@ func (req *CompanyRequest) apply(company *models.Company) {
 
 // Create godoc
 // @Summary Create a company
-// @Description Create a company. Roles: admin and sales.
+// @Description Create a company. Needs companies.create (the admin and sales system roles hold it). Naming another user as owner_id also needs companies.assign_owner, which the handler checks (the admin system role holds it, sales does not).
 // @Description Validation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.
-// @Description Owner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.
+// @Description Owner: a caller without companies.assign_owner may only name itself and becomes the owner when owner_id is absent or 0; a caller holding it may name any live user, or leave the company unowned by omitting it. The owner may be any live account; nothing about its role or permissions is checked.
 // @Description A company.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the company.
 // @Description The response is the stored company re-read with its owner and counts (all 0 for a new company).
 // @Tags companies
@@ -134,7 +134,7 @@ func (req *CompanyRequest) apply(company *models.Company) {
 // @Success 201 {object} utils.APIResponse{data=models.Company} "Company created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: a value longer than its column ('<field> is too long (at most N characters)' or the notes byte limit), a blank name, a domain that is not a host, or a website that is not an http(s) URL. INVALID_REFERENCE: owner_id names no live user"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or a sales user named another owner ('You can only assign companies to yourself')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold companies.create (Insufficient permissions); or a caller without companies.assign_owner named another owner ('You can only assign companies to yourself')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another live company already uses the normalised domain"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -185,7 +185,7 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List companies
-// @Description One page of live companies, each with its owner and its customer_count, lead_count and deal_count (counted over all live records, whoever owns them). Roles: admin, sales and support.
+// @Description One page of live companies, each with its owner and its customer_count, lead_count and deal_count (counted over all live records, whoever owns them). Needs companies.view (the admin, sales and support system roles hold it).
 // @Description search is a substring match on name, domain, industry and city (case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only). sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc (case-insensitive) becomes desc.
 // @Description data is the array of companies; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
@@ -201,7 +201,7 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Company,meta=utils.APIMeta} "One page of companies"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold companies.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /companies [get]
@@ -232,7 +232,7 @@ func (h *CompanyHandler) List(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a company
-// @Description One live company with its owner and its customer_count, lead_count and deal_count. Roles: admin, sales and support (every company is visible to all three).
+// @Description One live company with its owner and its customer_count, lead_count and deal_count. Needs companies.view; every company is visible to every caller holding it (the admin, sales and support system roles hold it).
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
@@ -241,7 +241,7 @@ func (h *CompanyHandler) List(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Company} "The company"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold companies.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -266,7 +266,7 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Replace a company
-// @Description Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.
+// @Description Replace a company's fields. Needs companies.update (the admin and sales system roles hold it); a caller holding it may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (needs companies.assign_owner), another id sets it (without companies.assign_owner only the caller's own id; the admin system role holds the key, sales does not). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.
 // @Description When the update changed at least one stored value of the company (compared with the row read under lock in the update's transaction), a company.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none. A company deleted after the handler's read and before that lock answers 404 NOT_FOUND with nothing written.
 // @Description The response is the company re-read with its owner and counts.
 // @Tags companies
@@ -279,7 +279,7 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Company} "The updated company"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID'), a value longer than its column, a blank name, a domain that is not a host, or a website that is not an http(s) URL. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). INVALID_REFERENCE: the owner (sent or kept) names no live user"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; a sales user named another owner ('You can only assign companies to yourself') or sent owner_id 0 ('Only administrators can clear a company's owner')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold companies.update (Insufficient permissions); a caller without companies.assign_owner named another owner ('You can only assign companies to yourself') or sent owner_id 0 ('Only administrators can clear a company's owner')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another live company already uses the normalised domain"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -346,7 +346,7 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a company
-// @Description Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company. A company.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the company) is written in the same transaction; no lead.updated, customer.updated or deal.updated event is written for the unlinked leads, customers and deals.
+// @Description Soft-delete a company. Needs companies.delete (the admin system role holds it). In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company. A company.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the company) is written in the same transaction; no lead.updated, customer.updated or deal.updated event is written for the unlinked leads, customers and deals.
 // @Tags companies
 // @Produce json
 // @Security BearerAuth
@@ -355,7 +355,7 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold companies.delete (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -379,7 +379,7 @@ func (h *CompanyHandler) Delete(c *gin.Context) {
 
 // ListCustomers godoc
 // @Summary List a company's customers
-// @Description One page of the live customers linked to the company, newest first (created_at descending, then id). Roles: admin, sales and support; every role sees every linked customer.
+// @Description One page of the live customers linked to the company, newest first (created_at descending, then id). Needs customers.view and companies.view, both checked by the route guard (the admin, sales and support system roles hold both); every caller holding them sees every linked customer.
 // @Description data is the array of customers; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
 // @Produce json
@@ -392,7 +392,7 @@ func (h *CompanyHandler) Delete(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Customer,meta=utils.APIMeta} "One page of customers"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin, sales or support"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold customers.view, or does not hold companies.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -421,7 +421,7 @@ func (h *CompanyHandler) ListCustomers(c *gin.Context) {
 
 // ListLeads godoc
 // @Summary List a company's leads
-// @Description One page of the live leads linked to the company, newest first (created_at descending, then id), each with its owner loaded. Roles: admin (every lead of the company) and sales (only the leads it owns; the filter is applied in the query, so meta.total counts only those). Support is refused, as on the leads endpoints.
+// @Description One page of the live leads linked to the company, newest first (created_at descending, then id), each with its owner loaded. Needs leads.view and companies.view, both checked by the route guard. The leads.view scope decides the rows: at scope all every lead of the company, at scope own only the leads the caller owns (the filter is applied in the query, so meta.total counts only those). The admin system role holds leads.view at scope all, sales at scope own; support does not hold it and is refused, as on the leads endpoints.
 // @Description data is the array of leads; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags companies
 // @Produce json
@@ -434,7 +434,7 @@ func (h *CompanyHandler) ListCustomers(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Lead,meta=utils.APIMeta} "One page of leads"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold leads.view, or does not hold companies.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"

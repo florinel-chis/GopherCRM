@@ -54,7 +54,7 @@ func externalIDWriterRole(c *gin.Context) bool {
 
 // CreateExternalID godoc
 // @Summary Map an external identity to a customer
-// @Description Admin and sales (route guard, repeated in the handler); support and customer get 403. Maps the (source, scope, external_id) triple to the live customer in one transaction that locks the customer row and inserts the mapping (#212). The triple is unique across all customers and compared exactly (case-sensitive): a triple already mapped, to this customer or another one, is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or erased customer is 404 and nothing is written. Erasing the customer later deletes its mappings, after which the triple can be mapped again. There is no update: delete and re-create instead.
+// @Description Needs customers.update (the admin and sales system roles hold it), checked by the route guard and again in the handler; the support and customer system roles do not hold it. Maps the (source, scope, external_id) triple to the live customer in one transaction that locks the customer row and inserts the mapping (#212). The triple is unique across all customers and compared exactly (case-sensitive): a triple already mapped, to this customer or another one, is 409. source is 1-64, scope 0-128 (absent means the empty string) and external_id 1-255 characters; each must be valid UTF-8 without control characters or leading or trailing whitespace. A missing or erased customer is 404 and nothing is written. Erasing the customer later deletes its mappings, after which the triple can be mapped again. There is no update: delete and re-create instead.
 // @Tags customers
 // @Accept json
 // @Produce json
@@ -65,7 +65,7 @@ func externalIDWriterRole(c *gin.Context) bool {
 // @Success 201 {object} utils.APIResponse{data=models.CustomerExternalID} "Mapping created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID, or a body that does not bind (Invalid request format). VALIDATION_ERROR: a refused field; details.field names it (source, scope or external_id) and details.reason the rule, never the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold customers.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live customer with this id"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the triple is already mapped to a customer"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
@@ -125,7 +125,7 @@ func (h *CustomerHandler) CreateExternalID(c *gin.Context) {
 
 // DeleteExternalID godoc
 // @Summary Delete an external identity mapping of a customer
-// @Description Admin and sales (route guard, repeated in the handler); support and customer get 403. Hard-deletes the mapping when it belongs to the customer at the path (#212); the triple can then be mapped again. A mapping id that does not exist or belongs to another customer is 404 and nothing is deleted.
+// @Description Needs customers.update (the admin and sales system roles hold it), checked by the route guard and again in the handler; the support and customer system roles do not hold it. Hard-deletes the mapping when it belongs to the customer at the path (#212); the triple can then be mapped again. A mapping id that does not exist or belongs to another customer is 404 and nothing is deleted.
 // @Tags customers
 // @Produce json
 // @Security BearerAuth
@@ -135,7 +135,7 @@ func (h *CustomerHandler) CreateExternalID(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid customer ID or Invalid mapping ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold customers.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the customer has no mapping with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the mapping could not be deleted"

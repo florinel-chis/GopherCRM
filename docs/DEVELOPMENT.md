@@ -3506,10 +3506,13 @@ parameters, `basePath` equal to the `API_PREFIX` default in `internal/config`, a
 route (behind `middleware.Auth` exactly the two alternatives `[{BearerAuth: []}, {ApiKeyAuth: []}]`,
 with no anonymous `{}` alternative or combined requirement; none on a public route; no global
 `security`; the extractor tracks `Use`, `Group` and per-route middleware, also through variables
-such as `guard := middleware.RequireRole(...)`); requires every status the route middleware can
-answer with to be a documented response (401 for `middleware.Auth`, 403 for `RequireRole` and
-`RequireRegistrationEnabled`, 429 for the three rate limiters); identifies the handler each route
-registers (a method value on a typed handler variable, a function, or a factory call such as
+such as `strict := middleware.RateLimitStrict()`); requires every status the route middleware
+can answer with to be a documented response (401 for `middleware.Auth`, 403 for
+`middleware.RequireRegistrationEnabled`, 429 for the three rate limiters). The 403 of a protected
+route comes from the permission guard `handler.Protected` builds from `permissions.RouteKeys`,
+which the extractor does not count; `TestAPIReferenceNamesRouteKeys` in `internal/handler` holds
+every such operation to a documented 403 that names the route's keys. The extractor also
+identifies the handler each route registers (a method value on a typed handler variable, a function, or a factory call such as
 `handler.RegistrationStatus(...)`), requires that handler to carry the route's `@Router` line and
 refuses an `@Router` line for a routed path on any other function; compares the inputs of that
 handler (query parameters, form fields and a bound body, found by the same tool through the
