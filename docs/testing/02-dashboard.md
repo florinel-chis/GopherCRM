@@ -42,9 +42,10 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   (`internal/handler/routes.go` `SetupDashboardRoutes`) — and ROADMAP no longer lists it. Cases here
   assert the guard, not the old defect.
 - A **customer**-role account is obtainable in-test from public `POST /auth/register`, which always
-  forces `customer`. **Sales** and **support** accounts are not: they require an admin-authenticated
-  `POST /users`, and no e2e helper does that today (`gocrm-ui/e2e/helpers/` contains only
-  `admin-auth.ts`). Sales/support cases are marked *blocked* on that helper.
+  forces `customer`. **Sales** and **support** accounts require an admin-authenticated
+  `POST /users`: `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` does that, and
+  `APIClient.login` signs the new account in (`gocrm-ui/e2e/tests/role-audit.spec.ts` and
+  `sign-in-audit.spec.ts` use both). Sales/support cases are planned against `dashboard.spec.ts`.
 - Records used by these cases must be created by the test through the faker generators in
   `gocrm-ui/e2e/fixtures/admin-user.ts` (`generateLeadData`, `generateCustomerData`,
   `generateTicketData`, `generateTaskData`). Never delete a record the test did not create: user,
@@ -123,8 +124,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `LeadHandler.List` narrows to the caller's own leads.
 - **Known issue:** the dashboard totals are unscoped for every permitted role. The swagger
   description on `GetStats` states this explicitly; the UI does not.
-- **Automation:** blocked — needs a role-login helper; only `AdminAuthHelper` exists in
-  `gocrm-ui/e2e/helpers/`
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-DASH-005 — Support-role user sees the full dashboard
 - **Priority:** P1
@@ -138,7 +140,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   /dashboard/new-leads` returns **200 with an empty array**, not 403: `GetNewLeads` falls through to
   the `default` branch and returns `[]models.Lead{}` for support, deliberately, so the page they are
   entitled to load does not break even though `/leads` is admin+sales only.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-DASH-006 — Unauthenticated visit to the dashboard redirects to login
 - **Priority:** P0
@@ -366,7 +370,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** the sidebar hides Leads (the entry needs `leads.view`, held by admin and sales) yet
   the Quick Action navigates to `/leads/new`, which redirects to `/unauthorized`
   (`leads.create`); `POST /leads` returns **403**.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -587,7 +593,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   support response contains only tasks whose `assigned_to_id` is the support user's own id —
   `GetUpcomingTasks` branches on `c.GetString("user_role") == "admin"` and otherwise calls
   `GetUpcomingByAssignee(c.GetUint("user_id"), …)`.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-DASH-032 — `/tasks/upcoming` behaves differently from the dashboard widget and has no role guard
 - **Priority:** P1
@@ -648,9 +656,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `new-leads` returns every lead for admin, only the caller's own leads for sales
   (`GetRecentByOwner`), and an **empty array with status 200** for support. Both endpoints default
   `limit` to 5, cap it at 50 and never return `null`.
-- **Automation:** blocked in the browser — needs a role-login helper; no UI surface renders these
-  widgets. Backend: `internal/integration/dashboard_visibility_integration_test.go`
-  `TestDashboardRecentTicketVisibility{SQLite,MySQL}` and `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}`
+- **Automation:** blocked in the browser — no UI surface renders these widgets. Backend:
+  `internal/integration/dashboard_visibility_integration_test.go` `TestDashboardRecentTicketVisibility{SQLite,MySQL}`
+  and `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}`
 
 ---
 
@@ -764,7 +772,9 @@ are the test's own; only those are deleted.
   1. As sales, `GET /api/v1/dashboard/pipeline`.
 - **Expected:** **200**; stages and the won tile count only the caller's deals. There is no
   owner parameter on this endpoint.
-- **Automation:** blocked — needs a role-login helper. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`). Go:
   `internal/service/deal_service_test.go` `TestDealService_DashboardPipeline`;
   `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestDashboardPipeline`.
 
@@ -779,7 +789,9 @@ are the test's own; only those are deleted.
   support with an empty list, this endpoint refuses, and the dashboard page does not request it
   for support or customer (Vitest `Dashboard.test.tsx` "shows no deal widgets and makes no pipeline
   request for the %s role").
-- **Automation:** blocked — needs a role-login helper for support. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new); the sales or support
+  account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`). Go:
   `internal/handler/dashboard_handler_test.go` `DashboardHandlerTestSuite.TestGetPipeline_RoleMatrix`;
   `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestRolesAndBadFilters`.
 

@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The test-case catalog under `docs/testing/` is brought up to date (#742): the API key cases
+  describe the finished settings page and its browser test; the users cases and the defect list
+  record the fixed users-list total and the per-role creation tests; the cases that waited for a
+  way to sign in as sales, support or customer in the browser suite are re-triaged against
+  `APIClient` in `gocrm-ui/e2e/helpers/sso.ts`; the index is recounted (861 cases, also in
+  `docs/FORKING.md`); `17-webhooks.md` and `18-roles.md` add test plans for outbound webhooks and
+  for roles. `scripts/ci/tests/test_testing_catalog.py` keeps the index counts, the forms note and
+  the FORKING total equal to the case headings. Docs only (#742).
 - `docs/FORKING.md` and `docs/USE_CASES.md` are brought up to date with 1.3.0 (#733): the web UI
   shows and edits quote tax; every event that ends access tokens early is listed, as in the README
   Known Limitations; the lead lookup by external id is routed (`GET /leads?external_id=`, also in

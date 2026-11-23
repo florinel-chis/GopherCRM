@@ -31,8 +31,9 @@ regression anchors, not endorsements.
   `GET /deals/:id/tasks`, limited to admin and sales.
 - The non-admin cases need sales, support and customer accounts. They must be created through the
   admin-guarded `POST /users` with `generateUserData()` from `e2e/fixtures/admin-user.ts` (never a
-  hardcoded address), and a role-login helper is required — none exists yet, which is why those
-  cases are marked *blocked* or *planned* with that note.
+  hardcoded address): `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` does that through the
+  admin's session and `APIClient.login` signs the account in, so those cases are planned against
+  `admin-tasks.spec.ts`.
 - Tasks are **not** subject to GDPR erasure: `TaskHandler.Delete` performs a plain GORM soft delete
   (`internal/service/task_service.go` `taskService.Delete`). Even so, a case must only delete tasks it created
   itself: the list is shared. `TasksPage.deleteTask(title)` takes the task's title, searches for it
@@ -96,7 +97,7 @@ regression anchors, not endorsements.
   1. Log in as the support user.
   2. Navigate to `/tasks`.
 - **Expected:** `GET /api/v1/tasks` returns 200 but is narrowed to `GetByAssignee(currentUserID, …)` in `TaskHandler.List` (`internal/handler/task_handler.go`). Only the support user's own task is listed; `total` counts only their tasks. The "Create Task" button and the per-row edit and delete icons are still rendered — the frontend applies no role gating on this page.
-- **Automation:** blocked — needs a non-admin role-login helper; `e2e/helpers/admin-auth.ts` only handles the seeded admin
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-TASK-006 — Customer role can open the Tasks page
 - **Priority:** P0
@@ -108,7 +109,7 @@ regression anchors, not endorsements.
   3. Click "Tasks".
 - **Expected:** "Tasks" is present in the sidebar (the `title: 'Tasks'` item in `gocrm-ui/src/layouts/MainLayout.tsx` asks for `tasks.view`, which the customer role holds), `/tasks` renders, and `GET /api/v1/tasks` returns 200 with an empty task array for a customer who has never been assigned one. The "Create Task" button is visible even though `POST /tasks` will refuse the role (see TC-TASK-015).
 - **Known issue:** Contrast with Tickets, whose sidebar entry and routes are role-gated. Tasks are visible to a role that cannot meaningfully use them.
-- **Automation:** blocked — needs a customer-role login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -205,7 +206,7 @@ regression anchors, not endorsements.
   3. Fill Title and Due Date and click "Create Task".
 - **Expected:** `TaskForm` unconditionally issues `GET /api/v1/users?is_active=true` (`usersApi.getUsers({ is_active: true })` in `gocrm-ui/src/pages/tasks/TaskForm.tsx`), which is admin-only (`SetupUserRoutes` (`internal/handler/routes.go`)), so the request returns **403** and the autocomplete shows "No options". The submitted body has no `assigned_to_id`, so `POST /tasks` returns **400** with "Failed to create task". A sales or support user therefore cannot create a task through the UI at all, even though `TaskHandler.Create` (`internal/handler/task_handler.go`) explicitly permits both roles.
 - **Known issue:** Not recorded in FEATURES.md row 6.2. The backend intends non-admins to self-assign; the form has no "assign to me" affordance.
-- **Automation:** blocked — needs a non-admin role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-TASK-015 — Customer role is refused task creation by the API
 - **Priority:** P0
@@ -216,7 +217,7 @@ regression anchors, not endorsements.
   2. Fill Title and Due Date and submit.
 - **Expected:** `POST /api/v1/tasks` returns **403** with the message "Only admin, support, and sales users can create tasks" (`internal/handler/task_handler.go` `TaskHandler.Create`). The UI shows the generic "Failed to create task" snackbar — the server's message is not surfaced — and stays on `/tasks/new`.
 - **Known issue:** The route is reachable and the button visible for a role the handler always refuses; the frontend guards the `tasks/*` routes with `tasks.view` only (`requiredPermission="tasks.view"` in `gocrm-ui/src/routes/index.tsx`), which the customer role holds.
-- **Automation:** blocked — needs a customer-role login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-TASK-016 — Lead and customer links are not reachable from the UI
 - **Priority:** P2
@@ -267,7 +268,7 @@ regression anchors, not endorsements.
   3. Click "Update Task".
 - **Expected:** `PUT /api/v1/tasks/{id}` returns **200**, not 403, even when the body repeats the current `assigned_to_id`. `TaskHandler.Update` (`internal/handler/task_handler.go`) only treats an assignee change as a reassignment.
 - **Known issue:** This was G30 in the FEATURES.md Gap Summary — non-admins used to be 403'd for editing their own task. The Go regression test is `TestUpdateTask_NonAdminSameAssignee_Success`; there is no E2E equivalent.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; needs a non-admin role-login helper)
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; a non-admin account from `APIClient.createUser`)
 
 ### TC-TASK-020 — Non-admin reassigning a task to another user is forbidden
 - **Priority:** P0
@@ -361,7 +362,7 @@ regression anchors, not endorsements.
   2. Click the delete icon on their own task and confirm.
 - **Expected:** The delete icon is rendered (the list passes `onDelete` unconditionally, `onDelete={(task) => setDeleteDialog` in `gocrm-ui/src/pages/tasks/TaskList.tsx`). `DELETE /api/v1/tasks/{id}` returns **403** with "Only administrators can delete tasks" (`internal/handler/task_handler.go` `TaskHandler.Delete`) — the role check runs before the id is even parsed. The snackbar reads "Failed to delete task", the dialog stays open and the task survives.
 - **Known issue:** Frontend and backend disagree: the backend is admin-only, the UI offers the control to every role.
-- **Automation:** blocked — needs a non-admin role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-TASK-028 — Deletion is a plain soft delete, and the detail page of a deleted task spins forever
 - **Priority:** P2
@@ -442,7 +443,7 @@ regression anchors, not endorsements.
   2. Search for a fragment matching exactly one of the two tasks.
 - **Expected:** The request carries `search`, returns 200, but **both** tasks remain listed: the non-admin branch calls `GetByAssignee` before the search branch is ever reached (`internal/handler/task_handler.go` `TaskHandler.List`), so `search`, `sort_by` and `sort_order` are all discarded for non-admins. The search box gives no indication that it did nothing.
 - **Known issue:** Documented in the swagger description for `GET /tasks` but not in FEATURES.md row 6.6.
-- **Automation:** blocked — needs a non-admin role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -592,7 +593,7 @@ regression anchors, not endorsements.
   2. POST `{"task_ids":[<own task id>, <other user's task id>],"status":"in_progress"}` as the support user.
 - **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:None-None`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
 - **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in FEATURES.md.
-- **Automation:** blocked — needs a non-admin role-login helper to obtain a support token
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`); the support token comes from `APIClient.login`
 
 ---
 
@@ -622,7 +623,7 @@ regression anchors, not endorsements.
   unchecked. The policy is `service.CanViewLead` (admin every lead, sales its own, every other role
   none), checked on writes and re-applied to every task returned, on `/dashboard/upcoming-tasks` and
   `/tasks/upcoming` as well.
-- **Automation:** blocked — needs a non-admin role-login helper. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
   `internal/integration/lead_visibility_integration_test.go` (`TestTaskCreate_SupportCannotLinkALead`,
   `TestTaskCreate_SalesOnlyWithItsOwnLead`, `TestTaskUpdate_CannotRelinkToAHiddenLead`,
   `TestTaskUpdate_SendingTheHiddenStoredLeadIsNoOracle`, `TestTaskReads_HideHistoricalLinks`,
@@ -643,7 +644,8 @@ regression anchors, not endorsements.
   `TestLeadVisibilityIntegrationTestSuite/TestTaskUpdate_CustomerReplacementDoesNotRevealALead`,
   `TestTaskUpdate_InvalidCustomerPreservesHiddenLead` and
   `TestTaskUpdate_ExplicitLeadAndCustomerStillConflict` exercise the real HTTP/service/repository
-  path; the browser case needs a non-admin role-login helper.
+  path; the browser case is planned against `gocrm-ui/e2e/tests/admin-tasks.spec.ts`
+  (extended), with the accounts from `APIClient.createUser`.
 
 ### TC-TASK-049 — A deal link is checked on write and redacted on every read
 - **Priority:** P0

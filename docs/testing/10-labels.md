@@ -35,10 +35,11 @@ where the behaviour is surprising a **Known issue** line names it.
   Write access is enforced per verb: create and update need admin, sales or support; delete needs
   admin. The page hides the buttons to match (`labels.create`, `labels.update`, `labels.delete`;
   `canCreate`/`canUpdate`/`canDelete` in `gocrm-ui/src/pages/labels/LabelList.tsx`).
-- **Only the admin account is available to e2e.** Sales and support accounts require an
-  admin-authenticated `POST /users` plus a role-login helper that does not exist yet; a *customer*
-  is obtainable through public registration, which `registration.spec.ts` already does. Cases that
-  need a non-admin, non-customer session are marked *blocked* with that note.
+- **Non-admin accounts come from the test.** Sales and support accounts require an
+  admin-authenticated `POST /users`, which `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`
+  sends (`APIClient.login` signs the account in); a *customer* is obtainable through public
+  registration, which `registration.spec.ts` already does. Cases that need a sales or support
+  session are planned against `labels.spec.ts` with those helpers.
 - The label editor validates client-side with zod (`labelSchema` in `gocrm-ui/src/pages/labels/LabelList.tsx`) before any request is
   made, and the API validates again in `normalizeLabel` (`internal/service/label_service.go`).
   A case that expects an HTTP status must state which of the two layers it is exercising.
@@ -310,7 +311,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`; create a label; edit it; look for the delete icon.
 - **Expected:** Create and edit succeed (201 / 200) and the delete icon is absent. A direct `DELETE /api/v1/labels/{id}` returns 403 — deleting detaches the label from every task at once, which is why it is admin-only.
-- **Automation:** blocked — no sales/support login helper exists; elevated roles come only from an admin-authenticated `POST /users`. This is the same blocker listed in README.md "Lessons learned" item 8.
+- **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended); the sales or support account comes from `APIClient.createUser` and signs in through the login form (`gocrm-ui/e2e/helpers/sso.ts`, README.md "Lessons learned" item 8).
 
 ### TC-LABEL-027 — Unauthenticated access to the label API is rejected
 - **Priority:** P0
@@ -485,7 +486,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Log in as the support user, navigate to `/tasks` and filter by the label.
 - **Expected:** Only the support user's own task is listed. The label filter narrows the same list rather than replacing the assignee scoping (`TaskService.ListFiltered` with `AssigneeID` and `LabelID`), and it is the one non-admin path that also honours `sort_by`/`sort_order`.
-- **Automation:** blocked — no sales/support login helper exists (README.md "Lessons learned" item 8). Covered at unit level by `internal/service/task_labels_test.go`.
+- **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended); the support account comes from `APIClient.createUser` (`gocrm-ui/e2e/helpers/sso.ts`, README.md "Lessons learned" item 8). Covered at unit level by `internal/service/task_labels_test.go`.
 
 ## 10.9 Navigation
 

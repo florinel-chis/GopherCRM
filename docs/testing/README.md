@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050; the 15-products-quotes row and the total on 2026-11-19 for TC-PQ-059, #395; the 08-settings row and the total on 2026-11-19 for the five webhook cases of #409, TC-SET-036 to TC-SET-040; the 05-tickets row and the total on 2026-11-19, #402: the row had stayed at 64 cases and 21 automated while the file held 77 and 34, and eight of its planned cases became automated; the 07-users row and the total on 2026-11-19 for TC-USER-013, #428; the 03-leads row and the total on 2026-11-19 for TC-LEAD-038, #426; the 06-tasks and 09-cross-cutting rows and the total on 2026-11-19 for TC-TASK-029, TC-TASK-030 and TC-XCUT-038, #427; the 01-authentication row and the total on 2026-11-19, #435: the row had stayed at 53 cases and 32 automated while the file held 57 and 36, and TC-AUTH-049 to TC-AUTH-054 were added as automated; the 01-authentication and 08-settings rows and the total on 2026-11-19 for TC-AUTH-055, TC-AUTH-056 and TC-SET-041, #436; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-057, #457; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-058, #450; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-059, #451; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-060 to TC-AUTH-063, #454; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-064, #466; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-065 to TC-AUTH-068, #468; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-069 to TC-AUTH-074, #469; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-075 to TC-AUTH-080, #470; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-081 to TC-AUTH-085, #471; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-086, #504; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-087, #505; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-088 to TC-AUTH-092, #506; the 08-settings row and the total on 2026-11-20 for TC-SET-042, #490; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-093, #529; the 01-authentication row and the total on 2026-11-21 for TC-AUTH-094, #554; the 08-settings row and the total on 2026-11-22 for TC-SET-043, #633; the 01-authentication row and the total on 2026-11-23 for TC-AUTH-095 and TC-AUTH-096, #634; the 08-settings row and the total on 2026-11-23 for TC-SET-044 to TC-SET-046, #727). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050; the 15-products-quotes row and the total on 2026-11-19 for TC-PQ-059, #395; the 08-settings row and the total on 2026-11-19 for the five webhook cases of #409, TC-SET-036 to TC-SET-040; the 05-tickets row and the total on 2026-11-19, #402: the row had stayed at 64 cases and 21 automated while the file held 77 and 34, and eight of its planned cases became automated; the 07-users row and the total on 2026-11-19 for TC-USER-013, #428; the 03-leads row and the total on 2026-11-19 for TC-LEAD-038, #426; the 06-tasks and 09-cross-cutting rows and the total on 2026-11-19 for TC-TASK-029, TC-TASK-030 and TC-XCUT-038, #427; the 01-authentication row and the total on 2026-11-19, #435: the row had stayed at 53 cases and 32 automated while the file held 57 and 36, and TC-AUTH-049 to TC-AUTH-054 were added as automated; the 01-authentication and 08-settings rows and the total on 2026-11-19 for TC-AUTH-055, TC-AUTH-056 and TC-SET-041, #436; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-057, #457; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-058, #450; the 01-authentication row and the total on 2026-11-19 for TC-AUTH-059, #451; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-060 to TC-AUTH-063, #454; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-064, #466; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-065 to TC-AUTH-068, #468; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-069 to TC-AUTH-074, #469; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-075 to TC-AUTH-080, #470; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-081 to TC-AUTH-085, #471; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-086, #504; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-087, #505; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-088 to TC-AUTH-092, #506; the 08-settings row and the total on 2026-11-20 for TC-SET-042, #490; the 01-authentication row and the total on 2026-11-20 for TC-AUTH-093, #529; the 01-authentication row and the total on 2026-11-21 for TC-AUTH-094, #554; the 08-settings row and the total on 2026-11-22 for TC-SET-043, #633; the 01-authentication row and the total on 2026-11-23 for TC-AUTH-095 and TC-AUTH-096, #634; the 08-settings row and the total on 2026-11-23 for TC-SET-044 to TC-SET-046, #727; every row and the total on 2026-11-24, #742: the 11-aeo and 16-follow-up-automation rows had stayed at 49 and 36 cases while the files held 60 and 41, the cases that were blocked only for want of a way to sign in as sales, support or customer were re-triaged against `APIClient` in `gocrm-ui/e2e/helpers/sso.ts`, the API key cases of 08-settings were re-triaged against the finished page, and 17-webhooks and 18-roles were added; `test_testing_catalog.py` in `scripts/ci/tests/` now recomputes every row). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -22,32 +22,37 @@ blocked.
 | Document | Area | Cases | P0 | P1 | P2 | Automated | Planned | Blocked |
 |---|---|---|---|---|---|---|---|---|
 | [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch, OpenID Connect sign-in, sign-in audit log, SCIM provider tokens, discovery, user read, create, replace, patch and delete, groups | 105 | 44 | 44 | 17 | 84 | 19 | 2 |
-| [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
-| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, CSV export, conversion, bulk status, owner validation and assignment | 77 | 18 | 43 | 16 | 44 | 25 | 8 |
-| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer, external identity mappings | 53 | 20 | 20 | 13 | 26 | 18 | 9 |
+| [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 37 | 3 |
+| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, CSV export, conversion, bulk status, owner validation and assignment | 77 | 18 | 43 | 16 | 44 | 33 | 0 |
+| [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer, external identity mappings | 53 | 20 | 20 | 13 | 26 | 26 | 1 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets, SLA fields, server-side status/priority filters | 77 | 34 | 32 | 11 | 42 | 32 | 3 |
-| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 13 | 26 | 10 |
+| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 13 | 34 | 2 |
 | [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 50 | 20 | 23 | 7 | 25 | 25 | 0 |
-| [08-settings.md](08-settings.md) | API keys, configuration settings, role list and editor, webhook endpoints, test ping, secret rotation and delivery log with redelivery, single sign-on settings, SCIM provider tokens | 46 | 13 | 24 | 9 | 15 | 14 | 17 |
+| [08-settings.md](08-settings.md) | API keys, configuration settings, role list and editor, webhook endpoints, test ping, secret rotation and delivery log with redelivery, single sign-on settings, SCIM provider tokens | 46 | 13 | 24 | 9 | 24 | 17 | 5 |
 | [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 14 | 35 | 1 |
-| [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
-| [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
-| [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
-| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
+| [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 24 | 4 |
+| [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 60 | 16 | 31 | 13 | 21 | 38 | 1 |
+| [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 15 | 0 |
+| [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 18 | 0 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output, response links and erasure | 59 | 35 | 22 | 2 | 58 | 1 | 0 |
-| [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **799** | **291** | **355** | **153** | **414** | **302** | **83** |
+| [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 41 | 22 | 17 | 2 | 41 | 0 | 0 |
+| [17-webhooks.md](17-webhooks.md) | Outbound webhooks: admin-only routes, event fan-out per entity, signing and secret rotation, test ping, delivery, retry and pause, redelivery, delivery log | 23 | 11 | 11 | 1 | 22 | 1 | 0 |
+| [18-roles.md](18-roles.md) | Roles and permissions: role create, rename, clone and delete, permission catalogue and scopes, escalation, role assignment, last active admin, role audit | 23 | 11 | 10 | 2 | 20 | 3 | 0 |
+| **Total** | | **861** | **322** | **382** | **157** | **481** | **358** | **22** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
 detail the case lists. They are counted as automated above.
 
 [11-aeo.md](11-aeo.md) was added 2026-08-11 with the AEO module. No case in it is automated by a
-Playwright spec: ten cases are automated below the browser (the route-coexistence smoke test, the two
-column-length cases TC-AEO-041 and TC-AEO-042, and TC-AEO-043 to 049 of section 11.7 — provider
-configuration, egress policy, failure sanitization and the run runtime, added 2026-10 with #86,
-#134 and #154), 36 are planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist
-yet, and three are blocked. `gocrm-ui/e2e/tests/aeo-providers.spec.ts` exercises the provider
+Playwright spec: 21 cases are automated below the browser (the route-coexistence smoke test, the
+two column-length cases TC-AEO-041 and TC-AEO-042, and TC-AEO-043 to 060 — provider
+configuration, egress policy, failure sanitization and the run runtime of section 11.7, added
+2026-10 with #86, #134 and #154, then the several-replica and export cases of sections 11.8 and
+11.9), 38 are planned against a `gocrm-ui/e2e/tests/aeo.spec.ts` that does not exist yet (the
+sales and support cases TC-AEO-007 and TC-AEO-017 among them, with their accounts from
+`APIClient.createUser`), and one is blocked (TC-AEO-019, a live Anthropic call).
+`gocrm-ui/e2e/tests/aeo-providers.spec.ts` exercises the provider
 connections in the browser; TC-AEO-049 mentions it for runtime credentials, but it automates no
 case's own steps. Where a Go
 or Vitest test already pins a case's behaviour the Automation line names it, so the E2E spec can be
@@ -59,14 +64,14 @@ and the `/prompts/generate` vs `/prompts/:id` route clash (TC-AEO-039). TC-AEO-0
 over-long citation URL rolling back its whole answer on MySQL only.
 
 [13-companies.md](13-companies.md) was added 2026-09-29 with the companies feature (`12-forms.md`
-is the forms catalog and is not in this table: its 47 cases are one-line entries without
-priorities, 44 automated, 2 planned and 1 blocked). Its cases are written against the backend contract
+is the forms catalog and is not in this table: its 68 cases are entries without priorities, 65
+automated, 2 planned and 1 blocked). Its cases are written against the backend contract
 that ships with the feature and the frontend pages the same change introduces. Eight cases are
 automated by `gocrm-ui/e2e/tests/admin-companies.spec.ts` (six of them *automated (partial)*, as
 in 10-labels: the spec asserts the core outcome, the rest is pinned in Go) and TC-COMP-024 by the
 forms suite; the same spec is named on every planned case. Every case names the Go test that
-already pins its API behaviour. The six blocked cases are the sales and support role cases,
-blocked for the usual reason (lesson 8).
+already pins its API behaviour. The six sales and support role cases are planned against the same
+spec, with their accounts from `APIClient.createUser` (lesson 8); nothing is blocked.
 
 [14-deals.md](14-deals.md) was added 2026-09-30 with the deals feature. Its cases are written
 against the backend contract that ships with the feature and the frontend pages the same change
@@ -74,15 +79,17 @@ introduces. Thirteen cases are automated by the eight tests of
 `gocrm-ui/e2e/tests/admin-deals.spec.ts` (twelve of them *automated (partial)*, as in 10-labels
 and 13-companies: the spec asserts the core outcome, the rest is pinned in Go or Vitest); the same
 spec is named on every planned case, and every case names the Go test that already pins its API
-behaviour. The six blocked cases are the sales role cases (lesson 8). TC-DEAL-034 (2026-10-19,
-#124: a deal cannot link or reveal another rep's lead) is blocked for the same reason.
+behaviour. The sales role cases are planned against the same spec, with their accounts from
+`APIClient.createUser` (lesson 8), as is TC-DEAL-034 (2026-10-19, #124: a deal cannot link or
+reveal another rep's lead); nothing is blocked.
 
 The pipeline board and the dashboard deal widgets (2026-09-30) added TC-DEAL-027 to 033 (section
 14.7) and TC-DASH-038 to 042. `gocrm-ui/e2e/tests/admin-deals-board.spec.ts`, written with the
 same change, automates TC-DEAL-027, 029 and 030 and TC-DASH-039 (all partial) and is named on the
 remaining planned ones (TC-DEAL-028 and 032, which need an API-level test, and TC-DASH-038, the
-chart); the blocked ones are the sales and support role cases (lesson 8)
-and the UTC month boundary, which needs a controllable clock and is pinned in Go.
+chart). The sales and support role cases (TC-DEAL-031 and 033, TC-DASH-040 and 041) are planned
+with their accounts from `APIClient.createUser` (lesson 8); the UTC month boundary (TC-DASH-042)
+stays blocked: it needs a controllable clock and is pinned in Go.
 
 [15-products-quotes.md](15-products-quotes.md) was added 2026-10-26 with the products and quotes
 API (issue #158). Seventeen cases are automated at the Go level by the named acceptance roots
@@ -92,7 +99,8 @@ five UI cases of section 15.8: each names its Vitest file and test titles, and t
 `gocrm-ui/e2e/tests/admin-quotes.spec.ts` walks the admin flow from product to accepted quote,
 including the print page under Playwright's print-media emulation (TC-PQ-018 to 021 are
 *automated (partial)* by that spec: the sales behaviour and the support/customer redirects are
-pinned in Vitest, as the role-login e2e helper still does not exist). Nothing is blocked.
+pinned in Vitest; their browser half is planned, with the accounts from `APIClient.createUser`).
+Nothing is blocked.
 The row was recounted on 2026-11-18 (#382) from the file's `### TC-PQ-` headings: it had stayed at
 the 22 cases of 2026-10-28 while sections 15.9 to 15.11 (#239, #324, #325, #346) added sixteen.
 Section 15.12 (#382) adds eight cases for the client response link of the quote email, all
@@ -120,7 +128,25 @@ connection can produce). The six screen cases, added with the UI on 2026-10-29, 
 Vitest and by `gocrm-ui/e2e/tests/automation-rules.spec.ts`; TC-AUT-033 is *automated (partial)*
 because that spec drives the admin only, the sales and support behaviour being pinned in Vitest.
 TC-AUT-034 to 036 (rule names on runs, field-level rule errors, the dry run of unsaved edits) were
-added on 2026-10-29: two at the Go level, one by the same Playwright spec. Nothing is blocked.
+added on 2026-10-29: two at the Go level, one by the same Playwright spec. TC-AUT-037 to 041
+(#312) cover the ticket rules in the web UI, automated by Vitest and
+`gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts`; the row was recounted with them on
+2026-11-24 (#742: 41 cases, 22 P0). Nothing is blocked.
+
+[17-webhooks.md](17-webhooks.md) was added 2026-11-24 (#742) for the outbound webhooks API: the
+admin-only route matrix, the created, updated and deleted events of the seven catalogue entities,
+the signature and secret rotation with its two-signature overlap, the test ping, delivery with
+retry backoff and the endpoint pause, the refused delivery to a non-public address, redelivery
+and the delivery log. 22 of its 23 cases are automated at the Go level by the named roots;
+TC-HOOK-023 is planned against a new `gocrm-ui/e2e/tests/webhooks-api.spec.ts`. The webhook
+screen stays in 08-settings.md (TC-SET-036 to 040 and 044 to 046).
+
+[18-roles.md](18-roles.md) was added 2026-11-24 (#742) for roles and permissions: role create,
+rename, clone and delete with their refusals, the permission catalogue, own and all scopes,
+escalation, role assignment, the last active admin and the role audit page. 18 cases are
+automated at the Go level, two by `gocrm-ui/e2e/tests/role-audit.spec.ts`, and three are planned
+against `roles.spec.ts` and `role-audit.spec.ts`. The role screens stay in 08-settings.md
+(TC-SET-035).
 
 ## Case format
 
@@ -201,8 +227,12 @@ fail in ways that look like application bugs.
    with 400 `VALIDATION_ERROR` (see [05-tickets.md](05-tickets.md) section 5.5).
 8. **Elevated roles come from outside the app.** Public registration always creates a `customer`.
    The admin comes from the `create-admin` CLI; sales and support accounts require an
-   admin-authenticated `POST /users`, and no e2e helper does that yet — building that role-login
-   helper is the single change that unblocks the most planned RBAC cases.
+   admin-authenticated `POST /users`. `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`
+   creates sales, support and customer accounts through that admin-authenticated `POST /users`
+   (it returns the row with its id), `APIClient.login` signs them in, `APIClient.setActive`
+   deactivates or reactivates them, and `APIClient.get`/`post`/`put`/`delete` call the API with
+   their token. `gocrm-ui/e2e/tests/role-audit.spec.ts`, `sign-in-audit.spec.ts` and `sso.spec.ts`
+   use them; a browser case signs the account in through the login form.
 9. **Labels are hard-deleted and unique by name.** Unlike every other entity, deleting a label
    removes the row outright, so a name is immediately reusable and nothing is hidden behind
    `deleted_at`. A spec that creates labels must scope their names to the run *and* delete them
@@ -247,21 +277,25 @@ documents as **Known issue** lines. The most consequential:
 - Ticket sentinel errors are surfaced doubled ("cannot reopen closed ticket: cannot reopen closed
   ticket") because the handler returns `err.Error()` of a wrapped sentinel with identical text
   (05-tickets.md).
-- The users list reports `meta.total` as the length of the returned page, so pagination totals are
-  wrong beyond page one (07-users.md).
+- ~~The users list reports `meta.total` as the length of the returned page, so pagination totals
+  are wrong beyond page one~~ Fixed: `usersApi.getUsers` reads `meta.total`
+  (`gocrm-ui/src/api/endpoints/users.ts`), so the footer shows the server total (07-users.md
+  TC-USER-006).
 - ~~The Profile and API Keys settings pages are heading-only stubs~~ Fixed: both pages are built
   (`gocrm-ui/src/pages/settings/Profile.tsx`, `APIKeys.tsx`) with unit tests (`Profile.test.tsx`,
-  `APIKeys.test.tsx`); the cases in 07-users.md and 08-settings.md still record their browser coverage.
+  `APIKeys.test.tsx`), and `gocrm-ui/e2e/tests/settings.spec.ts` drives the API Keys page in the
+  browser; 07-users.md and 08-settings.md describe both pages as built.
 - ~~A task-list request carrying both `label_id` and `search` silently drops the search: the two
   filters cannot be combined server-side.~~ Fixed (#618): the server ANDs them; the UI still
   clears and disables the search box while a label filter is active, by choice (10-labels.md).
 
 ## Implementation order
 
-1. The sales/support role-login helper (`e2e/helpers/`), then the blocked RBAC cases across
-   tickets, tasks, leads and the dashboard.
+1. Write the re-triaged RBAC cases with `APIClient` (`gocrm-ui/e2e/helpers/sso.ts`): the sales,
+   support and customer cases across tickets, tasks, leads, customers, companies, deals, labels,
+   AEO and the dashboard.
 2. P0 planned cases: the ticket role matrix (05), erasure-visible effects (03, 04, 07), and the
    RBAC route matrix (09).
-3. New spec files the planned cases target: `dashboard.spec.ts`, `admin-apikeys.spec.ts`,
-   `admin-configurations.spec.ts`, plus extensions to the existing admin suites.
+3. New spec files the planned cases target: `dashboard.spec.ts`, `admin-configurations.spec.ts`,
+   `webhooks-api.spec.ts`, plus extensions to the existing admin suites and `settings.spec.ts`.
 4. P1/P2 planned cases per document, in ID order.

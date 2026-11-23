@@ -44,9 +44,10 @@ the frontend gating.
   product names) and deletes the notifications about those deals (#245); a refused sales erasure of
   a converted lead changes none of them. Only ever delete records the test itself created.
 - Non-admin roles need accounts the suite cannot self-serve: `POST /auth/register` always creates a
-  `customer` account (`internal/handler/auth_handler.go` `AuthHandler.Register`), so sales and support accounts must come from an admin
-  `POST /users` call. There is no non-admin login helper — `gocrm-ui/e2e/helpers/admin-auth.ts` is
-  the only one — which is why several RBAC cases below are marked blocked.
+  `customer` account (`internal/handler/auth_handler.go` `AuthHandler.Register`), so sales and
+  support accounts must come from an admin `POST /users` call: `APIClient.createUser` in
+  `gocrm-ui/e2e/helpers/sso.ts` makes one through the admin's session and `APIClient.login` signs it
+  in, so the sales and support RBAC cases below are planned against `admin-leads.spec.ts`.
 - The admin seed account is created by `gocrm-ui/e2e/global-setup.ts`.
 
 ---
@@ -100,8 +101,9 @@ the frontend gating.
   role, so they have no effect at all.
 - **Known issue:** For a sales user, search / classification / sort are silently ignored rather
   than rejected (`internal/handler/lead_handler.go` `LeadHandler.List`); the swagger description on `List` documents this.
-- **Automation:** blocked — needs a sales role-login helper; only
-  `gocrm-ui/e2e/helpers/admin-auth.ts` exists
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-004 — Support user: Leads is hidden in the nav and the route redirects
 - **Priority:** P0
@@ -120,8 +122,8 @@ the frontend gating.
   (`internal/handler/routes.go` `SetupLeadRoutes`). While the session check is still loading the guard shows a spinner, not the
   page.
 - **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
-  routes"; the browser case is blocked on a support role-login helper (only
-  `gocrm-ui/e2e/helpers/admin-auth.ts` exists)
+  routes"; the browser case is planned against `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended),
+  with a support account from `APIClient.createUser` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-005 — Customer user is refused the leads API
 - **Priority:** P0
@@ -247,7 +249,9 @@ the frontend gating.
 - **Expected:** 201. `LeadForm.tsx` omits `owner_id` for non-admins, and
   `internal/handler/lead_handler.go` `LeadHandler.Create` defaults `OwnerID` to the caller. The detail page's Owner field shows the
   sales user's first and last name.
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-013 — A sales user cannot create a lead owned by someone else
 - **Priority:** P0
@@ -260,8 +264,10 @@ the frontend gating.
   (`internal/handler/lead_handler.go` `LeadHandler.Create`). No lead is created.
 - **Known issue:** API-level only — the create form exposes no owner field, so this cannot be
   driven through the UI.
-- **Automation:** blocked — needs a sales role-login helper; the assertion itself is an API call
-  through Playwright's `request` fixture
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`); the assertion itself is an API call through the sales account's
+  `APIClient.post`
 
 ### TC-LEAD-014 — Admin create without an explicit owner is rejected
 - **Priority:** P0
@@ -355,7 +361,9 @@ the frontend gating.
   (`internal/handler/lead_handler.go` `LeadHandler.Update`); the UI shows "Failed to update lead".
 - **Known issue:** The page does not distinguish "forbidden" from "empty form" — a sales user
   reaching another owner's edit URL sees a blank create-shaped form.
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-019 — Owner reassignment is admin-only and not exposed in the UI
 - **Priority:** P2
@@ -370,7 +378,9 @@ the frontend gating.
   the UI. The endpoint client used to drop `owner_id`
   from updates as well; since #119 `leadsApi.updateLead` forwards it when given and omits it
   otherwise (`src/api/endpoints/leads.test.ts` "updateLead owner_id").
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -498,8 +508,8 @@ the frontend gating.
   commits while the sales user's delete is in flight is seen too: the delete is then refused the
   same way, with the lead, the new customer and the lead's automation runs unchanged. The same
   sales user can still delete an unconverted lead it owns (204).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (needs the sales login
-  helper). Go coverage:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended; a sales account from
+  `APIClient.createUser`). Go coverage:
   `LeadIntegrationTestSuite.TestDeleteConvertedLead_SalesOwnerForbiddenAndNothingChanges` (`tests/lead_integration_test.go`),
   `LeadIntegrationTestSuite.TestDeleteUnconvertedLead_SalesOwnerSucceeds` (`tests/lead_integration_test.go`);
   the subtest unconverted_only_refuses_a_converted_lead_and_changes_nothing of
@@ -514,7 +524,9 @@ the frontend gating.
 - **Expected:** **403** `{"error":{"message":"You can only delete your own leads"}}`
   (`internal/handler/lead_handler.go` `LeadHandler.Delete`). The lead is untouched. Deleting a lead the sales user *does* own returns
   204.
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -872,7 +884,9 @@ the frontend gating.
 - **Expected:** **403** `{"error":{"message":"You can only convert your own leads"}}`
   (`internal/handler/lead_handler.go` `LeadHandler.ConvertToCustomer`). No customer is created and the lead's status is unchanged. The same call
   against a lead the sales user owns returns 200.
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-048 — Converting a lead whose email already belongs to a customer returns 409
 - **Priority:** P2
@@ -1144,7 +1158,9 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
 - **Expected:** **403**, message "You can only update your own leads", with the not-owned id listed
   in `error.details` (see `internal/service/bulk_status_service.go` `bulkStatusService.BulkSetLeadStatus`).
   The user's own lead is **unchanged** — the batch is refused in full before any write.
-- **Automation:** blocked — needs a sales role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-LEAD-053 — Malformed bulk payloads are rejected
 - **Priority:** P1

@@ -9,7 +9,8 @@ introduces, so their selectors are stated where the backend contract fixes them 
 otherwise.
 
 24 cases: 9 automated (8 by `gocrm-ui/e2e/tests/admin-companies.spec.ts`, 6 of them partial, plus
-TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-login helper.
+TC-COMP-024 by the forms suite), 15 planned (six of them the sales and support role cases, whose
+accounts come from `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`), 0 blocked.
 
 **Sources**
 
@@ -44,9 +45,10 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **PUT replaces the text fields.** `CompanyRequest` is the same body for create and update; a
   text field absent from a PUT is stored empty. `owner_id` is the exception: absent keeps, `0`
   clears (admin only), another value sets. Sales users may only name themselves as owner.
-- **Only the admin account is available to e2e.** Sales and support sessions need an
-  admin-authenticated `POST /users` plus a role-login helper that does not exist yet. Cases that
-  need one are marked *blocked* with that note; the backend half of every such case is pinned by
+- **Non-admin accounts come from the test.** Sales and support sessions need an admin-authenticated
+  `POST /users`, which `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` sends;
+  `APIClient.login` signs the account in. Cases that need one are planned against
+  `admin-companies.spec.ts`; the backend half of every such case is pinned by
   `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and
   `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 - **The moderate rate tier applies.** 120 req/min with a burst of 30 per IP; a spec that creates
@@ -124,8 +126,10 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Expected:** Sales and support: 200 with the same unfiltered set an admin sees. Customer role:
   **403** "Insufficient permissions" from the group-level `RequireRole(admin, sales, support)`;
   the sidebar item is hidden for that role and the SPA route redirects to `/unauthorized`.
-- **Automation:** blocked — needs a role-login helper (customer half obtainable via
-  `/register`). Go: `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`),
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`) (customer half obtainable via `/register`). Go:
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`),
   `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.2 Create
@@ -220,8 +224,11 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   2. `POST /api/v1/companies` with `owner_id` of another user.
 - **Expected:** Step 1: 201 and `owner_id` is the sales user's own id. Step 2: **403** "You can
   only assign companies to yourself". Admins may name any live user or leave the owner empty.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `CompanyHandlerTestSuite.TestCreate_SalesGetsItselfAsOwnerWhenNoneIsSent` (`internal/handler/company_handler_test.go`), `CompanyHandlerTestSuite.TestCreate_SalesMayNotAssignSomebodyElse` (`internal/handler/company_handler_test.go`);
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `CompanyHandlerTestSuite.TestCreate_SalesGetsItselfAsOwnerWhenNoneIsSent` (`internal/handler/company_handler_test.go`),
+  `CompanyHandlerTestSuite.TestCreate_SalesMayNotAssignSomebodyElse` (`internal/handler/company_handler_test.go`);
   `CompanyIntegrationTestSuite.TestSalesOwnerRuleAndOwnLeadsOnly` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-012 — Support cannot create or update; customer role cannot reach the routes
@@ -233,8 +240,11 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   2. As customer role: `GET /api/v1/companies/{id}`.
 - **Expected:** Step 1: **403** on both (`RequireRole(admin, sales)` on POST and PUT). Step 2:
   **403** (the per-route guard built from `RouteKeys`). The UI hides the Add and Edit buttons from support.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and
+  `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.3 Detail and edit
 
@@ -289,8 +299,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   2. As admin: `PUT` with `owner_id: 0`; then with `owner_id: 999999`.
 - **Expected:** Step 1: **403**, **403**, then 200 with Y as owner. Step 2: 200 with `owner_id`
   absent from the response (cleared), then **400** `INVALID_REFERENCE`.
-- **Automation:** blocked — needs a role-login helper for the sales half; the admin half is
-  planned in `admin-companies.spec.ts` (request context). Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`); both halves through the request context. Go:
   `CompanyHandlerTestSuite.TestUpdate_OwnerRules` (`internal/handler/company_handler_test.go`).
 
 ## 13.4 Delete
@@ -333,8 +344,11 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   1. As each: `DELETE /api/v1/companies/{id}`.
 - **Expected:** **403** both times (`RequireRole(admin)` on DELETE); the row remains. The UI hides
   the delete icon from both roles.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and
+  `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.5 The link from customers and leads
 
@@ -370,8 +384,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   `meta.total` 2, and the company's `lead_count` is 2 for every reader. Step 3: **403** — the
   leads sub-list is admin and sales only, as the leads endpoints are; support still reads
   `/companies/{id}/customers`.
-- **Automation:** blocked — needs a role-login helper; the admin half is planned in
-  `admin-companies.spec.ts`. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`), the admin half in the same spec. Go:
   `CompanyIntegrationTestSuite.TestSalesOwnerRuleAndOwnLeadsOnly` (`test/integration/company_integration_test.go`),
   `TestCompanyRepository_ListLeadsScopesByOwnerAndListCustomersPaginates` (`internal/repository/company_repository_test.go`).
 
