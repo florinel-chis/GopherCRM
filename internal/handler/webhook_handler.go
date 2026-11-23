@@ -100,7 +100,7 @@ func respondWebhookError(c *gin.Context, logger *logrus.Entry, err error) {
 // @Summary List webhook endpoints
 // @Description One page of the registered outbound webhook endpoints. The signing secret is never part of the answer.
 // @Description Ordered by sort_by (id, created_at or updated_at) and then by id in the same direction, or by id ascending without sort_by. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -112,7 +112,7 @@ func respondWebhookError(c *gin.Context, logger *logrus.Entry, err error) {
 // @Success 200 {object} utils.APIResponse{data=[]models.WebhookEndpoint,meta=utils.APIMeta} "Endpoints retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - sort_by is not id, created_at or updated_at (error.details.sort_by)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /webhooks/endpoints [get]
@@ -138,7 +138,7 @@ func (h *WebhookHandler) ListEndpoints(c *gin.Context) {
 // @Description Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
 // @Description From then on every lead, customer, ticket, deal, task, company or quote created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step; for a company, POST /companies; for a quote, POST /quotes) and every lead, customer, ticket, deal, task, company or quote changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), PUT /companies/{id}, PUT /quotes/{id}, POST, PUT and DELETE /quotes/{id}/lines (an add or a delete always counts, a line edit only when a stored line value changed), POST /quotes/{id}/status and POST /quotes/public/response (every committed transition counts), the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, a company deleted by DELETE /companies/{id} (company.deleted only: clearing company_id on its leads, customers and deals enqueues no updated event), a quote deleted by DELETE /quotes/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
 // @Description The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Accept json
 // @Produce json
@@ -148,7 +148,7 @@ func (h *WebhookHandler) ListEndpoints(c *gin.Context) {
 // @Success 201 {object} utils.APIResponse{data=models.WebhookEndpointCreated} "Endpoint registered; data.secret is shown only here"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - an invalid url or event_types, or an empty body (error.details keyed by url, event_types or body; the value is not echoed); BAD_REQUEST - malformed JSON ('Invalid request format')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /webhooks/endpoints [post]
@@ -192,7 +192,7 @@ func (h *WebhookHandler) CreateEndpoint(c *gin.Context) {
 // GetEndpoint godoc
 // @Summary Get a webhook endpoint
 // @Description One registered webhook endpoint, without its signing secret.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -201,7 +201,7 @@ func (h *WebhookHandler) CreateEndpoint(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.WebhookEndpoint} "Endpoint retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -226,7 +226,7 @@ func (h *WebhookHandler) GetEndpoint(c *gin.Context) {
 // @Description Sends one signed webhook.ping request to the endpoint, synchronously, and answers with its outcome. The body is {id, type, occurred_at} with type webhook.ping and no record_id; the headers are the Standard Webhooks headers of a delivery (webhook-id equal to the body's id, webhook-timestamp, webhook-signature v1 under the endpoint's secret).
 // @Description The ping uses the same egress guard as deliveries (a host that resolves to a private, loopback, link-local or metadata address is refused: destination_refused), the same 10 s timeout, and never follows a redirect. It works on an inactive endpoint, is not written to the delivery log, is not retried and leaves the endpoint unchanged.
 // @Description A failed ping is still a 200 with outcome failed: error_code is http_status (a non-2xx answer), redirect, timeout, connection_failed, destination_refused or secret_unavailable (the stored secret cannot be opened; nothing is sent). http_status is null when no answer was received.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -235,7 +235,7 @@ func (h *WebhookHandler) GetEndpoint(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.WebhookPingResult} "Ping sent (or refused); see outcome"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure, or the ping is not wired; the cause is never echoed"
@@ -259,7 +259,7 @@ func (h *WebhookHandler) TestEndpoint(c *gin.Context) {
 // @Summary Update a webhook endpoint
 // @Description Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret is not changed (POST /webhooks/endpoints/{id}/rotate-secret replaces it) and is not returned.
 // @Description Deliveries already enqueued keep their endpoint: those of an endpoint set inactive fail with endpoint_inactive when they are claimed, and those of an endpoint whose URL changed are sent to the new URL.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Accept json
 // @Produce json
@@ -270,7 +270,7 @@ func (h *WebhookHandler) TestEndpoint(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.WebhookEndpoint} "Endpoint updated"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - a bad id, an invalid url or event_types, or a body with none of the fields (error.details keyed by id, url, event_types or body; the value is not echoed); BAD_REQUEST - malformed JSON ('Invalid request format')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -329,7 +329,7 @@ func (h *WebhookHandler) UpdateEndpoint(c *gin.Context) {
 // DeleteEndpoint godoc
 // @Summary Delete a webhook endpoint
 // @Description Permanently deletes the endpoint and every delivery row of it (pending ones included, which are then never sent), in one transaction.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Security BearerAuth
 // @Security ApiKeyAuth
@@ -337,7 +337,7 @@ func (h *WebhookHandler) UpdateEndpoint(c *gin.Context) {
 // @Success 204 "Endpoint and its deliveries deleted"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -361,7 +361,7 @@ func (h *WebhookHandler) DeleteEndpoint(c *gin.Context) {
 // @Description Generates a new signing secret (whsec_ followed by the base64 of 32 random bytes) for the endpoint and returns it in this response only: it is stored encrypted and no other route shows it. The replaced secret is kept, encrypted, as the previous secret until previous_secret_expires_at, 24 hours from now.
 // @Description While that window is open every delivery, retry, redelivery and test ping carries two space-separated signatures in webhook-signature (v1,<new> v1,<previous>, the new one first), so a consumer can switch to the new secret without missing a request. From previous_secret_expires_at on only the new signature is sent, and the next delivery clears the previous secret. A second rotation inside the window replaces the previous secret: at most two secrets ever sign.
 // @Description It works on an inactive endpoint and never reads the stored secrets, so an endpoint whose secret cannot be opened any more (API_KEY_SECRET rotated) can be given a new one. No request body is read.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -370,7 +370,7 @@ func (h *WebhookHandler) DeleteEndpoint(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.WebhookEndpointSecretRotated} "Secret rotated; the new secret is shown once"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -394,7 +394,7 @@ func (h *WebhookHandler) RotateSecret(c *gin.Context) {
 // @Summary List webhook deliveries
 // @Description One page of the outbound webhook delivery log, newest first (id descending). Each row is one event for one endpoint: ids, the event type, the status, the attempt count, the last HTTP status, the error code and the attempt times; never a URL, a secret or a payload. Succeeded and failed rows are pruned 30 days after their last change.
 // @Description Filters: endpoint_id, status and event_type; an empty value is ignored. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -407,7 +407,7 @@ func (h *WebhookHandler) RotateSecret(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.WebhookDelivery,meta=utils.APIMeta} "Deliveries retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - endpoint_id is not a positive integer, or status or event_type is unknown (error.details keyed by the parameter; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /webhooks/deliveries [get]
@@ -448,7 +448,7 @@ func (h *WebhookHandler) ListDeliveries(c *gin.Context) {
 // @Summary Redeliver a logged webhook delivery
 // @Description Puts a succeeded or failed delivery back into the queue: the same row becomes pending with attempts 0 and is due at once; last_http_status and error_code are cleared, last_attempt_at keeps its value. The runtime then sends it again with the same event id (webhook-id) and the full retry budget (10 attempts). No new row is written and the record the event names is not read.
 // @Description A pending or sending delivery (already queued or being sent) is refused with 409, and so is a delivery whose endpoint is deleted or inactive. The endpoint is checked before the write; an endpoint deactivated in between still gets the row requeued, and the runtime then fails it with endpoint_inactive.
-// @Description Roles: admin.
+// @Description Needs webhooks.manage (the admin system role holds it).
 // @Tags webhooks
 // @Produce json
 // @Security BearerAuth
@@ -457,7 +457,7 @@ func (h *WebhookHandler) ListDeliveries(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.WebhookDelivery} "Delivery queued again (status pending)"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold webhooks.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no delivery with that id"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - the delivery is pending or being sent, or its endpoint is deleted or inactive"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"

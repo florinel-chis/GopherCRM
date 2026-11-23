@@ -81,8 +81,9 @@ func auditContext(c *gin.Context) context.Context {
 }
 
 // RegisterRequest deliberately has no Role field. Self-service registration always
-// creates a customer; elevated roles are only assignable through the admin-guarded
-// POST /users endpoint. A client-supplied role here would be a privilege escalation.
+// creates a customer; elevated roles are only assignable through POST /users,
+// which needs users.create and users.assign_role. A client-supplied role here
+// would be a privilege escalation.
 //
 // @Description Self-service sign-up. There is no role field: the account is always a customer.
 type RegisterRequest struct {
@@ -240,7 +241,7 @@ type MessageResponse struct {
 
 // Register godoc
 // @Summary Register a new customer account
-// @Description Public self-service sign-up, open only while the security.allow_public_registration setting is true (it ships false; GET /auth/registration reports the current state). The gate fails closed: a setting that cannot be read is treated as false. The account is always created with the customer role and active; the body has no role field and nothing in it can change the role. Elevated roles come only from the admin-guarded POST /users.
+// @Description Public self-service sign-up, open only while the security.allow_public_registration setting is true (it ships false; GET /auth/registration reports the current state). The gate fails closed: a setting that cannot be read is treated as false. The account is always created with the customer role and active; the body has no role field and nothing in it can change the role. Another role comes only from POST /users, which needs users.create and, for any role but customer, users.assign_role.
 // @Description On success the response carries a JWT for the new account and the user, but no refresh token: the client signs in through POST /auth/login to obtain one. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character (punctuation or symbol), and at most 72 bytes: a longer password is refused before anything is stored.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, one bucket shared by every unauthenticated /auth route. No side effects besides the new user row: no mail is sent and no automation event is recorded.
 // @Tags auth

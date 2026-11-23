@@ -330,3 +330,116 @@ func TestAuthorizationGuideCoversIntegrationUser(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthorizationGuideStatesPermissionModel pins the guide's statements
+// about where the system role still decides, the own-account rule on
+// /users/{id}, the POST /api-keys rules, the registration routes, the role
+// routes and codes, the sign-in audit aggregation and the SCIM and single
+// sign-on deliveries since #506.
+func TestAuthorizationGuideStatesPermissionModel(t *testing.T) {
+	doc := readGuideFile(t, guidePath)
+	spaces := regexp.MustCompile(`\s+`)
+	section := func(heading string) string {
+		return spaces.ReplaceAllString(strings.Join(mustGuideSection(t, doc, heading), "\n"), " ")
+	}
+	contains := func(heading, text string, want ...string) {
+		t.Helper()
+		for _, w := range want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s %q must contain %q", guidePath, heading, w)
+			}
+		}
+	}
+	lacks := func(heading, text string, unwanted ...string) {
+		t.Helper()
+		for _, u := range unwanted {
+			if strings.Contains(text, u) {
+				t.Errorf("%s %q must not contain %q", guidePath, heading, u)
+			}
+		}
+	}
+
+	scope := section("## Service-side scope")
+	contains("## Service-side scope", scope, "aggregateScope", "quoteCreateRole")
+	lacks("## Service-side scope", scope, "no system role is passed through")
+
+	contains("## Deny by default", section("## Deny by default"),
+		"GET /users/{id}", "PUT /users/{id}", "REAUTHENTICATION_REQUIRED",
+		"#least-privilege-integration-user", "POST /auth/register", "GET /auth/registration",
+		"RequireRegistrationEnabled")
+
+	contains("## Custom roles and scopes", section("## Custom roles and scopes"),
+		"GET /roles/{id}", "PUT /roles/{id}", "DELETE /roles/{id}", "ROLE_NOT_FOUND",
+		"ROLE_NAME_TAKEN", "ROLE_IN_USE", "INVALID_PERMISSION", "INVALID_ROLE_ASSIGNMENT")
+
+	// The migration-rows paragraph stands on its own, not inside the list
+	// bullet before it.
+	audit := mustGuideSection(t, doc, "## Audit trail")
+	found := false
+	for i, line := range audit {
+		if !strings.Contains(line, "The `migration` rows of #524") {
+			continue
+		}
+		found = true
+		if !strings.HasPrefix(line, "The ") {
+			t.Errorf("%s: the line naming the migration rows of #524 must start a paragraph, got %q", guidePath, line)
+		}
+		if i == 0 || strings.TrimSpace(audit[i-1]) != "" {
+			t.Errorf("%s: the paragraph naming the migration rows of #524 must follow an empty line", guidePath)
+		}
+	}
+	if !found {
+		t.Errorf("%s \"## Audit trail\" must name the migration rows of #524", guidePath)
+	}
+
+	signIns := section("## Sign-in audit log")
+	lacks("## Sign-in audit log", signIns,
+		"on an `api_key` row, NULL on every other row",
+		"for an `api_key` row the number of refusals it counts")
+	columns := "Each row carries exactly the stored columns"
+	start := strings.Index(signIns, columns)
+	if start < 0 {
+		t.Errorf("%s \"## Sign-in audit log\" must contain %q", guidePath, columns)
+	} else {
+		rest := signIns[start:]
+		if end := strings.Index(rest, "`aggregate_key`"); end >= 0 {
+			rest = rest[:end]
+		}
+		if !strings.Contains(rest, "`api_key_id`") {
+			t.Errorf("%s: the columns GET /audit/sign-ins returns must include `api_key_id`", guidePath)
+		}
+	}
+
+	plan := mustGuideSection(t, doc, "## Phased plan")
+	contains("## Phased plan", spaces.ReplaceAllString(strings.Join(plan, "\n"), " "),
+		"#630", "#633", "#634", "#719")
+	phase2 := false
+	for _, line := range plan {
+		if !strings.HasPrefix(line, "| Phase 2 |") {
+			continue
+		}
+		phase2 = true
+		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		if last := strings.TrimSpace(cells[len(cells)-1]); strings.HasPrefix(last, "Open") {
+			t.Errorf("%s: the Phase 2 row's status must not start with Open, got %q", guidePath, last)
+		}
+	}
+	if !phase2 {
+		t.Errorf("%s \"## Phased plan\" must have a Phase 2 row", guidePath)
+	}
+
+	contains("## SCIM provisioning", section("## SCIM provisioning"), "#630")
+
+	note := section("## Phase 2 design note")
+	lacks("## Phase 2 design note", note,
+		"creating, renaming or deleting a group through SCIM are not implemented")
+	if i := strings.Index(note, "### Design conditions"); i < 0 {
+		t.Errorf("%s \"## Phase 2 design note\" must have \"### Design conditions\"", guidePath)
+	} else {
+		conditions := note[i:]
+		lacks("### Design conditions", conditions,
+			"one or more configured issuers", "in a table an administrator edits")
+		contains("### Design conditions", conditions,
+			"security.sso.issuer_url", "security.sso.role_mapping")
+	}
+}

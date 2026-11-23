@@ -163,7 +163,7 @@ func (r *CreateFormRequest) toModel() *models.Form {
 // @Description One page of form definitions (soft-deleted forms excluded), each with the number of live submissions it has collected, spam included.
 // @Description Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages.
 // @Description Filtering and sorting: status is draft, published or archived; sort_by is id, name, status, created_at or updated_at; sort_order is asc or desc, anything else means desc. Without sort_by the order is created_at descending whatever sort_order says; ties are broken by id. An unknown status or sort column is answered with 400 VALIDATION_ERROR (message "Validation failed", error.details {"status": "..."} or {"sort_by": "..."}).
-// @Description Roles: admin, sales, support.
+// @Description Needs forms.view (the admin, sales and support system roles hold it; the customer system role does not).
 // @Tags forms
 // @Produce json
 // @Security BearerAuth
@@ -176,7 +176,7 @@ func (r *CreateFormRequest) toModel() *models.Form {
 // @Success 200 {object} utils.APIResponse{data=[]handler.FormListItem,meta=utils.APIMeta} "Forms retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - unknown status filter or sort column"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /forms [get]
@@ -210,7 +210,7 @@ func (h *FormHandler) List(c *gin.Context) {
 // Create godoc
 // @Summary Create a form
 // @Description Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named "email"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true (false when create_ticket is true), and then default_owner_id must name an active admin or sales user. create_ticket (absent means false) makes a confirmed submission open a ticket for the live customer whose email matches (#213); it requires double_opt_in true and create_lead not true, and needs no default owner. status defaults to draft, submit_action to message. The response is the stored form.
-// @Description Roles: admin, sales.
+// @Description Needs forms.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user.
 // @Tags forms
 // @Accept json
@@ -221,7 +221,7 @@ func (h *FormHandler) List(c *gin.Context) {
 // @Success 201 {object} utils.APIResponse{data=models.Form} "Form created successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR or BAD_REQUEST - invalid body or form definition (see description)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /forms [post]
@@ -247,7 +247,7 @@ func (h *FormHandler) Create(c *gin.Context) {
 // Get godoc
 // @Summary Get a form
 // @Description A single form definition by ID, including its notification recipients, mail texts and origin allowlist. Soft-deleted forms are 404.
-// @Description Roles: admin, sales, support.
+// @Description Needs forms.view (the admin, sales and support system roles hold it; the customer system role does not).
 // @Tags forms
 // @Produce json
 // @Security BearerAuth
@@ -256,7 +256,7 @@ func (h *FormHandler) Create(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Form} "Form retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not a positive integer ('Invalid form ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - form not found (message 'Form not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -288,7 +288,7 @@ func (h *FormHandler) Get(c *gin.Context) {
 // Update godoc
 // @Summary Update a form
 // @Description Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_ticket to false, create_lead to true, or to false when create_ticket is true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.
-// @Description Roles: admin, sales.
+// @Description Needs forms.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 BAD_REQUEST for a path id that is not a positive integer ("Invalid form ID"); 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user; 404 NOT_FOUND for an unknown or deleted form.
 // @Tags forms
 // @Accept json
@@ -300,7 +300,7 @@ func (h *FormHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Form} "Form updated successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST or VALIDATION_ERROR - invalid id, body or form definition (see description)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - form not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -332,7 +332,7 @@ func (h *FormHandler) Update(c *gin.Context) {
 // Delete godoc
 // @Summary Delete a form
 // @Description Soft-delete a form. The public endpoints stop serving it at once (its definition and submissions answer 404, and outstanding double opt-in links stop working), its submission list is no longer reachable through GET /forms/{id}/submissions, while single submissions stay readable through GET /forms/submissions/{id} and the leads they produced are untouched. Its spam and never-confirmed submissions with no linked lead are still removed once they pass FORM_RETENTION_DAYS, when that setting is configured.
-// @Description Roles: admin only.
+// @Description Needs forms.delete (the admin system role holds it).
 // @Tags forms
 // @Produce json
 // @Security BearerAuth
@@ -341,7 +341,7 @@ func (h *FormHandler) Update(c *gin.Context) {
 // @Success 204 "No Content"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not a positive integer ('Invalid form ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.delete (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - form not found or already deleted"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -367,7 +367,7 @@ func (h *FormHandler) Delete(c *gin.Context) {
 // @Summary List the submissions of a form
 // @Description One page of the submissions one form collected, newest first (created_at, then id, descending). Spam submissions are listed alongside genuine ones with their status and the protection layer that caught them, so the filters can be audited. The status filter is not validated: an unknown value returns an empty page.
 // @Description Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages. No sorting parameters.
-// @Description Roles: admin, sales, support.
+// @Description Needs forms.view (the admin, sales and support system roles hold it; the customer system role does not).
 // @Tags forms
 // @Produce json
 // @Security BearerAuth
@@ -379,7 +379,7 @@ func (h *FormHandler) Delete(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.FormSubmission,meta=utils.APIMeta} "Submissions retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not a positive integer ('Invalid form ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - form not found or deleted"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -412,7 +412,7 @@ func (h *FormHandler) ListSubmissions(c *gin.Context) {
 // GetSubmission godoc
 // @Summary Get a submission
 // @Description A single submission with the values it carried, where it came from and the lead it produced, if any. Works for submissions of soft-deleted forms too. A spam or never-confirmed submission with no linked lead answers 404 once FORM_RETENTION_DAYS, when configured, has removed it.
-// @Description Roles: admin, sales, support.
+// @Description Needs forms.view (the admin, sales and support system roles hold it; the customer system role does not).
 // @Tags forms
 // @Produce json
 // @Security BearerAuth
@@ -421,7 +421,7 @@ func (h *FormHandler) ListSubmissions(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.FormSubmission} "Submission retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not a positive integer ('Invalid submission ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold forms.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - submission not found (message 'Submission not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"

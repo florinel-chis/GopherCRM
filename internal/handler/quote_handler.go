@@ -39,8 +39,9 @@ type QuoteRequest struct {
 	// characters.
 	Title string `json:"title" binding:"required" maxLength:"200" example:"Acme rollout - phase 1"`
 	// Deal the quote grows from (at least 1). Must name a live deal that is
-	// neither won nor lost; a sales user must own it. With no customer_id
-	// the deal's customer is used (possibly none).
+	// neither won nor lost; the caller must own it unless it is on the admin
+	// system role or is a custom role holding deals.view at scope all. With
+	// no customer_id the deal's customer is used (possibly none).
 	DealID *uint `json:"deal_id,omitempty" binding:"omitempty,min=1" example:"88"`
 	// Customer the quote is addressed to (at least 1); must name a live
 	// customer and, when deal_id is sent and the deal has a customer, that
@@ -55,8 +56,9 @@ type QuoteRequest struct {
 	ValidUntil string `json:"valid_until,omitempty" format:"date" example:"2026-12-31"`
 	// Free-text notes, at most 65535 bytes (UTF-8 bytes, not characters).
 	Notes string `json:"notes,omitempty" example:"Prices exclude VAT."`
-	// Owner (at least 1); the caller when absent. A sales user may only send
-	// its own id (403 otherwise); an admin may name any live user.
+	// Owner (at least 1); the caller when absent. A caller without
+	// quotes.assign_owner may only send its own id (403 otherwise); one
+	// holding it may name any live user.
 	OwnerID *uint `json:"owner_id,omitempty" binding:"omitempty,min=1" example:"7"`
 }
 
@@ -101,8 +103,8 @@ type QuoteUpdateRequest struct {
 	// New ISO 4217 code, exactly three upper-case ASCII letters; refused with
 	// 409 while the quote has lines.
 	Currency *string `json:"currency,omitempty" binding:"omitempty,len=3,alpha,uppercase" minLength:"3" maxLength:"3" example:"USD"`
-	// New owner (at least 1). A sales user may only send its own id; an
-	// admin may name any live user.
+	// New owner (at least 1). A caller without quotes.assign_owner may only
+	// send its own id; one holding it may name any live user.
 	OwnerID *uint `json:"owner_id,omitempty" binding:"omitempty,min=1" example:"9"`
 }
 
@@ -200,8 +202,9 @@ func lineDescriptionError(description *string) string {
 
 // Create godoc
 // @Summary Create a quote
-// @Description Create a draft quote. Roles: admin and sales.
-// @Description Rules: title required (trimmed, 1 to 200 characters); notes at most 65535 bytes; valid_until YYYY-MM-DD; currency three upper-case letters, defaulting to the deals.default_currency setting (EUR as shipped). At least one of deal_id and customer_id is required. With deal_id: the deal must be live (else 400 INVALID_REFERENCE), owned by the caller when the caller is sales (403), and neither won nor lost (409); without customer_id the deal's customer is used, possibly none (such a quote cannot be emailed); a customer_id different from the deal's customer is 400 VALIDATION_ERROR. customer_id must name a live customer. owner_id defaults to the caller; a sales user may only name itself; the owner must be a live user.
+// @Description Create a draft quote. Needs quotes.create (the admin and sales system roles hold it).
+// @Description Rules: title required (trimmed, 1 to 200 characters); notes at most 65535 bytes; valid_until YYYY-MM-DD; currency three upper-case letters, defaulting to the deals.default_currency setting (EUR as shipped). At least one of deal_id and customer_id is required. With deal_id: the deal must be live (else 400 INVALID_REFERENCE), owned by the caller unless the caller may quote any deal (403, see below), and neither won nor lost (409); without customer_id the deal's customer is used, possibly none (such a quote cannot be emailed); a customer_id different from the deal's customer is 400 VALIDATION_ERROR. customer_id must name a live customer. owner_id defaults to the caller; naming another user needs quotes.assign_owner (403 otherwise); the owner must be a live user.
+// @Description Who may quote another owner's deal differs by role kind. A custom role may when it holds deals.view at scope all, and may name another owner when it holds quotes.assign_owner (the service gets these two decisions as a policy). System-role exception: a caller on one of the four system roles is handed to the service with its role instead, and only the admin system role may quote a deal owned by someone else or name another owner there; any other system role holding quotes.create (sales, as shipped) may quote only its own deals, whatever scope it holds deals.view at.
 // @Description The quote starts as a draft with no lines and totals of 0, whatever else was sent; its first status-history row (from_status null, to_status draft) is written in the same transaction. No automation event is recorded for quotes.
 // @Description The response is the quote re-read with its number, lines and the customer, deal and owner summaries.
 // @Description A quote.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the quote and its draft history row.
@@ -214,7 +217,7 @@ func lineDescriptionError(description *string) string {
 // @Success 201 {object} utils.APIResponse{data=models.QuoteJSON} "Quote created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): title over 200 characters or blank, notes over 65535 bytes, a malformed valid_until, neither deal_id nor customer_id, or a customer_id that is not the deal's customer. INVALID_REFERENCE: deal_id, customer_id or owner_id names no live row"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; a sales user named another owner ('You can only assign quotes to yourself') or quoted a deal it does not own ('You can only work on your own deals and quotes')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.create (Insufficient permissions); a caller without quotes.assign_owner named another owner ('You can only assign quotes to yourself'); or the caller quoted a deal it does not own without being allowed to, that is a custom role without deals.view at scope all or a system role other than admin ('You can only work on your own deals and quotes')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the deal is won or lost"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -283,7 +286,7 @@ func (h *QuoteHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List quotes
-// @Description One page of live quotes with their number and customer, deal and owner summaries; lines are not loaded (lines is an empty array). Roles: admin (every quote) and sales (only the quotes it owns, whatever owner_id says; filtered in the query, so meta.total counts only those).
+// @Description One page of live quotes with their number and customer, deal and owner summaries; lines are not loaded (lines is an empty array). Needs quotes.view: at scope all every quote; at scope own only the quotes the caller owns, whatever owner_id says (filtered in the query, so meta.total counts only those). The admin system role holds it at scope all, the sales system role at scope own.
 // @Description Filters combine (AND): status, deal_id, customer_id and owner_id. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc.
 // @Description data is the array of quotes; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags quotes
@@ -296,13 +299,13 @@ func (h *QuoteHandler) Create(c *gin.Context) {
 // @Param status query string false "Only quotes in this status; an unknown value is 400" Enums(draft, sent, accepted, rejected, expired)
 // @Param deal_id query int false "Only quotes of this deal; must be a positive integer" minimum(1)
 // @Param customer_id query int false "Only quotes addressed to this customer; must be a positive integer" minimum(1)
-// @Param owner_id query int false "Only quotes owned by this user; must be a positive integer. Honoured for admins; a sales caller is always narrowed to itself" minimum(1)
+// @Param owner_id query int false "Only quotes owned by this user; must be a positive integer. Honoured at quotes.view scope all; at scope own the list is always narrowed to the caller" minimum(1)
 // @Param sort_by query string false "Sort column" Enums(id, title, status, total_cents, currency, valid_until, sent_at, created_at, updated_at) default(created_at)
 // @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
 // @Success 200 {object} utils.APIResponse{data=[]models.QuoteJSON,meta=utils.APIMeta} "One page of quotes"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), status is unknown ('Invalid status'), or deal_id, customer_id or owner_id is not a positive integer ('<name> must be a positive integer')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /quotes [get]
@@ -356,7 +359,7 @@ func (h *QuoteHandler) List(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a quote
-// @Description One live quote with its lines (ordered by position, then id), totals, number and the customer, deal and owner summaries. Roles: admin (any quote) and sales (only the quotes it owns; another owner's quote is 403, not 404).
+// @Description One live quote with its lines (ordered by position, then id), totals, number and the customer, deal and owner summaries. Needs quotes.view: at scope all any quote; at scope own only the quotes the caller owns (another owner's quote is 403, not 404).
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -365,7 +368,7 @@ func (h *QuoteHandler) List(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions); or a caller holding quotes.view at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -384,7 +387,7 @@ func (h *QuoteHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a draft quote
-// @Description Partial update of a draft quote. Roles: admin (any quote) and sales (only the quotes it owns). Every absent field keeps its stored value; deal_id is not editable. valid_until takes YYYY-MM-DD, or null or an empty string to clear it. customer_id, when it changes, must name a live customer (400 INVALID_REFERENCE) and, when the quote's deal has a customer, be that customer (400 VALIDATION_ERROR). currency may change only while the quote has no lines (409 otherwise). owner_id: a sales user may only name itself; an admin any live user (checked when it changes). The stored quote is re-read under a row lock and written only while it is still a draft.
+// @Description Partial update of a draft quote. Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. Every absent field keeps its stored value; deal_id is not editable. valid_until takes YYYY-MM-DD, or null or an empty string to clear it. customer_id, when it changes, must name a live customer (400 INVALID_REFERENCE) and, when the quote's deal has a customer, be that customer (400 VALIDATION_ERROR). currency may change only while the quote has no lines (409 otherwise). owner_id: a caller without quotes.assign_owner may only name itself; one holding it any live user (checked when it changes). The stored quote is re-read under a row lock and written only while it is still a draft.
 // @Description The response is the quote re-read with its lines and summaries.
 // @Description When the update changed at least one stored value of the quote (compared with the row read under lock in the update's transaction), a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none.
 // @Tags quotes
@@ -397,7 +400,7 @@ func (h *QuoteHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The updated quote"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): title over 200 characters or blank, notes over 65535 bytes, a malformed valid_until, or a customer that is not the deal's customer. INVALID_REFERENCE: a changed customer_id or owner_id names no live row"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own; or a sales user named another owner ('You can only assign quotes to yourself')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes'); or a caller without quotes.assign_owner named another owner ('You can only assign quotes to yourself')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the quote is not a draft (also when a status change committed while the request ran); nothing is written; or the currency cannot change because the quote has lines"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -470,8 +473,8 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a quote
-// @Description Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.
-// @Description A quote.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the quote) is written in the same transaction as the soft delete, after a locking read of the quote on which the draft-only check of a sales caller runs; a refused delete writes none.
+// @Description Soft-delete a quote. Needs quotes.delete: at scope all any quote in any status; at scope own only the quotes the caller owns, and only drafts. The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.
+// @Description A quote.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the quote) is written in the same transaction as the soft delete, after a locking read of the quote on which the draft-only check of a caller at scope own runs; a refused delete writes none.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -480,9 +483,9 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.delete (Insufficient permissions); or a caller holding quotes.delete at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: a sales user asked to delete a quote that is not a draft"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: a caller holding quotes.delete at scope own asked to delete a quote that is not a draft"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /quotes/{id} [delete]
@@ -505,7 +508,7 @@ func (h *QuoteHandler) Delete(c *gin.Context) {
 
 // AddLine godoc
 // @Summary Add a line to a draft quote
-// @Description Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
+// @Description Add a line priced from a product. Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
 // @Description One transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.
 // @Description The response is the whole quote with its lines and recomputed totals.
 // @Description A quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line and the totals.
@@ -519,7 +522,7 @@ func (h *QuoteHandler) Delete(c *gin.Context) {
 // @Success 201 {object} utils.APIResponse{data=models.QuoteJSON} "The quote with the new line"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message; a missing or null quantity is keyed Quantity), quantity is zero, negative, above 1000000 or has a non-zero digit beyond the third decimal place (message 'Validation failed', error.details.quantity 'quantity must be a number from 0.001 to 1000000 with at most 3 decimal places'), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'; quantity sent as a string included): a bound (tax_rate_bp included), the 10^12 cap on the line gross or on the quote gross total, the 100-line limit, a description over 255 characters, or a product in another currency. INVALID_REFERENCE: the product does not exist, is deleted or is inactive"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); or a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the quote is not a draft (also when a status change committed while the request ran); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -562,7 +565,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 
 // UpdateLine godoc
 // @Summary Edit a line of a draft quote
-// @Description Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
+// @Description Partial update of a line. Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
 // @Description The response is the whole quote with its lines and recomputed totals.
 // @Description When the edit changed at least one stored value of the line, a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an edit that sends the stored values writes none.
 // @Tags quotes
@@ -576,7 +579,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote with the edited line"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id or lineId is not an unsigned integer ('Invalid quote ID', 'Invalid line ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), quantity is zero, negative, above 1000000 or has a non-zero digit beyond the third decimal place (message 'Validation failed', error.details.quantity 'quantity must be a number from 0.001 to 1000000 with at most 3 decimal places'), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'; quantity sent as a string included): a bound (tax_rate_bp included), the 10^12 cap on the line gross or on the quote gross total, or a description over 255 characters"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); or a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found'), or the line is not on this quote ('Quote line not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the quote is not a draft (also when a status change committed while the request ran); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -622,7 +625,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 
 // DeleteLine godoc
 // @Summary Remove a line from a draft quote
-// @Description Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.
+// @Description Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. The remaining lines keep their positions.
 // @Description The response is the whole quote with its remaining lines and recomputed totals.
 // @Description A quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line removal and the totals.
 // @Tags quotes
@@ -634,7 +637,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote without the line"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id or lineId is not an unsigned integer ('Invalid quote ID', 'Invalid line ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); or a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found'), or the line is not on this quote ('Quote line not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the quote is not a draft (also when a status change committed while the request ran); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -664,7 +667,7 @@ func (h *QuoteHandler) DeleteLine(c *gin.Context) {
 
 // ChangeStatus godoc
 // @Summary Move a quote to another status
-// @Description Change the status. Roles: admin (any quote) and sales (only the quotes it owns). The allowed moves are draft to sent, sent to accepted, sent to rejected, sent to expired and sent back to draft; accepted, rejected and expired are final. Any other pair, the same status again included, is 400 INVALID_STATUS_TRANSITION and writes nothing.
+// @Description Change the status. Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. The allowed moves are draft to sent, sent to accepted, sent to rejected, sent to expired and sent back to draft; accepted, rejected and expired are final. Any other pair, the same status again included, is 400 INVALID_STATUS_TRANSITION and writes nothing.
 // @Description One transaction: a locking read of the quote, the transition check, the acceptance check (accepted is 409 once valid_until lies before today's date in the server's zone), a conditional claim (WHERE status = the stored status; a lost race is 400 INVALID_STATUS_TRANSITION), for draft to sent a locked count of the lines (none rolls everything back with 409), and one status-history row.
 // @Description Timestamps: sent sets sent_at and clears closed_at; accepted, rejected and expired set closed_at; sent to draft clears both. Accepting a quote does not change its deal, and no email is sent (see POST /quotes/{id}/email).
 // @Description Every committed transition writes a quote.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction, after the history row; a refused or rolled-back transition writes none.
@@ -678,7 +681,7 @@ func (h *QuoteHandler) DeleteLine(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote after the move"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID'). VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format') (status missing or not one of the five). INVALID_STATUS_TRANSITION: the move is not allowed from the current status, or another transition won the race"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); or a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: draft to sent on a quote without lines, or accepted after valid_until"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -710,7 +713,7 @@ func (h *QuoteHandler) ChangeStatus(c *gin.Context) {
 
 // History godoc
 // @Summary A quote's status history
-// @Description The quote's status changes, oldest first (changed_at, then id). Roles: admin (any quote) and sales (only the quotes it owns). The first row has from_status null and to_status draft. source says who made the change: staff (a signed-in user, named by changed_by_id) or client (the client's answer through the response link of the quote email). changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. A client answer has no user: its changed_by_id is null and changed_by is absent. An answer recorded before source existed reads staff with the quote owner as its user. data is the array; there is no pagination.
+// @Description The quote's status changes, oldest first (changed_at, then id). Needs quotes.view: at scope all any quote; at scope own only the quotes the caller owns. The first row has from_status null and to_status draft. source says who made the change: staff (a signed-in user, named by changed_by_id) or client (the client's answer through the response link of the quote email). changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. A client answer has no user: its changed_by_id is null and changed_by is absent. An answer recorded before source existed reads staff with the quote owner as its user. data is the array; there is no pagination.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -719,7 +722,7 @@ func (h *QuoteHandler) ChangeStatus(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.QuoteStatusChangeJSON} "The status history"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions); or a caller holding quotes.view at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -743,7 +746,7 @@ func (h *QuoteHandler) History(c *gin.Context) {
 
 // Email godoc
 // @Summary Email a quote to its customer
-// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address, with the quote's PDF attached when PDF output is on. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
+// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address, with the quote's PDF attached when PDF output is on. Needs quotes.update: at scope all any quote; at scope own only the quotes the caller owns. No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
 // @Description Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
 // @Description The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each successfully sent email invalidates the links of earlier emails; a failed send leaves them usable, and so does a failure of that invalidation after the mail went out (the request still succeeds). Any status change away from sent invalidates the current link. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent; so is a quote whose customer was erased before the link is stored.
 // @Description The attachment is one file, Quote-Q-000042.pdf (application/pdf) for quote 42: the document GET /quotes/{id}/pdf returns, rendered before the response link is stored, with no transaction held, in at most 15 seconds. When PDF output is off (GET /configurations/ui reports quotes.pdf_available false), or the render fails or runs out of time, the mail goes out as plain text only, exactly as without PDF output, and the request still succeeds; the fallback is logged, not reported. The response does not say whether a PDF was attached. Worst-case duration: 15 seconds for the render plus 30 seconds for the SMTP delivery, 45 seconds; a client should allow more than that (the web app allows 55) and a reverse proxy in front at least 60.
@@ -755,7 +758,7 @@ func (h *QuoteHandler) History(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote with last_emailed_at set"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.update (Insufficient permissions); or a caller holding quotes.update at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the quote is not sent or accepted, has no customer, its customer was erased or has no email address, or it was taken back to draft (or left sent and accepted) during the send"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -781,7 +784,7 @@ func (h *QuoteHandler) Email(c *gin.Context) {
 
 // PDF godoc
 // @Summary Download a quote as PDF
-// @Description The quote as a PDF file: the same document as the print page of the web app, printed by a headless Chrome or Chromium on the server. Roles: admin (any quote) and sales (only the quotes it owns; another owner's quote is 403, not 404). The id, the caller's permission and the quote are checked first, with the answers of GET /quotes/{id}; nothing is rendered for a refused request. Any status can be downloaded.
+// @Description The quote as a PDF file: the same document as the print page of the web app, printed by a headless Chrome or Chromium on the server. Needs quotes.view: at scope all any quote; at scope own only the quotes the caller owns (another owner's quote is 403, not 404). The id, the caller's permission and the quote are checked first, with the answers of GET /quotes/{id}; nothing is rendered for a refused request. Any status can be downloaded.
 // @Description PDF output is on when the server has a browser binary (QUOTE_PDF_CHROME_PATH) and an APP_BASE_URL; GET /configurations/ui reports it as quotes.pdf_available. Off is 503 PDF_UNAVAILABLE. One render runs at a time per server process and a render, its wait for a turn included, is bounded at 15 seconds: a render that fails, runs out of time, does not get its turn, or whose page never loaded the quote is 503 PDF_RENDER_FAILED and can be retried. The success answer is the raw file, not the JSON envelope; errors are the JSON envelope. The request writes nothing.
 // @Tags quotes
 // @Produce application/pdf
@@ -793,7 +796,7 @@ func (h *QuoteHandler) Email(c *gin.Context) {
 // @Header 200 {string} Cache-Control "no-store"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions); or a caller holding quotes.view at scope own addressed another owner's quote ('You can only view your own quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -834,7 +837,7 @@ const (
 
 // ListByDeal godoc
 // @Summary List a deal's quotes
-// @Description One page of the live quotes of the deal, without lines. Roles: admin (every quote) and sales (only on a deal it owns, and only the quotes it owns; another owner's deal is 403). sort_by and sort_order behave as on GET /quotes.
+// @Description One page of the live quotes of the deal, without lines. Needs quotes.view: at scope all every quote of the deal; at scope own only on a deal the caller owns, and only the quotes the caller owns (another owner's deal is 403). deals.view is not consulted. sort_by and sort_order behave as on GET /quotes.
 // @Description data is the array of quotes; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags quotes
 // @Produce json
@@ -849,7 +852,7 @@ const (
 // @Success 200 {object} utils.APIResponse{data=[]models.QuoteJSON,meta=utils.APIMeta} "One page of quotes"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID') or sort_by is not an allowed column ('Invalid sort column')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or a sales user asked about a deal it does not own ('You can only work on your own deals and quotes')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions); or a caller holding quotes.view at scope own asked about a deal it does not own ('You can only work on your own deals and quotes')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -883,7 +886,7 @@ func (h *QuoteHandler) ListByDeal(c *gin.Context) {
 
 // ListByCustomer godoc
 // @Summary List a customer's quotes
-// @Description One page of the live quotes addressed to the customer, without lines. Roles: admin (every quote) and sales (only the quotes it owns; filtered in the query, so meta.total counts only those). Support and customer roles are refused. sort_by and sort_order behave as on GET /quotes.
+// @Description One page of the live quotes addressed to the customer, without lines. Needs quotes.view: at scope all every quote; at scope own only the quotes the caller owns (filtered in the query, so meta.total counts only those). The support and customer system roles do not hold it. sort_by and sort_order behave as on GET /quotes.
 // @Description data is the array of quotes; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags quotes
 // @Produce json
@@ -898,7 +901,7 @@ func (h *QuoteHandler) ListByDeal(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.QuoteJSON,meta=utils.APIMeta} "One page of quotes"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid customer ID') or sort_by is not an allowed column ('Invalid sort column')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold quotes.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live (not erased) customer has this id ('Customer not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"

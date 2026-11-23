@@ -151,15 +151,15 @@ func newConfigurationResponses(configs []models.Configuration) []ConfigurationRe
 
 // GetAll returns all configurations
 // GetAll godoc
-// @Summary List all configurations (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them. The reserved single sign-on entries (security.sso.*) are left out; GET /settings/sso serves them.
+// @Summary List all configurations (settings.view)
+// @Description Needs settings.view (the admin system role holds it), checked by the route guard and again in the handler. Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them. The reserved single sign-on entries (security.sso.*) are left out; GET /settings/sso serves them.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=ConfigurationListResponse} "Every configuration entry"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the configurations could not be read"
 // @Router /configurations [get]
@@ -186,8 +186,8 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 
 // GetByCategory returns configurations by category
 // GetByCategory godoc
-// @Summary List the configurations of a category (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. The reserved single sign-on entries (security.sso.*) are left out of the security category; GET /settings/sso serves them. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Summary List the configurations of a category (settings.view)
+// @Description Needs settings.view (the admin system role holds it), checked by the route guard and again in the handler. Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. The reserved single sign-on entries (security.sso.*) are left out of the security category; GET /settings/sso serves them. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -195,7 +195,7 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 // @Param category path string true "Configuration category; any other value yields an empty list" Enums(general, leads, customers, deals, tickets, tasks, security, integration, ui)
 // @Success 200 {object} utils.APIResponse{data=ConfigurationListResponse} "The entries of the category (possibly empty)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the configurations could not be read"
 // @Router /configurations/category/{category} [get]
@@ -228,8 +228,8 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 
 // GetByKey returns a specific configuration
 // GetByKey godoc
-// @Summary Get a configuration entry (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 here; GET /settings/sso serves them.
+// @Summary Get a configuration entry (settings.view)
+// @Description Needs settings.view (the admin system role holds it), checked by the route guard and again in the handler. Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 here; GET /settings/sso serves them.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -237,7 +237,7 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 // @Param key path string true "Configuration key, e.g. security.allow_public_registration"
 // @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The entry"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the entry could not be read"
@@ -269,8 +269,8 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 
 // Set updates a configuration value
 // Set godoc
-// @Summary Change a configuration value (admin)
-// @Description Admin only (route guard, repeated in the handler). Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.
+// @Summary Change a configuration value (settings.update)
+// @Description Needs settings.update (the admin system role holds it), checked by the route guard and again in the handler. Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.
 // @Description A sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not written; PUT /settings/sso writes them.
 // @Tags configurations
 // @Accept json
@@ -282,7 +282,7 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The updated entry"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: value missing (details maps Value to a message). BAD_REQUEST: malformed JSON (Invalid request format), Configuration value cannot be null, Configuration is read-only, or Invalid value for configuration (outside valid_values, wrong type, or a rejected AEO provider setting)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the value could not be stored or a sensitive value could not be encrypted"
@@ -356,8 +356,8 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 
 // Reset resets a configuration to its default value
 // Reset godoc
-// @Summary Reset a configuration to its default (admin)
-// @Description Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not reset.
+// @Summary Reset a configuration to its default (settings.update)
+// @Description Needs settings.update (the admin system role holds it), checked by the route guard and again in the handler. Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not reset.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -366,7 +366,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=ConfigurationResponse} "The reset entry"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Configuration is read-only"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no entry with this key"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the entry could not be stored"

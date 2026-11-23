@@ -86,7 +86,7 @@ func productLengthError(name, sku *string, description *string) string {
 
 // Create godoc
 // @Summary Create a product
-// @Description Create a catalogue product. Role: admin. name is required (trimmed, 1 to 200 characters); sku is optional (trimmed, at most 64 characters, indexed but not unique); description at most 65535 bytes. unit_price_cents is required, an integer in minor units from 0 to 10^12. currency is three upper-case letters and defaults to the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR). is_active defaults to true. Quote lines copy the name and the price when they are added, so a later change here never alters an existing quote.
+// @Description Create a catalogue product. Needs products.create (the admin system role holds it). name is required (trimmed, 1 to 200 characters); sku is optional (trimmed, at most 64 characters, indexed but not unique); description at most 65535 bytes. unit_price_cents is required, an integer in minor units from 0 to 10^12. currency is three upper-case letters and defaults to the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR). is_active defaults to true. Quote lines copy the name and the price when they are added, so a later change here never alters an existing quote.
 // @Tags products
 // @Accept json
 // @Produce json
@@ -96,7 +96,7 @@ func productLengthError(name, sku *string, description *string) string {
 // @Success 201 {object} utils.APIResponse{data=models.Product} "Product created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name, for example UnitPriceCents, to a message), a value is longer than its column (no details), or the trimmed name is empty (no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.create (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /products [post]
@@ -136,7 +136,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List products
-// @Description One page of live products. Roles: admin and sales. Filters combine (AND): search (substring of name or sku; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), is_active and currency. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc. Soft-deleted products never appear.
+// @Description One page of live products. Needs products.view (the admin and sales system roles hold it). Filters combine (AND): search (substring of name or sku; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), is_active and currency. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc. Soft-deleted products never appear.
 // @Description data is the array of products; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Description Lookup mode (#239): when the query carries source, scope or external_id (even empty), the request is a lookup of the one live product (active or not) that the exact, case-sensitive (source, scope, external_id) triple is mapped to. The three values are validated before anything is read (source 1-64, scope 0-128 with absent meaning the empty string, external_id 1-255 characters; valid UTF-8, no control characters, no leading or trailing whitespace); a refused value is 400 VALIDATION_ERROR with details.field and details.reason, never the value. search, is_active, currency, sort_by, sort_order, page and offset are ignored and limit only fills meta.per_page. data is an array of 0 or 1 product and meta.page is 1; a triple mapped to nothing, or whose product was deleted, answers 200 with an empty array.
 // @Tags products
@@ -157,7 +157,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Product,meta=utils.APIMeta} "One page of products"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), is_active is not a boolean ('is_active must be true or false'), or currency is not three upper-case letters ('currency must be three upper-case letters'). VALIDATION_ERROR (lookup mode): a refused source, scope or external_id; details.field names it and details.reason the rule, never the value"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /products [get]
@@ -211,7 +211,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a product
-// @Description One live product, active or not. Roles: admin and sales. A soft-deleted product is a 404.
+// @Description One live product, active or not. Needs products.view (the admin and sales system roles hold it). A soft-deleted product is a 404.
 // @Tags products
 // @Produce json
 // @Security BearerAuth
@@ -220,7 +220,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Product} "The product"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid product ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live product has this id ('Product not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -244,7 +244,7 @@ func (h *ProductHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a product
-// @Description Partial update of a product. Role: admin. Every absent field keeps its stored value; the merged product is validated with the rules of create (a name that trims to empty is refused; sku and description may be cleared with an empty string). Existing quote lines are not touched: they copied the name and the price when they were added.
+// @Description Partial update of a product. Needs products.update (the admin system role holds it). Every absent field keeps its stored value; the merged product is validated with the rules of create (a name that trims to empty is refused; sku and description may be cleared with an empty string). Existing quote lines are not touched: they copied the name and the price when they were added.
 // @Tags products
 // @Accept json
 // @Produce json
@@ -255,7 +255,7 @@ func (h *ProductHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Product} "The updated product"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid product ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name, for example UnitPriceCents, to a message), a value is longer than its column (no details), or the trimmed name is empty (no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.update (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live product has this id ('Product not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -312,7 +312,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a product
-// @Description Soft-delete a product. Role: admin. Quote lines that reference it keep their product_id and their copied description and price; it can no longer be added to new lines. Products hold no personal data, so this is not an erasure.
+// @Description Soft-delete a product. Needs products.delete (the admin system role holds it). Quote lines that reference it keep their product_id and their copied description and price; it can no longer be added to new lines. Products hold no personal data, so this is not an erasure.
 // @Description The product's external-id mappings (#239) are hard-deleted in the same transaction, which first locks the live product row, so their (source, scope, external_id) triples can be mapped again, to this or another product. A failure rolls the whole delete back and the mappings remain.
 // @Tags products
 // @Produce json
@@ -322,7 +322,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid product ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold products.delete (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live product has this id ('Product not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"

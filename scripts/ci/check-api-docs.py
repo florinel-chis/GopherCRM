@@ -19,9 +19,11 @@ Fails when the committed API reference is stale or incomplete:
                alternatives [{BearerAuth: []}, {ApiKeyAuth: []}] (no anonymous
                {} alternative, no combined requirement); a public one declares
                none, and the spec has no global security. Every status code
-               the route middleware can answer with (401 Auth, 403 role and
-               registration guards, 429 rate limiters) is a documented
-               response.
+               the route middleware can answer with (401 Auth, 403 the
+               registration guard, 429 rate limiters) is a documented
+               response. The 403 of the permission guard handler.Protected
+               builds is not counted here; TestAPIReferenceNamesRouteKeys in
+               internal/handler checks it.
   inputs       read from the handler the router registers for the route
                (which must carry the route's @Router annotation; an @Router
                on any other function fails): every query parameter and form

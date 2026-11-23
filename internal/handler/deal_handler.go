@@ -165,11 +165,11 @@ func optionalID(id *uint) *uint {
 
 // Create godoc
 // @Summary Create a deal
-// @Description Create a deal. Roles: admin and sales.
+// @Description Create a deal. Needs deals.create (the admin and sales system roles hold it).
 // @Description Validation, in order: binding (title required, stage from its set, amount_cents 0 to 10^12, currency three upper-case letters, probability 0 to 100, owner_id at least 1); title 200, lost_reason 255 and source 100 characters and notes 65535 bytes; expected_close_date YYYY-MM-DD; then the service (blank title after trimming) and the links: owner_id, company_id, customer_id and lead_id must name live rows, and lead_id a lead the caller may see (a hidden lead is reported like a missing one).
-// @Description Defaults and stage rules: stage qualification; currency from the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR); probability from the stage (qualification 10, proposal 40, negotiation 70), won always 100 and lost always 0; closed_at set when the stage is won or lost; lost_reason kept only when lost. owner_id defaults to the caller; a sales user may only name itself.
+// @Description Defaults and stage rules: stage qualification; currency from the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR); probability from the stage (qualification 10, proposal 40, negotiation 70), won always 100 and lost always 0; closed_at set when the stage is won or lost; lost_reason kept only when lost. owner_id defaults to the caller; a caller without deals.assign_owner may only name itself (the admin system role holds the key).
 // @Description Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage), the deal_created automation event and a deal.created webhook event (one delivery per active endpoint subscribed to it).
-// @Description The response is the deal re-read with owner, company, customer and lead loaded; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description The response is the deal re-read with owner, company, customer and lead loaded; lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -179,7 +179,7 @@ func optionalID(id *uint) *uint {
 // @Success 201 {object} utils.APIResponse{data=models.Deal} "Deal created"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: a value longer than its column, a malformed expected_close_date, or a blank title. INVALID_REFERENCE: owner_id, company_id, customer_id or lead_id names no live row, or lead_id names a lead the caller may not see"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or a sales user named another owner ('You can only assign deals to yourself')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.create (Insufficient permissions); or a caller without deals.assign_owner named another owner ('You can only assign deals to yourself')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals [post]
@@ -233,7 +233,7 @@ func (h *DealHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List deals
-// @Description One page of live deals with owner, company, customer and lead loaded. Roles: admin (every deal) and sales (only the deals it owns, whatever owner_id says; the filter is applied in the query, so meta.total counts only those). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description One page of live deals with owner, company, customer and lead loaded. Needs deals.view: at scope all every deal; at scope own only the deals the caller owns, whatever owner_id says (the filter is applied in the query, so meta.total counts only those). The admin system role holds it at scope all, the sales system role at scope own. lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Description Filters combine (AND): search (substring of title or notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), stage, open=true (every stage but won and lost; open=false applies no filter), company_id, customer_id and owner_id. sort_by must be one of the listed columns (any other value is 400) and the id breaks ties in the same direction. Without sort_by the order is created_at descending and sort_order is ignored; with sort_by, a sort_order other than asc or desc becomes desc.
 // @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
@@ -248,13 +248,13 @@ func (h *DealHandler) Create(c *gin.Context) {
 // @Param open query bool false "true: only deals whose stage is neither won nor lost; false: no filter. Anything strconv.ParseBool rejects is 400"
 // @Param company_id query int false "Only deals linked to this company; must be a positive integer" minimum(1)
 // @Param customer_id query int false "Only deals linked to this customer; must be a positive integer" minimum(1)
-// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured for admins; a sales caller is always narrowed to itself" minimum(1)
+// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured at deals.view scope all; a caller at scope own is always narrowed to itself" minimum(1)
 // @Param sort_by query string false "Sort column" Enums(id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at, updated_at) default(created_at)
 // @Param sort_order query string false "Sort direction, applied only with sort_by; any other value becomes desc" Enums(asc, desc) default(desc)
 // @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: sort_by is not an allowed column ('Invalid sort column'), stage is unknown ('Invalid stage'), open is not a boolean, or company_id, customer_id or owner_id is not a positive integer ('<name> must be a positive integer')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals [get]
@@ -319,18 +319,18 @@ func (h *DealHandler) List(c *gin.Context) {
 
 // Pipeline godoc
 // @Summary Deal pipeline by stage
-// @Description The live deals aggregated per stage and currency. Roles: admin and sales; a sales user always gets its own deals only, whatever owner_id says.
-// @Description data.stages lists all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code; amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents x probability / 100), integer arithmetic, rounded once on each stage-and-currency total. Soft-deleted deals are not counted. owner_id (admin) and company_id narrow the aggregate; an id that matches nothing yields empty stages.
+// @Description The live deals aggregated per stage and currency. Needs deals.view: at scope all every deal; at scope own only the caller's own deals, whatever owner_id says (the admin system role holds it at scope all, the sales system role at scope own).
+// @Description data.stages lists all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty (count 0, totals []). count is the number of deals in the stage; totals holds one entry per currency, sorted by currency code; amounts in different currencies are never added together. amount_cents is the sum of the deals' amounts; weighted_cents is round_half_up(sum of amount_cents x probability / 100), integer arithmetic, rounded once on each stage-and-currency total. Soft-deleted deals are not counted. owner_id (honoured at scope all) and company_id narrow the aggregate; an id that matches nothing yields empty stages.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured for admins; a sales caller is always narrowed to itself" minimum(1)
+// @Param owner_id query int false "Only deals owned by this user; must be a positive integer. Honoured at deals.view scope all; a caller at scope own is always narrowed to itself" minimum(1)
 // @Param company_id query int false "Only deals linked to this company; must be a positive integer" minimum(1)
 // @Success 200 {object} utils.APIResponse{data=models.DealPipeline} "The pipeline"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: owner_id or company_id is not a positive integer ('<name> must be a positive integer')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /deals/pipeline [get]
@@ -364,7 +364,7 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a deal
-// @Description One live deal with owner, company, customer and lead loaded. Roles: admin (any deal) and sales (only the deals it owns; another owner's deal is 403, not 404). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read. The same rule applies to every deal this API returns.
+// @Description One live deal with owner, company, customer and lead loaded. Needs deals.view: at scope all any deal; at scope own only the deals the caller owns (another owner's deal is 403, not 404). lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read. The same rule applies to every deal this API returns.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
@@ -373,7 +373,7 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Deal} "The deal"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions); or a caller holding deals.view at scope own asked for a deal it does not own ('You can only view your own deals')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -393,11 +393,11 @@ func (h *DealHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Replace a deal
-// @Description Replace a deal's fields. Roles: admin (any deal) and sales (only the deals it owns).
-// @Description The body is the new state of title, amount_cents (absent means 0), expected_close_date, lost_reason, source and notes: a field left out is stored empty, 0 or cleared. stage, currency, owner_id absent keep the stored value. company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another id sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when they change, so a deal keeps links to erased records and stays editable; a lead_id that is sent is always checked, even when unchanged, and must name a lead the caller may see; a stored lead link the caller may not see is kept unchecked when lead_id is absent. owner_id: a sales user may only send its own id; an admin any live user (checked only when it changes).
+// @Description Replace a deal's fields. Needs deals.update: at scope all any deal; at scope own only the deals the caller owns (the admin system role holds it at scope all, the sales system role at scope own).
+// @Description The body is the new state of title, amount_cents (absent means 0), expected_close_date, lost_reason, source and notes: a field left out is stored empty, 0 or cleared. stage, currency, owner_id absent keep the stored value. company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another id sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when they change, so a deal keeps links to erased records and stays editable; a lead_id that is sent is always checked, even when unchanged, and must name a lead the caller may see; a stored lead link the caller may not see is kept unchecked when lead_id is absent. owner_id: a caller without deals.assign_owner may only send its own id; a caller holding it any live user (checked only when it changes).
 // @Description A stage different from the stored one follows the rules of POST /deals/{id}/stage (probability defaults to the new stage's unless sent, won 100, lost 0, closed_at set or cleared, lost_reason kept only on lost) and writes a stage-history row. The same stage writes no history row: closed_at stays, probability changes only when sent (still pinned for won and lost), and lost_reason survives only on a lost deal.
 // @Description Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes. When the update changed at least one stored value of the deal (a stage change always does), a deal.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends only the stored values writes none.
-// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -408,7 +408,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Deal} "The updated deal"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: id is not an unsigned integer, a value longer than its column, a malformed expected_close_date, or a blank title. INVALID_REFERENCE: a changed owner_id, company_id or customer_id, or a sent lead_id, names no live row (or a lead the caller may not see)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own; or a sales user named another owner ('You can only assign deals to yourself')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.update (Insufficient permissions); a caller holding deals.update at scope own asked for a deal it does not own ('You can only view your own deals'); or a caller without deals.assign_owner named another owner ('You can only assign deals to yourself')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -464,9 +464,9 @@ func (h *DealHandler) Update(c *gin.Context) {
 
 // ChangeStage godoc
 // @Summary Move a deal to another stage
-// @Description Move a deal to a stage. Roles: admin (any deal) and sales (only the deals it owns). probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at to now (also on won to lost); entering an open stage clears it. lost_reason is stored (trimmed) when the new stage is lost, absent keeping the reason already stored, and cleared otherwise. Asking for the stage the deal is already in is a 200 that writes nothing (no history row, no event) and ignores probability and lost_reason.
+// @Description Move a deal to a stage. Needs deals.update: at scope all any deal; at scope own only the deals the caller owns. probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at to now (also on won to lost); entering an open stage clears it. lost_reason is stored (trimmed) when the new stage is lost, absent keeping the reason already stored, and cleared otherwise. Asking for the stage the deal is already in is a 200 that writes nothing (no history row, no event) and ignores probability and lost_reason.
 // @Description Side effects, in one transaction: one stage-history row, the deal_stage_changed automation event (no deal_updated automation event) and a deal.updated webhook event (one delivery per active endpoint subscribed to it). The same stage again writes no webhook event either.
-// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Tags deals
 // @Accept json
 // @Produce json
@@ -477,7 +477,7 @@ func (h *DealHandler) Update(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Deal} "The deal after the move"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). BAD_REQUEST: id is not an unsigned integer, or lost_reason over 255 characters (sent, or the stored one when moving to lost)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.update (Insufficient permissions); or a caller holding deals.update at scope own asked for a deal it does not own ('You can only view your own deals')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -513,7 +513,7 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 
 // History godoc
 // @Summary A deal's stage history
-// @Description The deal's stage changes, oldest first (changed_at, then id). Roles: admin (any deal) and sales (only the deals it owns). The first row has from_stage null and to_stage the stage the deal was created in. changed_by is the acting user's full record (including email), omitted when that account no longer exists. data is the array; there is no pagination.
+// @Description The deal's stage changes, oldest first (changed_at, then id). Needs deals.view: at scope all any deal; at scope own only the deals the caller owns. The first row has from_stage null and to_stage the stage the deal was created in. changed_by is the acting user's full record (including email), omitted when that account no longer exists. data is the array; there is no pagination.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
@@ -522,7 +522,7 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.DealStageChange} "The stage history"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own deals': a sales user asked for a deal it does not own"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions); or a caller holding deals.view at scope own asked for a deal it does not own ('You can only view your own deals')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -547,7 +547,7 @@ func (h *DealHandler) History(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a deal
-// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). This is not an erasure: the deal's title, notes and lost_reason stay on the deleted row. They are overwritten (title [redacted], notes and lost_reason empty) only when the linked customer or lead is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted deals too. No automation event is recorded. A deal.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the deal) is written in the same transaction as the soft delete.
+// @Description Soft-delete a deal. Needs deals.delete (the admin system role holds it); any live deal, whoever owns it. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). This is not an erasure: the deal's title, notes and lost_reason stay on the deleted row. They are overwritten (title [redacted], notes and lost_reason empty) only when the linked customer or lead is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted deals too. No automation event is recorded. A deal.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the deal) is written in the same transaction as the soft delete.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth
@@ -556,7 +556,7 @@ func (h *DealHandler) History(c *gin.Context) {
 // @Success 204 "Deleted; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid deal ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.delete (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live deal has this id ('Deal not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -580,7 +580,7 @@ func (h *DealHandler) Delete(c *gin.Context) {
 
 // ListByCompany godoc
 // @Summary List a company's deals
-// @Description One page of the live deals linked to the company, newest first (created_at descending, then id), with their associations. Roles: admin (every deal) and sales (only the deals it owns; filtered in the query, so meta.total counts only those). lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description One page of the live deals linked to the company, newest first (created_at descending, then id), with their associations. Needs deals.view: at scope all every deal; at scope own only the deals the caller owns (filtered in the query, so meta.total counts only those). lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
 // @Produce json
@@ -593,7 +593,7 @@ func (h *DealHandler) Delete(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid company ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live company has this id ('Company not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
@@ -628,7 +628,7 @@ func (h *DealHandler) ListByCompany(c *gin.Context) {
 
 // ListByCustomer godoc
 // @Summary List a customer's deals
-// @Description One page of the live deals linked to the customer, newest first (created_at descending, then id), with their associations. Roles: admin (every deal) and sales (only the deals it owns; filtered in the query, so meta.total counts only those). Support and customer roles are refused. lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
+// @Description One page of the live deals linked to the customer, newest first (created_at descending, then id), with their associations. Needs deals.view: at scope all every deal; at scope own only the deals the caller owns (filtered in the query, so meta.total counts only those). The support and customer system roles do not hold it and are refused. lead_id and lead appear only when the caller may see the linked lead (leads.view at scope all: every lead; at scope own: the leads the caller owns; without it: none), decided on every read.
 // @Description data is the array of deals; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags deals
 // @Produce json
@@ -641,7 +641,7 @@ func (h *DealHandler) ListByCompany(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.Deal,meta=utils.APIMeta} "One page of deals"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid customer ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold deals.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live (not erased) customer has this id ('Customer not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"

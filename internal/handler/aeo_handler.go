@@ -124,14 +124,14 @@ type GenerateAEOPromptsRequest struct {
 // GetProfile godoc
 // @Summary Get the AEO brand profile
 // @Description The single brand profile that drives mention detection: brand name, aliases, owned domains, business description and the tracked competitors. There is only ever one profile (id 1). Answers 404 NOT_FOUND until the profile has been saved for the first time (every other AEO route that needs it answers 409 instead).
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=models.AEOProfile} "Profile retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - the brand profile has not been configured yet (message 'AEO profile not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -160,7 +160,7 @@ func (h *AEOHandler) GetProfile(c *gin.Context) {
 // SaveProfile godoc
 // @Summary Create or update the AEO brand profile
 // @Description Save the single brand profile; the first call creates it, later calls replace it wholesale (a list left out of the body is cleared). The service trims every value, drops blank aliases, domains and competitors, de-duplicates aliases and domains case-insensitively, and reduces domains to bare lower-case hosts (scheme, path and a leading "www." removed). The response is the stored row. Only answers collected after the save are analysed against the new profile; stored answers keep their mention and citation analysis.
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. BrandName or Prompts[0], to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when the brand name is blank once trimmed or a value is too long after trimming (message names the rule, e.g. "brand name is required: invalid brand profile").
 // @Tags aeo
 // @Accept json
@@ -171,7 +171,7 @@ func (h *AEOHandler) GetProfile(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AEOProfile} "Profile saved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR or BAD_REQUEST - invalid body or profile (see description)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /aeo/profile [put]
@@ -213,7 +213,7 @@ func (h *AEOHandler) SaveProfile(c *gin.Context) {
 // @Description One page of tracked prompts (soft-deleted prompts are never listed). Each carries computed figures over the requested window: visibility (share of non-error answers that mention the brand, percentage 0..100 with one decimal), the answer and mention counts behind it and the time of the most recent answer. The window is the 7/30/90-day selector the dashboard uses; any other or unparseable value falls back to 30.
 // @Description Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total (prompts matching active_only) and total_pages.
 // @Description Sorting: sort_by is one of id, text, is_active, created_at, updated_at; any other value is answered with 400 BAD_REQUEST ("Invalid sort column: <value>"). sort_order is asc or desc; anything else means desc. Without sort_by the order is created_at descending whatever sort_order says. Ties are broken by id in the same direction.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -227,7 +227,7 @@ func (h *AEOHandler) SaveProfile(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.AEOPrompt,meta=utils.APIMeta} "Prompts retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - unsupported sort column"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /aeo/prompts [get]
@@ -261,7 +261,7 @@ func (h *AEOHandler) ListPrompts(c *gin.Context) {
 // CreatePrompts godoc
 // @Summary Add tracked AEO prompts
 // @Description Add 1 to 25 prompts in one request; new prompts are always active. Texts are trimmed and must be 1 to 500 characters. The batch is all-or-nothing and runs in one transaction: a repeat within the request or a text matching a live prompt (case-insensitive; soft-deleted prompts do not reserve their text) saves nothing and answers 409 CONFLICT, and so does nothing when the batch would push the number of active prompts above 100 (400). The response lists the created prompts in request order; their computed visibility figures are 0.
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. BrandName or Prompts[0], to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when an entry is blank once trimmed ("prompt text must be between 1 and 500 characters") or the batch would exceed 100 active prompts ("active prompt limit of 100 reached"); 409 CONFLICT naming the duplicated text.
 // @Tags aeo
 // @Accept json
@@ -272,7 +272,7 @@ func (h *AEOHandler) ListPrompts(c *gin.Context) {
 // @Success 201 {object} utils.APIResponse{data=[]models.AEOPrompt} "Prompts created successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR or BAD_REQUEST - invalid body, blank prompt or active prompt limit reached"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - a prompt with this text already exists or is repeated in the request"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -302,7 +302,7 @@ func (h *AEOHandler) CreatePrompts(c *gin.Context) {
 // UpdatePrompt godoc
 // @Summary Update a tracked AEO prompt
 // @Description Edit a prompt's text and/or toggle whether full runs include it. Both fields are optional and only the ones present are applied, so deactivating never rewrites the text; a body of {} changes nothing but still answers 200. Stored answers keep pointing at the prompt whatever the edit. The response carries the prompt without computed figures (visibility and counts are 0, last_run_at is omitted).
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 BAD_REQUEST for a path id that is not an unsigned integer ("Invalid prompt ID") or a text that is blank once trimmed ("Prompt text cannot be blank"); 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. BrandName or Prompts[0], to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types (an empty body is BAD_REQUEST); 400 VALIDATION_ERROR when reactivating a prompt while 100 are already active; 404 NOT_FOUND for an unknown or deleted prompt; 409 CONFLICT when another live prompt has the same text (case-insensitive).
 // @Tags aeo
 // @Accept json
@@ -314,7 +314,7 @@ func (h *AEOHandler) CreatePrompts(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AEOPrompt} "Prompt updated successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST or VALIDATION_ERROR - invalid id, body or text, or active prompt limit reached"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - prompt not found (message 'AEO prompt not found')"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - another prompt already has this text"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
@@ -355,7 +355,7 @@ func (h *AEOHandler) UpdatePrompt(c *gin.Context) {
 // DeletePrompt godoc
 // @Summary Delete a tracked AEO prompt
 // @Description Soft-delete a prompt so it is excluded from future runs and from the prompt list. Its stored answers and citations are kept and still count in the dashboard and citation report. Its text is no longer reserved: uniqueness is checked against live prompts only, so the same text can be added again.
-// @Description Roles: admin only.
+// @Description Needs aeo.delete_prompts (the admin system role holds it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -364,7 +364,7 @@ func (h *AEOHandler) UpdatePrompt(c *gin.Context) {
 // @Success 204 "No Content"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer ('Invalid prompt ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.delete_prompts (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - prompt not found or already deleted"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -402,7 +402,7 @@ type GeneratedAEOPromptsData struct {
 // @Summary Generate candidate AEO prompts
 // @Description Ask the generation engine for buyer-style questions derived from the brand profile. The engine is the integration.aeo.generation_engine setting (default anthropic; openai, gemini, kimi or perplexity are the other choices) and generation never falls back to another engine. Its API key is read from the admin settings first and from the engine's environment variable otherwise (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, MOONSHOT_API_KEY, PERPLEXITY_API_KEY). The call is bounded by a 90-second timeout. Nothing is stored: the suggestions come back as plain strings (de-duplicated, each 12 to 500 characters, at most count of them) and are only tracked once POSTed to /aeo/prompts. The body is optional; an empty body asks for 10.
 // @Description Side effects: one billed request to the external engine.
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. BrandName or Prompts[0], to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDER_NOT_CONFIGURED when the selected engine has no API key (the message names the engine); 503 PROVIDER_REJECTED when the engine answered with an HTTP error ("the generation engine rejected the request (HTTP 401) — check its API key in the AEO settings" for a 4xx, "the generation engine is unavailable (HTTP 529); try again later" otherwise). 503 rather than 502 so the JSON body survives proxies such as Cloudflare. A failure without an HTTP status (timeout, DNS, TLS, egress policy) and an answer with no usable suggestion are 500 INTERNAL_ERROR.
 // @Tags aeo
 // @Accept json
@@ -413,7 +413,7 @@ type GeneratedAEOPromptsData struct {
 // @Success 200 {object} utils.APIResponse{data=GeneratedAEOPromptsData} "Suggestions generated successfully (data.prompts)"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR or BAD_REQUEST - count negative or above 25 (0 means the default 10), or a malformed body"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - the brand profile has not been configured yet"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - engine unreachable without an HTTP status, or no usable suggestion in its answer"
@@ -476,7 +476,7 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 // @Summary List the answers collected for a prompt
 // @Description One page of the stored answers for one prompt, newest first (created_at, then id, descending), each with its engine, model, latency, mention analysis and extracted citations. Failed provider calls are stored too: they carry a populated error and empty answer_text. Pass run_id to narrow the list to one run; an unknown run_id simply yields an empty page. Answers of a soft-deleted prompt are not reachable here (404).
 // @Description Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages. No sorting parameters.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -488,7 +488,7 @@ func (h *AEOHandler) GeneratePrompts(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.AEOAnswer,meta=utils.APIMeta} "Answers retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the prompt id or run_id is not an unsigned integer ('Invalid prompt ID' / 'Invalid run ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - prompt not found or deleted"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -533,7 +533,7 @@ func (h *AEOHandler) ListPromptAnswers(c *gin.Context) {
 // @Summary Start an AEO run
 // @Description Queue every active prompt against every configured engine (trigger "manual") and return at once with the run row in status "running"; total_queries is prompts x engines. The work continues in the background and outlives the request, so poll GET /aeo/runs/{id} for progress. Only one run may be in flight at a time, manual and scheduled runs alike.
 // @Description Side effects: one billed request per prompt and engine to the external engines; one answer row (with its citations) is stored per call, failed calls included.
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 404 NOT_FOUND when there is no active prompt ("No active AEO prompts to run"); 409 CONFLICT when a run on any replica is already in progress (a run whose heartbeat is older than 3 minutes or that started more than 6 hours ago is first marked failed, so it does not block).
 // @Tags aeo
 // @Produce json
@@ -541,7 +541,7 @@ func (h *AEOHandler) ListPromptAnswers(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Success 202 {object} utils.APIResponse{data=models.AEORun} "Run accepted and started"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - there are no active prompts to run"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - a run is already in progress, or the brand profile has not been configured"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
@@ -570,7 +570,7 @@ func (h *AEOHandler) CreateRun(c *gin.Context) {
 // @Summary Run a single AEO prompt
 // @Description Queue ONE prompt against every configured engine and return at once with the run row (trigger "manual", status "running"). The prompt may be inactive, which is how a draft is tested before it joins full runs; a soft-deleted prompt is 404. The same single-run-in-flight guard applies as for a full run.
 // @Description Side effects: one billed request per configured engine; one answer row per call is stored.
-// @Description Roles: admin, sales.
+// @Description Needs aeo.manage (the admin and sales system roles hold it).
 // @Description Errors: 400 VALIDATION_ERROR for an id that is not a positive integer (message "Validation failed", error.details is the string "Invalid prompt id"); Checks run in this order and the first failing one answers: 503 SHUTTING_DOWN while the server is draining for shutdown; 409 CONFLICT when the brand profile has not been configured; 503 PROVIDERS_UNAVAILABLE when no engine is configured; 404 NOT_FOUND for an unknown prompt ("Prompt not found"); 409 CONFLICT when a run on any replica is already in progress (a run whose heartbeat is older than 3 minutes or that started more than 6 hours ago is first marked failed, so it does not block).
 // @Tags aeo
 // @Produce json
@@ -580,7 +580,7 @@ func (h *AEOHandler) CreateRun(c *gin.Context) {
 // @Success 202 {object} utils.APIResponse{data=models.AEORun} "Run accepted and started"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - invalid prompt id"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin or sales"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.manage (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - prompt not found or deleted"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - a run is already in progress, or the brand profile has not been configured"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
@@ -616,7 +616,7 @@ func (h *AEOHandler) RunPrompt(c *gin.Context) {
 // @Description One page of the run history with the trigger, status and query counters of each run.
 // @Description Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default). meta carries page, per_page, total and total_pages.
 // @Description Sorting: sort_by is one of id, status, trigger, started_at, completed_at, created_at; any other value is answered with 400 BAD_REQUEST ("Invalid sort column: <value>"). sort_order is asc or desc; anything else means desc. Without sort_by the order is created_at descending whatever sort_order says. Ties are broken by id in the same direction.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -628,7 +628,7 @@ func (h *AEOHandler) RunPrompt(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=[]models.AEORun,meta=utils.APIMeta} "Runs retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - unsupported sort column"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /aeo/runs [get]
@@ -659,7 +659,7 @@ func (h *AEOHandler) ListRuns(c *gin.Context) {
 // GetRun godoc
 // @Summary Get one AEO run
 // @Description A single run with its current status and counters. This is the endpoint to poll after POST /aeo/runs or POST /aeo/prompts/{id}/run: the status moves from "running" to "completed", "partial" (some provider calls failed) or "failed" (all of them did), and completed_at is set at that point.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -668,7 +668,7 @@ func (h *AEOHandler) ListRuns(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.AEORun} "Run retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST - the id is not an unsigned integer ('Invalid run ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - run not found"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
@@ -695,7 +695,7 @@ func (h *AEOHandler) GetRun(c *gin.Context) {
 // GetDashboard godoc
 // @Summary AEO visibility dashboard
 // @Description Aggregated visibility over the requested window: the overall percentage of non-error answers that mention the brand, the same figure per engine, a daily timeline with one entry per UTC day (days without answers carry overall 0 and no per-engine entries), the share of voice across the brand and its competitors, and the per-company daily timeline. Windows are 7, 30 or 90 days; anything else falls back to 30. The window ends (exclusive) at the start of tomorrow in UTC, so today's answers are included. Works before a brand profile exists: the brand figures are then empty and share of voice falls back to the competitor names found in the answers.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -703,7 +703,7 @@ func (h *AEOHandler) GetRun(c *gin.Context) {
 // @Param days query int false "Reporting window in days; 7, 30 or 90, anything else means 30" Enums(7, 30, 90) default(30)
 // @Success 200 {object} utils.APIResponse{data=models.AEODashboard} "Dashboard retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /aeo/dashboard [get]
@@ -725,7 +725,7 @@ func (h *AEOHandler) GetDashboard(c *gin.Context) {
 // GetCitations godoc
 // @Summary AEO citation report
 // @Description Which sources the non-error answers cite over the requested window: the owned-domain citation rate, per-company citation and brand-mention rates (the brand first, then each competitor in profile order, companies without citations included) and the twenty most cited hosts by citation count descending. Windows are 7, 30 or 90 days; anything else falls back to 30. Works before a brand profile exists (by_company is then empty).
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
@@ -733,7 +733,7 @@ func (h *AEOHandler) GetDashboard(c *gin.Context) {
 // @Param days query int false "Reporting window in days; 7, 30 or 90, anything else means 30" Enums(7, 30, 90) default(30)
 // @Success 200 {object} utils.APIResponse{data=models.AEOCitationsReport} "Citation report retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
 // @Router /aeo/citations [get]
@@ -755,14 +755,14 @@ func (h *AEOHandler) GetCitations(c *gin.Context) {
 // GetProviders godoc
 // @Summary List the AEO answer engines
 // @Description Every supported engine with the model it would use and whether it is configured, re-read on every call so a key just stored in the settings shows up at once: anthropic, openai, gemini, kimi, perplexity, then the custom engine under its configured name (AEO_CUSTOM_NAME, "custom" when unset). A named engine counts as configured when it has an API key, the custom engine when it has a base URL. Unconfigured engines are skipped by runs. API keys are never returned. Always six entries, never paginated.
-// @Description Roles: admin, sales, support.
+// @Description Needs aeo.view (the admin, sales and support system roles hold it).
 // @Tags aeo
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=[]models.AEOProviderStatus} "Provider statuses retrieved successfully"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin, sales or support (the customer role is always refused)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold aeo.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
 // @Router /aeo/providers [get]
 func (h *AEOHandler) GetProviders(c *gin.Context) {

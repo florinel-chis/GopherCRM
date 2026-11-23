@@ -14,8 +14,11 @@
 // Each route also carries the handler it registers (resolved through the
 // typed parameters of the setup functions and the constructor calls in cmd)
 // and the status codes its route middleware can answer with (401 for
-// middleware.Auth, 403 for the role and registration guards, 429 for the
-// rate limiters).
+// middleware.Auth, 403 for the registration guard, 429 for the rate
+// limiters). The 403 of a protected route comes from the permission guard
+// handler.Protected builds from permissions.RouteKeys, which this walk does
+// not count; handler's TestAPIReferenceNamesRouteKeys holds those operations
+// to a documented 403 instead.
 //
 // It also reads, for every registered handler, which query parameters and
 // form fields it reads and which body type it binds, following the helpers it

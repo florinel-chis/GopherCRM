@@ -140,7 +140,7 @@ type UpdateMeRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateUserRequest true "New account"
 // @Success 201 {object} utils.APIResponse{data=models.User} "User created"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password is longer than 72 bytes (password must be at most 72 bytes long; checked first), or it fails the complexity policy. INVALID_ROLE_ASSIGNMENT: role custom without role_id, role_id with any other role, or a role_id that names a system role"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is none of admin, sales, support, customer, custom (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password is longer than 72 bytes (password must be at most 72 bytes long; checked first), or it fails the complexity policy. INVALID_ROLE_ASSIGNMENT: role custom without role_id, role_id with any other role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.create, or asks for a role other than customer without users.assign_role (Insufficient permissions), also when it lost the permission while the request waited. ROLE_ESCALATION: the requested role's permissions are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "ROLE_NOT_FOUND: role_id names no role"
@@ -206,7 +206,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 // List godoc
 // @Summary List users (admin)
-// @Description Admin only (route guard). Returns a page of live accounts as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Erased accounts are not listed. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. search matches a substring (SQL LIKE) of email, first_name or last_name and combines with the sort.
+// @Description Needs users.view (route guard; the admin system role holds it). Returns a page of live accounts as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Erased accounts are not listed. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. search matches a substring (SQL LIKE) of email, first_name or last_name and combines with the sort.
 // @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0); page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
 // @Description role keeps only the users whose role is exactly that value; the filter applies in the query before offset and limit, so meta counts only matching users, and it combines with search and the sort. An empty role is ignored; any other value is rejected before anything is read.
 // @Tags users
@@ -221,9 +221,9 @@ func (h *UserHandler) Create(c *gin.Context) {
 // @Param search query string false "Substring matched against email, first_name and last_name"
 // @Param role query string false "Only users with this role (exact, case-sensitive match); empty is ignored, an unknown value is 400" Enums(admin, sales, support, customer, custom)
 // @Success 200 {object} utils.APIResponse{data=[]models.User,meta=utils.APIMeta} "A page of users; pagination in meta"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: role is not one of admin, sales, support, customer, custom (error.details.role; the value is not echoed)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: role is none of admin, sales, support, customer, custom (error.details.role; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.view (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the users could not be read"
 // @Router /users [get]
@@ -304,7 +304,7 @@ func (h *UserHandler) List(c *gin.Context) {
 
 // Get godoc
 // @Summary Get a user
-// @Description Any authenticated role may read its own account; reading another account requires the admin role. The permission check runs before the lookup, so a non-admin asking for another id gets 403 whether or not it exists. Erased accounts are not found.
+// @Description Any authenticated account may read its own account without any permission; reading another account needs users.view, checked in the handler (the admin system role holds it). The check runs before the lookup, so a caller without users.view asking for another id gets 403 whether or not it exists. Erased accounts are not found.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
@@ -313,7 +313,7 @@ func (h *UserHandler) List(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.User} "The user"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID (not an unsigned 32-bit integer; 0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a non-admin asked for another account (You can only view your own profile)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a caller without users.view asked for another account ('You can only view your own profile'); its own id never needs users.view"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be read"
@@ -365,7 +365,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param request body UpdateUserRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.User} "The updated user"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON or a current_password that is not a string (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). CURRENT_PASSWORD_REQUIRED: the caller changes the email of its own account and current_password is absent, null or empty (no details). INVALID_CURRENT_PASSWORD: the caller changes the email of its own account and current_password does not match (no details). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role): role custom without role_id, role_id with any other role or without role, or a role_id that names a system role"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON or a current_password that is not a string (Invalid request format). VALIDATION_ERROR: email is not an email address or role is none of admin, sales, support, customer, custom (details maps the Go field name to a message). CURRENT_PASSWORD_REQUIRED: the caller changes the email of its own account and current_password is absent, null or empty (no details). INVALID_CURRENT_PASSWORD: the caller changes the email of its own account and current_password does not match (no details). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role): role custom without role_id, role_id with any other role or without role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a caller without users.update tried to update another account (You can only update your own profile), or the caller lost a permission the request needs while it waited, or it lacks customers.update for an email change of a customer login with a linked customer record (Insufficient permissions). ROLE_ESCALATION: the target's permissions, or those of the requested role, are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id. ROLE_NOT_FOUND: role_id names no role"
