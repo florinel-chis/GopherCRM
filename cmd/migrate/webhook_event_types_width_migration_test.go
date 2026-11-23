@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/database/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -232,9 +236,28 @@ func TestWebhookEventTypesWidthMigration(t *testing.T) {
 		})
 	}
 
+	// #726: the release run that timed out here (45154161780, attempt 1,
+	// Migrations (MySQL 8)) did not hang in this subtest. The 10-minute
+	// package alarm fired 3 s into it, while lenient.Force was taking the
+	// migration lock: the lock goroutine was runnable, writing its GET_LOCK
+	// packet, and no goroutine had waited a minute. The 45 roots that ran
+	// before it took 565 s there and 239 s on the passing attempt 2 (2.4x
+	// slower), so the package ran out of its -timeout budget on a slow
+	// runner. Locally the subtest passed five runs in a row on MySQL 8 and on
+	// MariaDB 10.11 and never blocked. The waits this subtest could still meet are
+	// bounded anyway: a metadata lock on webhook_endpoints by the session's
+	// lock_wait_timeout (migrateLockWaitSeconds, error 1205 instead of a
+	// year), the migration lock by GET_LOCK's 10 s inside golang-migrate's
+	// 15 s LockTimeout (ErrLocked), and an in-flight statement or a Close
+	// behind one by stepDeadline, which fails the test naming the step and
+	// kills the test database's sessions. The lenient instance is closed
+	// before the strict one continues, so one migrate session drives the
+	// database from then on.
 	t.Run("a row longer than 255 bytes blocks the down migration", func(t *testing.T) {
 		tdb := openMigrationTestDB(t, baseDSN, "wetw_long")
-		require.NoError(t, tdb.m.Migrate(webhookEventTypesWidthVersion))
+		guard := newStepDeadline(t, baseDSN, tdb.name)
+		strict := openMigrateInstance(t, boundedMigrateDSN(t, tdb.dsn, nil))
+		require.NoError(t, guard.must(t, "strict up", func() error { return strict.Migrate(webhookEventTypesWidthVersion) }))
 		all := "customer.created,customer.deleted,customer.updated,deal.created,deal.deleted,deal.updated," +
 			"lead.created,lead.deleted,lead.updated,ticket.created,ticket.deleted,ticket.updated"
 		require.Len(t, all, 173)
@@ -251,34 +274,333 @@ func TestWebhookEventTypesWidthMigration(t *testing.T) {
 			assert.Equal(t, "varchar(512)", typ, "the column stays varchar(512)")
 		}
 
-		assertBlocked(t, tdb.m.Steps(-1))
+		assertBlocked(t, guard.must(t, "strict down with a long row", func() error { return strict.Steps(-1) }))
 
 		// The same under a session without strict mode, where a plain MODIFY
 		// would truncate the value with a warning.
-		lenientDSN, err := mysqldriver.ParseDSN(tdb.dsn)
-		require.NoError(t, err)
-		if lenientDSN.Params == nil {
-			lenientDSN.Params = map[string]string{}
-		}
-		lenientDSN.Params["sql_mode"] = "''"
-		lenient := openMigrateInstance(t, lenientDSN.FormatDSN())
-		require.NoError(t, lenient.Force(webhookEventTypesWidthVersion))
-		assertBlocked(t, lenient.Steps(-1))
+		lenient := openMigrateInstance(t, boundedMigrateDSN(t, tdb.dsn, map[string]string{"sql_mode": "''"}))
+		require.NoError(t, guard.must(t, "lenient force", func() error { return lenient.Force(webhookEventTypesWidthVersion) }))
+		assertBlocked(t, guard.must(t, "lenient down with a long row", func() error { return lenient.Steps(-1) }))
+		require.NoError(t, guard.must(t, "lenient close", func() error { return closeMigrateInstance(lenient) }), "both halves of the lenient instance close")
 
 		// Once the subscription is shortened the down migration runs and
 		// keeps the row, and the up applies again.
-		require.NoError(t, tdb.m.Force(webhookEventTypesWidthVersion))
-		_, err = tdb.sql.Exec("UPDATE webhook_endpoints SET event_types = ? WHERE id = ?", widthEndpointTypes, id)
+		require.NoError(t, guard.must(t, "strict force", func() error { return strict.Force(webhookEventTypesWidthVersion) }))
+		_, err := tdb.sql.Exec("UPDATE webhook_endpoints SET event_types = ? WHERE id = ?", widthEndpointTypes, id)
 		require.NoError(t, err)
 		shortened := widthEndpointRow(t, tdb.sql, id)
-		require.NoError(t, tdb.m.Steps(-1))
-		version, dirty, err := tdb.m.Version()
-		require.NoError(t, err)
+		require.NoError(t, guard.must(t, "strict down with the row shortened", func() error { return strict.Steps(-1) }))
+		version, dirty := guardedVersion(t, guard, strict)
 		assert.False(t, dirty)
 		assert.Equal(t, uint(webhookEventTypesWidthPreviousVersion), version)
 		assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable))
 		assert.Equal(t, shortened, widthEndpointRow(t, tdb.sql, id), "the down migration keeps the row")
-		require.NoError(t, tdb.m.Migrate(webhookEventTypesWidthVersion), "the up applies again")
+		require.NoError(t, guard.must(t, "strict up again", func() error { return strict.Migrate(webhookEventTypesWidthVersion) }), "the up applies again")
 		assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+		require.NoError(t, guard.must(t, "strict close", func() error { return closeMigrateInstance(strict) }))
 	})
+
+	t.Run("a held migration lock fails the down migration within seconds", func(t *testing.T) {
+		tdb := openMigrationTestDB(t, baseDSN, "wetw_lock")
+		guard := newStepDeadline(t, baseDSN, tdb.name)
+		m := openMigrateInstance(t, boundedMigrateDSN(t, tdb.dsn, nil))
+		require.NoError(t, guard.must(t, "up", func() error { return m.Migrate(webhookEventTypesWidthVersion) }))
+		id := insertWidthEndpointRow(t, tdb.sql, "https://example.com/locked", widthEndpointTypes)
+		kept := widthEndpointRow(t, tdb.sql, id)
+
+		// Another session takes the advisory lock under the id Mysql.Lock
+		// derives from "<database>:<migrations table>".
+		ctx := context.Background()
+		holder, err := tdb.sql.Conn(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = holder.Close() })
+		lockID, err := database.GenerateAdvisoryLockId(fmt.Sprintf("%s:%s", tdb.name, mysql.DefaultMigrationsTable))
+		require.NoError(t, err)
+		var got sql.NullInt64
+		require.NoError(t, holder.QueryRowContext(ctx, "SELECT GET_LOCK(?, 0)", lockID).Scan(&got))
+		require.True(t, got.Valid && got.Int64 == 1, "the holder takes the migration lock")
+
+		start := time.Now()
+		err = guard.must(t, "down while the migration lock is held", func() error { return m.Steps(-1) })
+		elapsed := time.Since(start)
+		require.Error(t, err, "the down migration must not run while another session holds the lock")
+		assert.True(t, errors.Is(err, database.ErrLocked) || errors.Is(err, migrate.ErrLockTimeout), "a lock error, got: %v", err)
+		assert.Less(t, elapsed, 20*time.Second, "the lock wait is bounded")
+		version, dirty := guardedVersion(t, guard, m)
+		assert.False(t, dirty)
+		assert.Equal(t, uint(webhookEventTypesWidthVersion), version, "the version is unchanged")
+		assert.Equal(t, kept, widthEndpointRow(t, tdb.sql, id), "the row is unchanged")
+		typ, _ := columnOf(tdb)
+		assert.Equal(t, "varchar(512)", typ, "the column stays varchar(512)")
+
+		require.NoError(t, holder.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", lockID).Scan(&got))
+		require.True(t, got.Valid && got.Int64 == 1, "the holder releases the migration lock")
+		require.NoError(t, guard.must(t, "down after the lock is released", func() error { return m.Steps(-1) }))
+		version, dirty = guardedVersion(t, guard, m)
+		assert.False(t, dirty)
+		assert.Equal(t, uint(webhookEventTypesWidthPreviousVersion), version)
+		assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable))
+		assert.Equal(t, kept, widthEndpointRow(t, tdb.sql, id), "the down migration keeps the row")
+		require.NoError(t, guard.must(t, "close", func() error { return closeMigrateInstance(m) }))
+	})
+
+	t.Run("a held metadata lock fails the narrowing within seconds", func(t *testing.T) {
+		tdb := openMigrationTestDB(t, baseDSN, "wetw_mdl")
+		guard := newStepDeadline(t, baseDSN, tdb.name)
+		m := openMigrateInstance(t, boundedMigrateDSN(t, tdb.dsn, nil))
+		require.NoError(t, guard.must(t, "up", func() error { return m.Migrate(webhookEventTypesWidthVersion) }))
+		id := insertWidthEndpointRow(t, tdb.sql, "https://example.com/mdl", widthEndpointTypes)
+		kept := widthEndpointRow(t, tdb.sql, id)
+
+		// An open transaction that read webhook_endpoints holds a shared
+		// metadata lock until it ends; the ALTER of the down half needs an
+		// exclusive one. The holder's session keeps the server's own
+		// lock_wait_timeout, so only the migrate session times out.
+		ctx := context.Background()
+		holder, err := tdb.sql.Conn(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = holder.Close() })
+		tx, err := holder.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tx.Rollback() })
+		var count int
+		require.NoError(t, tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM webhook_endpoints").Scan(&count))
+		require.Equal(t, 1, count)
+
+		start := time.Now()
+		err = guard.must(t, "narrowing while a transaction holds webhook_endpoints", func() error { return m.Steps(-1) })
+		elapsed := time.Since(start)
+		require.Error(t, err, "the narrowing must not wait for the holder")
+		assert.Less(t, elapsed, 20*time.Second, "the metadata lock wait is bounded")
+		// database.Error has no Unwrap: reach the driver error through OrigErr.
+		var dbErr database.Error
+		require.ErrorAs(t, err, &dbErr)
+		var myErr *mysqldriver.MySQLError
+		require.ErrorAs(t, dbErr.OrigErr, &myErr)
+		assert.Equal(t, uint16(1205), myErr.Number, "lock wait timeout exceeded")
+		typ, _ := columnOf(tdb)
+		assert.Equal(t, "varchar(512)", typ, "the column stays varchar(512)")
+
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, guard.must(t, "force after the holder rolled back", func() error { return m.Force(webhookEventTypesWidthVersion) }))
+		require.NoError(t, guard.must(t, "down after the holder rolled back", func() error { return m.Steps(-1) }))
+		typ, _ = columnOf(tdb)
+		assert.Equal(t, "varchar(255)", typ, "the column is narrowed")
+		version, dirty := guardedVersion(t, guard, m)
+		assert.False(t, dirty)
+		assert.Equal(t, uint(webhookEventTypesWidthPreviousVersion), version)
+		assert.Equal(t, kept, widthEndpointRow(t, tdb.sql, id), "the down migration keeps the row")
+		require.NoError(t, guard.must(t, "close", func() error { return closeMigrateInstance(m) }))
+	})
+
+	t.Run("a blocked step fails at its deadline", func(t *testing.T) {
+		victim := openMigrationTestDB(t, baseDSN, "wetw_kill")
+		bystander := openMigrationTestDB(t, baseDSN, "wetw_keep")
+		ctx := context.Background()
+		sessionOn := func(t *testing.T, db *sql.DB) (*sql.Conn, int64) {
+			t.Helper()
+			conn, err := db.Conn(ctx)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close() })
+			var id int64
+			require.NoError(t, conn.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&id))
+			return conn, id
+		}
+		_, idleID := sessionOn(t, victim.sql)
+		other, otherID := sessionOn(t, bystander.sql)
+
+		guard := newStepDeadline(t, baseDSN, victim.name)
+		guard.limit = time.Second
+		guard.grace = 250 * time.Millisecond
+		block := make(chan struct{})
+		t.Cleanup(func() { close(block) })
+
+		const step = "the step that never returns"
+		start := time.Now()
+		err := guard.run(step, func() error { <-block; return nil })
+		elapsed := time.Since(start)
+		var overrun *stepOverrunError
+		require.ErrorAs(t, err, &overrun)
+		assert.GreaterOrEqual(t, elapsed, guard.limit, "not before the deadline")
+		assert.Less(t, elapsed, 3*time.Second, "reported within 3 s")
+		msg := err.Error()
+		assert.Contains(t, msg, step, "the message names the step")
+		assert.Contains(t, msg, victim.name, "the message names the database")
+		assert.Contains(t, msg, fmt.Sprintf("id=%d ", idleID), "the message lists the test database's session")
+		assert.NotContains(t, msg, fmt.Sprintf("id=%d ", otherID), "another database's session is not listed")
+		if cfg, err := mysqldriver.ParseDSN(baseDSN); err == nil && cfg.Passwd != "" {
+			assert.NotContains(t, msg, cfg.Passwd, "the message carries no password")
+		}
+
+		// The kill reached only the test database: its idle session ends,
+		// the other database's session still answers.
+		alive := func(id int64) bool {
+			var n int
+			require.NoError(t, guard.server.QueryRowContext(ctx, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE ID = ?", id).Scan(&n))
+			return n > 0
+		}
+		assert.Eventually(t, func() bool { return !alive(idleID) }, 5*time.Second, 50*time.Millisecond, "the test database's session is killed")
+		var one int
+		require.NoError(t, other.QueryRowContext(ctx, "SELECT 1").Scan(&one), "the other database's session is alive")
+		assert.True(t, alive(otherID))
+	})
+}
+
+// migrateLockWaitSeconds is the lock_wait_timeout of the migrate sessions
+// TestWebhookEventTypesWidthMigration drives: a metadata-lock wait of the
+// ALTER fails with error 1205 after it instead of the server default of a
+// year.
+const migrateLockWaitSeconds = "5"
+
+// boundedMigrateDSN returns dsn with lock_wait_timeout=migrateLockWaitSeconds
+// and the extra session variables set; every other parameter of dsn is kept.
+func boundedMigrateDSN(t *testing.T, dsn string, extra map[string]string) string {
+	t.Helper()
+	cfg, err := mysqldriver.ParseDSN(dsn)
+	require.NoError(t, err)
+	if cfg.Params == nil {
+		cfg.Params = map[string]string{}
+	}
+	cfg.Params["lock_wait_timeout"] = migrateLockWaitSeconds
+	for key, value := range extra {
+		cfg.Params[key] = value
+	}
+	return cfg.FormatDSN()
+}
+
+// closeMigrateInstance closes m and reports either half's error.
+func closeMigrateInstance(m *migrate.Migrate) error {
+	sourceErr, databaseErr := m.Close()
+	if sourceErr != nil || databaseErr != nil {
+		return fmt.Errorf("close migrate instance: source: %v, database: %v", sourceErr, databaseErr)
+	}
+	return nil
+}
+
+// guardedVersion reads m's version under guard.
+func guardedVersion(t *testing.T, guard *stepDeadline, m *migrate.Migrate) (uint, bool) {
+	t.Helper()
+	var version uint
+	var dirty bool
+	require.NoError(t, guard.must(t, "version", func() error {
+		var err error
+		version, dirty, err = m.Version()
+		return err
+	}))
+	return version, dirty
+}
+
+// The bounds of one migrate call: how long it may run, and how long the
+// guard then waits for it to return after killing the sessions.
+const (
+	migrateStepLimit = 30 * time.Second
+	migrateStepGrace = 5 * time.Second
+)
+
+// stepDeadline runs steps against one test database with a time limit. When
+// a step overruns it lists the database's sessions, kills them from a
+// server-level handle (so a Close or a DROP DATABASE behind them cannot
+// hang either) and reports the step. It never prints a DSN.
+type stepDeadline struct {
+	server *sql.DB
+	dbName string
+	limit  time.Duration
+	grace  time.Duration
+}
+
+// stepOverrunError is what stepDeadline.run returns for a step that did not
+// return within its limit.
+type stepOverrunError struct{ msg string }
+
+func (e *stepOverrunError) Error() string { return e.msg }
+
+func newStepDeadline(t *testing.T, baseDSN, dbName string) *stepDeadline {
+	t.Helper()
+	server, err := sql.Open("mysql", requireMySQLTestDSN(t, baseDSN, ""))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Close() })
+	return &stepDeadline{server: server, dbName: dbName, limit: migrateStepLimit, grace: migrateStepGrace}
+}
+
+// run calls fn and returns its error, or a *stepOverrunError when fn has not
+// returned within s.limit. fn runs on its own goroutine and may outlive the
+// test after an overrun, so it must not touch a testing.TB.
+func (s *stepDeadline) run(step string, fn func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	timer := time.NewTimer(s.limit)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+	}
+
+	sessions, killErr := s.killSessions()
+	after := "has not returned"
+	select {
+	case <-done:
+		after = "returned"
+	case <-time.After(s.grace):
+	}
+	msg := fmt.Sprintf("%s did not return within %s; sessions on test database %s: [%s]; killed them, and the step %s within %s after the kill",
+		step, s.limit, s.dbName, strings.Join(sessions, "; "), after, s.grace)
+	if killErr != nil {
+		msg += fmt.Sprintf("; listing or killing them failed: %v", killErr)
+	}
+	return &stepOverrunError{msg: msg}
+}
+
+// must is run for the test goroutine: an overrun fails t, any other result
+// is returned.
+func (s *stepDeadline) must(t *testing.T, step string, fn func() error) error {
+	t.Helper()
+	err := s.run(step, fn)
+	var overrun *stepOverrunError
+	if errors.As(err, &overrun) {
+		t.Fatal(overrun.msg)
+	}
+	return err
+}
+
+// killSessions lists the sessions whose default database is s.dbName, other
+// than the listing session itself, and kills each. The server handle names
+// no database, so none of its own sessions match.
+func (s *stepDeadline) killSessions() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.server.QueryContext(ctx, `SELECT ID, COALESCE(COMMAND, ''), COALESCE(STATE, ''), COALESCE(TIME, 0)
+		FROM INFORMATION_SCHEMA.PROCESSLIST WHERE DB = ? AND ID <> CONNECTION_ID() ORDER BY ID`, s.dbName)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	var ids []uint64
+	var sessions []string
+	for rows.Next() {
+		var id uint64
+		var command, state string
+		var seconds int64
+		if err := rows.Scan(&id, &command, &state, &seconds); err != nil {
+			_ = rows.Close()
+			return sessions, fmt.Errorf("list sessions: %w", err)
+		}
+		ids = append(ids, id)
+		sessions = append(sessions, fmt.Sprintf("id=%d command=%s state=%q time=%ds", id, command, state, seconds))
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return sessions, fmt.Errorf("list sessions: %w", err)
+	}
+	_ = rows.Close()
+	var errs []error
+	for _, id := range ids {
+		if _, err := s.server.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %d", id)); err != nil {
+			var myErr *mysqldriver.MySQLError
+			if errors.As(err, &myErr) && myErr.Number == 1094 { // already gone
+				continue
+			}
+			errs = append(errs, fmt.Errorf("kill session %d: %w", id, err))
+		}
+	}
+	return sessions, errors.Join(errs...)
 }

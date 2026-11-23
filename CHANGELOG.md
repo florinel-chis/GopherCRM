@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `TestWebhookEventTypesWidthMigration` (`cmd/migrate`) can no longer wait without bound on
+  MySQL/MariaDB. The release run in which it hit the package timeout did not hang there: the
+  package's 10-minute `-timeout` fired 3 s into the long-row subtest because the roots before it
+  ran 2.4 times slower than on the passing attempt. Every wait of the subtest is now bounded
+  anyway. Its migrate sessions carry `lock_wait_timeout=5`, so a metadata lock fails with error
+  1205. The migration lock fails with `ErrLocked` after 10 s. Each migrate call and `Close` runs
+  under a 30 s deadline that fails the test naming the step and kills the test database's
+  sessions. The lenient instance is closed before the strict one continues. Three new subtests
+  prove each bound. The migration SQL, the subtest's assertions and the CI root lists are
+  unchanged. A package that outgrows its `-timeout` can still cost the release SQL gate the roots
+  after it. Tests only (#726).
+
 ## [1.3.0] - 2026-11-23
 
 ### Added
