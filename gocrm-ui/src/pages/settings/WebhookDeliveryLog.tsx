@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Alert,
   Box,
+  Button,
   Chip,
   FormControl,
   InputLabel,
@@ -20,6 +21,7 @@ import {
 } from '@mui/material';
 import { Loading } from '@/components/Loading';
 import { usePagedList } from '@/hooks/usePagedList';
+import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   webhooksApi,
   WEBHOOK_DELIVERY_STATUSES,
@@ -30,7 +32,12 @@ import {
 } from '@/api/endpoints';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
-import { webhookKeys } from './webhookQueries';
+import {
+  usePendingWebhookIds,
+  useRedeliverWebhookDelivery,
+  webhookKeys,
+  webhookMutationKeys,
+} from './webhookQueries';
 
 // The endpoint filter offers one page of endpoints: the API caps a page at 100.
 const ENDPOINT_OPTIONS_LIMIT = 100;
@@ -41,6 +48,10 @@ const STATUS_COLORS: Record<WebhookDeliveryStatus, 'default' | 'info' | 'success
   succeeded: 'success',
   failed: 'error',
 };
+
+// Only a finished delivery can be queued again; the API refuses a pending or
+// sending one with 409.
+const REDELIVERABLE: ReadonlySet<WebhookDeliveryStatus> = new Set(['succeeded', 'failed']);
 
 interface Filters {
   endpointId: number | '';
@@ -87,6 +98,17 @@ export const WebhookDeliveryLog: React.FC = () => {
     setFilters((prev) => ({ ...prev, ...patch }));
     resetPage();
   };
+
+  const { showSuccess, showError } = useSnackbar();
+  // Every redelivery reports its own outcome, also when another row was
+  // pressed before it settled, and a row stays disabled until its own request ends.
+  const redeliverMutation = useRedeliverWebhookDelivery({
+    onSuccess: () => showSuccess('Delivery queued for redelivery'),
+    onError: (failure) => {
+      showError(getAPIError(failure)?.message ?? 'The delivery could not be redelivered.');
+    },
+  });
+  const redeliveringIds = usePendingWebhookIds(webhookMutationKeys.redeliverDelivery);
 
   const endpointOptions = useQuery({
     queryKey: webhookKeys.endpointOptions(),
@@ -197,6 +219,7 @@ export const WebhookDeliveryLog: React.FC = () => {
                     <TableCell align="right">Attempts</TableCell>
                     <TableCell>Last attempt</TableCell>
                     <TableCell align="right">Last response code</TableCell>
+                    <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -204,7 +227,7 @@ export const WebhookDeliveryLog: React.FC = () => {
                       render before the corrected page arrives. */}
                   {rows.length === 0 && total === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                         <Typography variant="body2" color="text.secondary">
                           No deliveries match these filters.
                         </Typography>
@@ -226,6 +249,18 @@ export const WebhookDeliveryLog: React.FC = () => {
                         <TableCell align="right">{delivery.attempts}</TableCell>
                         <TableCell>{formatDate(delivery.last_attempt_at, 'PPp')}</TableCell>
                         <TableCell align="right">{delivery.last_http_status ?? '-'}</TableCell>
+                        <TableCell align="right">
+                          {REDELIVERABLE.has(delivery.status) ? (
+                            <Button
+                              size="small"
+                              onClick={() => redeliverMutation.mutate(delivery.id)}
+                              disabled={redeliveringIds.has(delivery.id)}
+                              aria-label={`Redeliver delivery ${delivery.id}`}
+                            >
+                              Redeliver
+                            </Button>
+                          ) : null}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}

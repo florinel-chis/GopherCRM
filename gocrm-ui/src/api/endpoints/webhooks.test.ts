@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { webhooksApi, WEBHOOK_DELIVERY_STATUSES, WEBHOOK_EVENT_TYPES } from './webhooks';
+import {
+  webhooksApi,
+  WEBHOOK_DELIVERY_STATUSES,
+  WEBHOOK_EVENT_TYPES,
+  WEBHOOK_PING_ERROR_CODES,
+  WEBHOOK_PING_OUTCOMES,
+} from './webhooks';
 import { api } from '../client';
 
 vi.mock('../client', () => ({
@@ -97,6 +103,34 @@ describe('webhook lists against the API specification', () => {
 
     expect(documented.length).toBeGreaterThan(0);
     expect([...WEBHOOK_DELIVERY_STATUSES].sort()).toEqual([...documented].sort());
+  });
+
+  const pingResult =
+    swagger.definitions['github_com_florinel-chis_gophercrm_internal_models.WebhookPingResult'];
+
+  it('WEBHOOK_PING_OUTCOMES equals the outcome enum of a ping result', () => {
+    const documented = pingResult.properties.outcome.enum ?? [];
+
+    expect(documented.length).toBeGreaterThan(0);
+    expect([...WEBHOOK_PING_OUTCOMES].sort()).toEqual([...documented].sort());
+  });
+
+  it('WEBHOOK_PING_ERROR_CODES equals the error_code enum of a ping result', () => {
+    const documented = pingResult.properties.error_code.enum ?? [];
+
+    expect(documented.length).toBeGreaterThan(0);
+    expect(new Set(WEBHOOK_PING_ERROR_CODES).size).toBe(WEBHOOK_PING_ERROR_CODES.length);
+    expect([...WEBHOOK_PING_ERROR_CODES].sort()).toEqual([...documented].sort());
+  });
+
+  it('a rotation answer carries the new secret and the end of the previous one', () => {
+    const properties =
+      swagger.definitions[
+        'github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointSecretRotated'
+      ].properties;
+
+    expect(properties).toHaveProperty('secret');
+    expect(properties).toHaveProperty('previous_secret_expires_at');
   });
 });
 
@@ -215,5 +249,40 @@ describe('webhooksApi', () => {
     const [, config] = vi.mocked(api.get).mock.calls[0];
     expect(config).toEqual({ params: { offset: 0, limit: 20 } });
     expect(Object.keys((config as { params: object }).params)).toEqual(['offset', 'limit']);
+  });
+
+  it('sends a test ping with a bodiless POST and returns the outcome', async () => {
+    const outcome = {
+      event_id: 'evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9',
+      outcome: 'failed',
+      http_status: null,
+      error_code: 'destination_refused',
+    };
+    vi.mocked(api.post).mockResolvedValue({ data: outcome });
+
+    expect(await webhooksApi.testEndpoint(4)).toEqual(outcome);
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/webhooks/endpoints/4/test']);
+  });
+
+  it('rotates a secret with a bodiless POST and returns the new secret', async () => {
+    const rotated = {
+      ...endpoint,
+      secret: 'whsec_rotated',
+      previous_secret_expires_at: '2026-11-21T09:30:00Z',
+    };
+    vi.mocked(api.post).mockResolvedValue({ data: rotated });
+
+    expect(await webhooksApi.rotateSecret(4)).toEqual(rotated);
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/webhooks/endpoints/4/rotate-secret']);
+  });
+
+  it('redelivers a delivery with a bodiless POST and returns the requeued row', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: delivery });
+
+    expect(await webhooksApi.redeliverDelivery(91)).toEqual(delivery);
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/webhooks/deliveries/91/redeliver']);
   });
 });

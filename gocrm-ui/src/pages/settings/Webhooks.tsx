@@ -32,15 +32,34 @@ import {
   webhooksApi,
   type WebhookEndpoint,
   type WebhookEndpointListParams,
+  type WebhookPingResult,
 } from '@/api/endpoints';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
 import { WebhookDeliveryLog } from './WebhookDeliveryLog';
 import { WebhookEndpointDialog } from './WebhookEndpointDialog';
 import { OneTimeSecretDialog } from '@/components/OneTimeSecretDialog';
-import { webhookKeys } from './webhookQueries';
+import {
+  usePendingWebhookIds,
+  useRotateWebhookSecret,
+  useTestWebhookEndpoint,
+  webhookKeys,
+  webhookMutationKeys,
+  type RotatedWebhookSecret,
+} from './webhookQueries';
 
 type TabKey = 'endpoints' | 'deliveries';
+
+// The snackbar text of a ping answer; error_code is null only after a success.
+const pingMessage = (result: WebhookPingResult): string => {
+  const status = result.http_status;
+  if (result.outcome === 'succeeded') {
+    return status === null ? 'Test ping succeeded' : `Test ping succeeded (HTTP ${status})`;
+  }
+  return `Test ping failed: ${result.error_code ?? 'unknown'} ${
+    status === null ? '(no response)' : `(HTTP ${status})`
+  }`;
+};
 
 // The form dialog: closed, registering a new endpoint or editing one.
 type FormTarget = { mode: 'create' } | { mode: 'edit'; endpoint: WebhookEndpoint } | null;
@@ -55,6 +74,11 @@ const EndpointsTab: React.FC = () => {
   // state only, for as long as the dialog showing it is open: it is never
   // written to the query cache or to browser storage.
   const [secret, setSecret] = useState<string | null>(null);
+  // The endpoint whose secret rotation waits for a confirmation.
+  const [rotateTarget, setRotateTarget] = useState<WebhookEndpoint | null>(null);
+  // The new secret of a rotation and the end of the previous secret's window,
+  // held like the create secret: in this state only, until Done.
+  const [rotated, setRotated] = useState<RotatedWebhookSecret | null>(null);
 
   // Newest first, so an endpoint just registered is on the first page.
   const paramsFor = (pageWindow: { offset: number; limit: number }): WebhookEndpointListParams => ({
@@ -106,6 +130,36 @@ const EndpointsTab: React.FC = () => {
       setDeleteTarget(null);
     },
   });
+
+  // Every ping reports its own outcome, also when another row was pressed
+  // before it settled, and a row stays disabled until its own ping ends.
+  const pingMutation = useTestWebhookEndpoint({
+    onSuccess: (result) => {
+      if (result.outcome === 'succeeded') {
+        showSuccess(pingMessage(result));
+      } else {
+        showError(pingMessage(result));
+      }
+    },
+    onError: (failure) => {
+      showError(getAPIError(failure)?.message ?? 'The test ping could not be sent.');
+    },
+  });
+  const pingingIds = usePendingWebhookIds(webhookMutationKeys.testEndpoint);
+
+  const rotateMutation = useRotateWebhookSecret(setRotated);
+
+  // The confirmation closes at once, so a second click cannot rotate twice.
+  const confirmRotate = () => {
+    if (!rotateTarget) return;
+    const { id } = rotateTarget;
+    setRotateTarget(null);
+    rotateMutation.mutate(id, {
+      onError: (failure) => {
+        showError(getAPIError(failure)?.message ?? 'The signing secret could not be rotated.');
+      },
+    });
+  };
 
   const closeSecret = () => setSecret(null);
 
@@ -185,6 +239,22 @@ const EndpointsTab: React.FC = () => {
                           >
                             {endpoint.is_active ? 'Deactivate' : 'Activate'}
                           </Button>
+                          <Button
+                            size="small"
+                            onClick={() => pingMutation.mutate(endpoint.id)}
+                            disabled={pingingIds.has(endpoint.id)}
+                            aria-label={`Send test ping to ${endpoint.url}`}
+                          >
+                            Send test ping
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() => setRotateTarget(endpoint)}
+                            disabled={rotateMutation.isPending}
+                            aria-label={`Rotate secret of ${endpoint.url}`}
+                          >
+                            Rotate secret
+                          </Button>
                           <Tooltip title="Edit">
                             <IconButton
                               aria-label={`Edit ${endpoint.url}`}
@@ -252,9 +322,40 @@ const EndpointsTab: React.FC = () => {
         warning={
           <>
             Copy this secret now. It cannot be shown again: it is stored encrypted and no other
-            screen or request returns it. If it is lost, delete the endpoint and register it again.
+            screen or request returns it. If it is lost, use Rotate secret to replace it.
           </>
         }
+      />
+
+      <OneTimeSecretDialog
+        title="New signing secret"
+        label="Signing secret"
+        copyLabel="Copy signing secret"
+        copiedMessage="Signing secret copied to clipboard"
+        testId="webhook-rotated-secret"
+        secret={rotated?.secret ?? null}
+        onClose={() => setRotated(null)}
+        warning={
+          <>
+            Copy this secret now. It cannot be shown again: it is stored encrypted and no other
+            screen or request returns it.
+            {rotated?.previous_secret_expires_at
+              ? ` The previous secret keeps verifying until ${formatDate(
+                  rotated.previous_secret_expires_at,
+                  'PPp',
+                )}.`
+              : null}
+          </>
+        }
+      />
+
+      <ConfirmDialog
+        open={rotateTarget !== null}
+        title="Rotate signing secret"
+        message={`Rotate the signing secret of ${rotateTarget?.url ?? ''}? A new secret is shown once. The current secret keeps verifying for 24 hours, so consumers can switch to the new one.`}
+        confirmText="Rotate"
+        onConfirm={confirmRotate}
+        onCancel={() => setRotateTarget(null)}
       />
 
       <ConfirmDialog

@@ -16,7 +16,7 @@ blocked until the page is built.
 - `gocrm-ui/src/pages/settings/Webhooks.tsx`, `WebhookEndpointDialog.tsx`,
   `WebhookDeliveryLog.tsx`, `gocrm-ui/src/components/OneTimeSecretDialog.tsx`, `gocrm-ui/src/api/endpoints/webhooks.ts`,
   `internal/handler/webhook_handler.go`, `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` (the
-  webhook screen, TC-SET-036 to TC-SET-040)
+  webhook screen, TC-SET-036 to TC-SET-040 and TC-SET-044 to TC-SET-046)
 - `gocrm-ui/src/pages/settings/SSOSettings.tsx`, `gocrm-ui/src/api/endpoints/ssoSettings.ts`,
   `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041 and TC-SET-043)
 - `gocrm-ui/src/pages/settings/SCIMTokens.tsx`, `gocrm-ui/src/components/OneTimeSecretDialog.tsx`,
@@ -744,7 +744,9 @@ The screen at `/settings/webhooks` (#409) manages the outbound webhook endpoints
 delivery log; the events, the signature and the retry schedule are in the README section
 "Integrations: webhooks". The browser spec registers its endpoints under the reserved `.invalid`
 domain, which never resolves, so nothing is delivered outside the machine and no delivery of it
-can succeed.
+can succeed. Its test-ping endpoint is `https://localhost/e2e-hooks-ping`, registered inactive: the
+egress guard refuses the loopback address when the ping dials, so the ping fails with
+`destination_refused` and nothing is sent.
 
 ### TC-SET-036 — Register a webhook endpoint and see its signing secret exactly once
 - **Priority:** P0
@@ -862,6 +864,68 @@ can succeed.
   endpoint, sees the secret once, edits and deletes it" (the `http://` URL); Vitest
   `src/pages/settings/WebhookEndpointDialog.test.tsx` (all three URLs, the event detail and the
   two presence checks)
+
+### TC-SET-044 — Send a test ping from the endpoint list and read its outcome
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Seeded admin; the inactive endpoint `https://localhost/e2e-hooks-ping`,
+  registered through the API.
+- **Steps:**
+  1. Open Settings > Webhooks and press "Send test ping to <url>" on the endpoint's row.
+- **Expected:** The button is disabled while the request runs (up to 10 s). `POST
+  /webhooks/endpoints/<id>/test` with no body → 200 with `outcome` `failed`, `error_code`
+  `destination_refused` and `http_status` null, and the error snackbar "Test ping failed:
+  destination_refused (no response)". A ping that the endpoint answers shows "Test ping succeeded
+  (HTTP <status>)", a non-2xx answer "Test ping failed: http_status (HTTP <status>)", and a failed
+  request the server's message (or "The test ping could not be sent."). The ping works on an
+  inactive endpoint and writes no delivery row.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin sends a test
+  ping that the egress guard refuses"; Vitest `src/pages/settings/Webhooks.test.tsx` (the three
+  outcomes, the request error and the disabled button) and `src/api/endpoints/webhooks.test.ts`
+
+### TC-SET-045 — Rotate a signing secret and see the new one exactly once
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** Seeded admin; the active endpoint `https://e2e-hooks.invalid/rotate`,
+  registered through the API, with its create secret noted.
+- **Steps:**
+  1. Press "Rotate secret of <url>" on the endpoint's row, read the confirmation and press Cancel.
+  2. Press it again and press Rotate.
+  3. Read the dialog that opens, then press Done.
+  4. Reload the page.
+- **Expected:** Step 1: the "Rotate signing secret" dialog names the URL and says the current
+  secret keeps verifying for 24 hours; Cancel sends no request. Step 2: `POST
+  /webhooks/endpoints/<id>/rotate-secret` with no body → 200. Step 3: the "New signing secret"
+  dialog shows a read-only `whsec_` value different from the create secret, a "Copy signing
+  secret" button, the notice that it cannot be shown again and "The previous secret keeps
+  verifying until <date and time>". Steps 3 and 4: after Done no `whsec_` text is in the page, in
+  a field, in `localStorage` or in `sessionStorage`; the secret is held in the page's component
+  state only, is never in the query or mutation cache and is never logged to the console. A failed
+  rotation shows the server's message (or "The signing secret could not be rotated.").
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin rotates a
+  signing secret and sees the new one once"; Vitest `src/pages/settings/Webhooks.test.tsx` and
+  `src/api/endpoints/webhooks.test.ts`
+
+### TC-SET-046 — Redeliver a finished delivery from the log
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Seeded admin; a delivery log with a `succeeded`, a `failed`, a `pending` and
+  a `sending` row.
+- **Steps:**
+  1. Open the "Delivery log" tab and read the Actions column.
+  2. Press "Redeliver delivery <id>" on the `failed` row.
+  3. Press it on a row whose endpoint has since been deactivated.
+- **Expected:** Step 1: the seventh column, Actions, holds a Redeliver button on the `succeeded`
+  and `failed` rows only; the `pending` and `sending` cells are empty. Step 2: the button is
+  disabled while the request runs; `POST /webhooks/deliveries/<id>/redeliver` with no body → 200,
+  the snackbar "Delivery queued for redelivery", and the log is read again (the row is `pending`
+  with 0 attempts). Step 3: 409 and the snackbar "Webhook endpoint is deleted or inactive"; a
+  delivery that is already pending or being sent is refused with "Webhook delivery is pending or
+  being sent".
+- **Known issue:** No browser spec covers it: every spec endpoint is unreachable, so no delivery
+  ends as `succeeded` or `failed` within a test run.
+- **Automation:** automated — Vitest `src/pages/settings/WebhookDeliveryLog.test.tsx` "redeliver"
+  cases and `src/api/endpoints/webhooks.test.ts`
 
 ### TC-SET-041 — Edit the single sign-on settings with a write-only client secret
 - **Priority:** P1

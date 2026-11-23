@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@/test/test-utils';
 import { Component as Webhooks } from './Webhooks';
-import { webhooksApi, type WebhookEndpoint } from '@/api/endpoints';
+import { webhooksApi, type WebhookEndpoint, type WebhookPingResult } from '@/api/endpoints';
 import { createProductionQueryClient } from '@/test/productionQueryClient';
 import { withClient } from '@/test/dealQueryCache';
 import { formatDate } from '@/utils/date';
@@ -18,6 +18,8 @@ vi.mock('@/api/endpoints', async () => {
       createEndpoint: vi.fn(),
       updateEndpoint: vi.fn(),
       deleteEndpoint: vi.fn(),
+      testEndpoint: vi.fn(),
+      rotateSecret: vi.fn(),
       listDeliveries: vi.fn(),
     },
   };
@@ -47,6 +49,17 @@ const rowOf = async (url: string) => {
   if (!row) throw new Error(`no row for ${url}`);
   return within(row);
 };
+
+const ROTATED_SECRET = 'whsec_Rot4tedS3cretValueForTheTest0001';
+const PREVIOUS_EXPIRES_AT = '2026-11-22T09:30:00Z';
+
+const pingResult = (overrides: Partial<WebhookPingResult>): WebhookPingResult => ({
+  event_id: 'evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9',
+  outcome: 'succeeded',
+  http_status: 200,
+  error_code: null,
+  ...overrides,
+});
 
 const storageDump = () => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]);
 
@@ -364,5 +377,203 @@ describe('Webhooks', () => {
     release({ rows: [nextPage], total: 25 });
     expect(await screen.findByText(nextPage.url)).toBeInTheDocument();
     expect(screen.queryByText(inactive.url)).not.toBeInTheDocument();
+  });
+
+  describe('test ping', () => {
+    const ping = async () => {
+      render(<Webhooks />);
+      const row = await rowOf(active.url);
+      fireEvent.click(row.getByRole('button', { name: `Send test ping to ${active.url}` }));
+      await waitFor(() => expect(webhooksApi.testEndpoint).toHaveBeenCalledWith(4));
+    };
+
+    it('reports a succeeded ping with its HTTP status', async () => {
+      vi.mocked(webhooksApi.testEndpoint).mockResolvedValue(pingResult({}));
+      await ping();
+
+      expect(await screen.findByText('Test ping succeeded (HTTP 200)')).toBeInTheDocument();
+      expect(webhooksApi.testEndpoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a failed ping with its error code and HTTP status', async () => {
+      vi.mocked(webhooksApi.testEndpoint).mockResolvedValue(
+        pingResult({ outcome: 'failed', http_status: 500, error_code: 'http_status' }),
+      );
+      await ping();
+
+      expect(await screen.findByText('Test ping failed: http_status (HTTP 500)')).toBeInTheDocument();
+    });
+
+    it('reports a ping that got no answer', async () => {
+      vi.mocked(webhooksApi.testEndpoint).mockResolvedValue(
+        pingResult({ outcome: 'failed', http_status: null, error_code: 'destination_refused' }),
+      );
+      await ping();
+
+      expect(
+        await screen.findByText('Test ping failed: destination_refused (no response)'),
+      ).toBeInTheDocument();
+    });
+
+    it('shows the server message when the ping request fails', async () => {
+      vi.mocked(webhooksApi.testEndpoint).mockRejectedValue({
+        response: { status: 404, data: { code: 'NOT_FOUND', message: 'Webhook endpoint not found' } },
+      });
+      await ping();
+
+      expect(await screen.findByText('Webhook endpoint not found')).toBeInTheDocument();
+    });
+
+    it('disables the ping button of the row while its request runs', async () => {
+      let release: (value: WebhookPingResult) => void = () => {};
+      vi.mocked(webhooksApi.testEndpoint).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      await ping();
+      const row = await rowOf(active.url);
+      const button = row.getByRole('button', { name: `Send test ping to ${active.url}` });
+
+      await waitFor(() => expect(button).toBeDisabled());
+      release(pingResult({}));
+      await waitFor(() => expect(button).toBeEnabled());
+    });
+
+    it('reports each ping of two rows and keeps the first disabled until its own ping ends', async () => {
+      const releases = new Map<number, (value: WebhookPingResult) => void>();
+      vi.mocked(webhooksApi.testEndpoint).mockImplementation(
+        (id) =>
+          new Promise((resolve) => {
+            releases.set(id, resolve);
+          }),
+      );
+      render(<Webhooks />);
+      const first = await rowOf(active.url);
+      const second = await rowOf(inactive.url);
+      const firstButton = first.getByRole('button', { name: `Send test ping to ${active.url}` });
+      const secondButton = second.getByRole('button', {
+        name: `Send test ping to ${inactive.url}`,
+      });
+
+      fireEvent.click(firstButton);
+      await waitFor(() => expect(webhooksApi.testEndpoint).toHaveBeenCalledWith(4));
+      fireEvent.click(secondButton);
+      await waitFor(() => expect(webhooksApi.testEndpoint).toHaveBeenCalledWith(5));
+
+      // The first row stays disabled while its own ping runs, though the
+      // second row started a ping after it.
+      await waitFor(() => expect(secondButton).toBeDisabled());
+      expect(firstButton).toBeDisabled();
+
+      releases.get(4)?.(
+        pingResult({ outcome: 'failed', http_status: null, error_code: 'destination_refused' }),
+      );
+      expect(
+        await screen.findByText('Test ping failed: destination_refused (no response)'),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(firstButton).toBeEnabled());
+      expect(secondButton).toBeDisabled();
+
+      releases.get(5)?.(pingResult({ http_status: 204 }));
+      expect(await screen.findByText('Test ping succeeded (HTTP 204)')).toBeInTheDocument();
+      await waitFor(() => expect(secondButton).toBeEnabled());
+      expect(webhooksApi.testEndpoint).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('rotate secret', () => {
+    const openConfirmation = async () => {
+      const row = await rowOf(active.url);
+      fireEvent.click(row.getByRole('button', { name: `Rotate secret of ${active.url}` }));
+      return screen.findByRole('dialog', { name: 'Rotate signing secret' });
+    };
+
+    it('sends nothing when the confirmation is cancelled', async () => {
+      render(<Webhooks />);
+
+      const dialog = await openConfirmation();
+      expect(dialog).toHaveTextContent(active.url);
+      expect(dialog).toHaveTextContent('24 hours');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Rotate signing secret' })).not.toBeInTheDocument(),
+      );
+      expect(webhooksApi.rotateSecret).not.toHaveBeenCalled();
+    });
+
+    it('shows the new secret once with the end of the previous one and keeps it nowhere after Done', async () => {
+      const consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+        vi.spyOn(console, method),
+      );
+      vi.mocked(webhooksApi.rotateSecret).mockResolvedValue({
+        ...active,
+        secret: ROTATED_SECRET,
+        previous_secret_expires_at: PREVIOUS_EXPIRES_AT,
+      });
+      const queryClient = createProductionQueryClient();
+      render(withClient(queryClient, <Webhooks />));
+
+      const confirmation = await openConfirmation();
+      fireEvent.click(within(confirmation).getByRole('button', { name: 'Rotate' }));
+
+      await waitFor(() => expect(webhooksApi.rotateSecret).toHaveBeenCalledWith(4));
+      const dialog = await screen.findByRole('dialog', { name: 'New signing secret' });
+      expect(within(dialog).getByTestId('webhook-rotated-secret')).toHaveValue(ROTATED_SECRET);
+      expect(within(dialog).getByRole('button', { name: 'Copy signing secret' })).toBeInTheDocument();
+      expect(dialog).toHaveTextContent('cannot be shown again');
+      expect(dialog).toHaveTextContent(
+        `The previous secret keeps verifying until ${formatDate(PREVIOUS_EXPIRES_AT, 'PPp')}.`,
+      );
+      // The list is fetched again, never patched with the answer.
+      await waitFor(() => expect(webhooksApi.listEndpoints).toHaveBeenCalledTimes(2));
+      expect(storageDump()).not.toContain(ROTATED_SECRET);
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'New signing secret' })).not.toBeInTheDocument(),
+      );
+
+      expect(document.body.innerHTML).not.toContain(ROTATED_SECRET);
+      expect(
+        Array.from(document.querySelectorAll('input, textarea'))
+          .map((field) => (field as HTMLInputElement).value)
+          .join('\n'),
+      ).not.toContain(ROTATED_SECRET);
+      expect(storageDump()).not.toContain(ROTATED_SECRET);
+      expect(queryClient.getQueryCache().getAll().length).toBeGreaterThan(0);
+      expect(
+        JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data)),
+      ).not.toContain(ROTATED_SECRET);
+      expect(
+        JSON.stringify(
+          queryClient.getMutationCache().getAll().map((mutation) => [
+            mutation.state.data,
+            mutation.state.variables,
+          ]),
+        ),
+      ).not.toContain(ROTATED_SECRET);
+      for (const spy of consoleSpies) {
+        expect(JSON.stringify(spy.mock.calls.map((call) => call.map(String)))).not.toContain(
+          ROTATED_SECRET,
+        );
+        spy.mockRestore();
+      }
+    });
+
+    it('shows the server message when the rotation fails', async () => {
+      vi.mocked(webhooksApi.rotateSecret).mockRejectedValue({
+        response: { status: 404, data: { code: 'NOT_FOUND', message: 'Webhook endpoint not found' } },
+      });
+      render(<Webhooks />);
+
+      fireEvent.click(within(await openConfirmation()).getByRole('button', { name: 'Rotate' }));
+
+      expect(await screen.findByText('Webhook endpoint not found')).toBeInTheDocument();
+      expect(webhooksApi.rotateSecret).toHaveBeenCalledWith(4);
+      expect(screen.queryByRole('dialog', { name: 'New signing secret' })).not.toBeInTheDocument();
+    });
   });
 });
