@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The SCIM endpoint is reachable behind the shipped reverse proxies (#728). Neither the UI
+  image's `gocrm-ui/docker/nginx.conf` nor the TLS site in `docs/SERVER_PROVISIONING.md`
+  forwarded `/scim/v2/`, so identity providers calling `PUBLIC_BASE_URL/scim/v2` got the web app's
+  `index.html` with 200, and the production Compose override, which drops the backend's host
+  port, left SCIM with no route at all. Both nginx configurations now carry a `location /scim/v2/`
+  with the directives of `location /api/v1/`, and the guide gives the Apache equivalent
+  (`ProxyPass`/`ProxyPassReverse` for `/api/v1/`, `/health` and `/scim/v2/`). A Docker install
+  picks it up with the rebuilt UI image; an existing server adds the location, checks and reloads
+  (`nginx -t && systemctl reload nginx` or `apachectl configtest && systemctl reload apache2`) and
+  expects `401 application/scim+json` from `/scim/v2/ServiceProviderConfig` (see "Updating an
+  existing server" in the guide).
 - `TestWebhookEventTypesWidthMigration` (`cmd/migrate`) can no longer wait without bound on
   MySQL/MariaDB. The release run in which it hit the package timeout did not hang there: the
   package's 10-minute `-timeout` fired 3 s into the long-row subtest because the roots before it

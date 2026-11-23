@@ -2,6 +2,7 @@ package config
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -71,8 +72,75 @@ func TestUINginxBrowserHeaders(t *testing.T) {
 	assertUIBrowserHeaders(t, nginxBlock(t, conf, "location /assets/ {"), "location /assets/",
 		`add_header Cache-Control "public, max-age=31536000, immutable";`)
 	assertNoAddHeaders(t, nginxBlock(t, conf, "location /api/v1/ {"), "location /api/v1/")
+	assertNoAddHeaders(t, nginxBlock(t, conf, "location /scim/v2/ {"), "location /scim/v2/")
 	outside := nginxOutsideLocations(t, conf)
 	require.Contains(t, outside, "server_name", "server level text kept")
 	require.NotContains(t, outside, "try_files", "every location removed")
 	assertNoAddHeaders(t, outside, "server level")
+}
+
+// uiNginxBackendLocations are the locations of the UI image's nginx config
+// that forward a backend route family. The production Compose override drops
+// the backend's host port, so these are the only way in from outside.
+var uiNginxBackendLocations = []string{"location /api/v1/ {", "location /scim/v2/ {"}
+
+const uiNginxBackendProxyPass = "proxy_pass http://backend:8080;"
+
+var nginxProxyPassLine = regexp.MustCompile(`(?m)^\s*proxy_pass\s.*$`)
+
+// nginxProxyPasses returns the trimmed proxy_pass directives of a block.
+func nginxProxyPasses(block string) []string {
+	found := nginxProxyPassLine.FindAllString(block, -1)
+	for i := range found {
+		found[i] = strings.TrimSpace(found[i])
+	}
+	return found
+}
+
+// nginxDirectiveLines returns the sorted trimmed lines inside a location
+// block, without its opener, its closing brace, comments and blank lines.
+func nginxDirectiveLines(t *testing.T, block string) []string {
+	t.Helper()
+	lines := strings.Split(block, "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "block spans more than one line")
+	require.Equal(t, "}", strings.TrimSpace(lines[len(lines)-1]), "block ends with a closing brace")
+	var out []string
+	for _, line := range lines[1 : len(lines)-1] {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// requireUINginxBackendLocation returns the block of a backend location of the
+// UI image's nginx config after checking it holds exactly one proxy_pass to
+// the backend service, without a URI part.
+func requireUINginxBackendLocation(t *testing.T, conf, opener string) string {
+	t.Helper()
+	block := nginxBlock(t, conf, opener)
+	assert.Equal(t, []string{uiNginxBackendProxyPass}, nginxProxyPasses(block), "%s proxy_pass", opener)
+	return block
+}
+
+func TestUINginxBackendLocations(t *testing.T) {
+	conf := strings.ReplaceAll(readRepositoryFile(t, uiNginxConfigFile), "\r\n", "\n")
+
+	api := nginxDirectiveLines(t, requireUINginxBackendLocation(t, conf, "location /api/v1/ {"))
+	scim := nginxDirectiveLines(t, requireUINginxBackendLocation(t, conf, "location /scim/v2/ {"))
+	assert.Equal(t, api, scim, "location /scim/v2/ has the directives of location /api/v1/")
+	for _, lines := range [][]string{api, scim} {
+		for _, header := range []string{"Host", "X-Real-IP", "X-Forwarded-For", "X-Forwarded-Proto"} {
+			found := false
+			for _, line := range lines {
+				if strings.HasPrefix(line, "proxy_set_header "+header+" ") {
+					found = true
+				}
+			}
+			assert.True(t, found, "proxy_set_header %s", header)
+		}
+	}
 }

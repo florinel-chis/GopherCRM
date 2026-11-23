@@ -472,7 +472,7 @@ func TestServerProvisioningGuideNginx(t *testing.T) {
 	assertNginxDirective(t, tls, regexp.QuoteMeta("root "+d.WebRoot+";"), "TLS root is the web root")
 
 	proxyPass := "proxy_pass http://127.0.0.1:" + d.Port + ";"
-	for _, opener := range []string{"location /api/v1/ {", "location = /health {"} {
+	for _, opener := range []string{"location /api/v1/ {", "location = /health {", "location /scim/v2/ {"} {
 		loc := nginxBlock(t, tls, opener)
 		passes := regexp.MustCompile(`(?m)^\s*proxy_pass\s.*$`).FindAllString(loc, -1)
 		require.Len(t, passes, 1, "%s has one proxy_pass", opener)
@@ -495,10 +495,99 @@ func TestServerProvisioningGuideNginx(t *testing.T) {
 	assertUIBrowserHeaders(t, nginxBlock(t, tls, "location = /quote-response {"), "TLS location = /quote-response")
 	assertNoAddHeaders(t, nginxBlock(t, tls, "location /api/v1/ {"), "TLS location /api/v1/")
 	assertNoAddHeaders(t, nginxBlock(t, tls, "location = /health {"), "TLS location = /health")
+	assertNoAddHeaders(t, nginxBlock(t, tls, "location /scim/v2/ {"), "TLS location /scim/v2/")
+	assert.Equal(t, nginxDirectiveLines(t, nginxBlock(t, tls, "location /api/v1/ {")),
+		nginxDirectiveLines(t, nginxBlock(t, tls, "location /scim/v2/ {")),
+		"TLS location /scim/v2/ has the directives of location /api/v1/")
 	tlsOutside := nginxOutsideLocations(t, tls)
 	require.NotContains(t, tlsOutside, "try_files", "every TLS location removed")
 	assertNoAddHeaders(t, tlsOutside, "TLS server level")
 	assertNoAddHeaders(t, httpSite.body, "HTTP site")
+}
+
+// nginxProxiedPaths returns the paths of the locations of a site that hold a
+// proxy_pass, with the exact-match modifier dropped (`= /health` -> `/health`).
+func nginxProxiedPaths(t *testing.T, site string) map[string]bool {
+	t.Helper()
+	paths := map[string]bool{}
+	for _, loc := range nginxLocationOpener.FindAllString(site, -1) {
+		opener := strings.TrimSpace(loc)
+		if len(nginxProxyPasses(nginxBlock(t, site, opener))) == 0 {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(opener, "location"), "{"))
+		if len(fields) == 2 && fields[0] == "=" {
+			fields = fields[1:]
+		}
+		require.Len(t, fields, 1, "proxied location %q has one path and at most the = modifier", opener)
+		paths[fields[0]] = true
+	}
+	return paths
+}
+
+// TestServerProvisioningGuideApache pins the Apache equivalent of the TLS
+// site's proxied paths and the steps to update an existing server (#728).
+func TestServerProvisioningGuideApache(t *testing.T) {
+	d := parseDeployDefaults(t)
+	guide := readProvisioningGuide(t)
+	require.Len(t, fencesWithInfo(parseGuideFences(t, guide), "apache"), 1, "exactly one ```apache block")
+	section := guideSection(t, guide, "## Reverse proxy and TLS")
+	sectionFences := parseGuideFences(t, section)
+	apache := fencesWithInfo(sectionFences, "apache")
+	require.Len(t, apache, 1, "the ```apache block is in Reverse proxy and TLS")
+	sites := fencesWithInfo(sectionFences, "nginx")
+	require.Len(t, sites, 2, "the section holds the HTTP and the TLS nginx site")
+
+	want := nginxProxiedPaths(t, sites[1].body)
+	require.Equal(t, map[string]bool{"/api/v1/": true, "/health": true, "/scim/v2/": true}, want,
+		"the TLS site proxies these paths")
+
+	passes, reverses := map[string]bool{}, map[string]bool{}
+	var lines []string
+	for _, raw := range strings.Split(apache[0].body, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		lines = append(lines, line)
+		fields := strings.Fields(line)
+		var into map[string]bool
+		switch fields[0] {
+		case "ProxyPass":
+			into = passes
+		case "ProxyPassReverse":
+			into = reverses
+		default:
+			assert.NotEqual(t, "Header", fields[0], "no response header line: %q", line)
+			continue
+		}
+		require.Len(t, fields, 3, "%q is <directive> <path> <target>", line)
+		require.False(t, into[fields[1]], "%s %s appears twice", fields[0], fields[1])
+		into[fields[1]] = true
+		assert.Equal(t, "http://127.0.0.1:"+d.Port+fields[1], fields[2], "%s %s target", fields[0], fields[1])
+	}
+	assert.Equal(t, want, passes, "ProxyPass paths equal the nginx site's proxied paths")
+	assert.Equal(t, want, reverses, "ProxyPassReverse paths equal the nginx site's proxied paths")
+	for _, directive := range []string{
+		"ProxyPreserveHost On",
+		"ProxyAddHeaders Off",
+		`RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"`,
+		`RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"`,
+		`RequestHeader set X-Forwarded-Proto "https"`,
+	} {
+		assert.Contains(t, lines, directive, "the Apache fragment sets %s", directive)
+	}
+
+	const updating = "### Updating an existing server"
+	_, after, found := strings.Cut(section, "\n"+updating+"\n")
+	require.True(t, found, "the section holds %s", updating)
+	var trimmed []string
+	for _, line := range strings.Split(after, "\n") {
+		trimmed = append(trimmed, strings.TrimSpace(line))
+	}
+	assert.Contains(t, trimmed, "nginx -t && systemctl reload nginx", "nginx reload step")
+	assert.Contains(t, trimmed, "apachectl configtest && systemctl reload apache2", "Apache reload step")
+	assert.True(t, lineWithAll(after, "/scim/v2/ServiceProviderConfig", "401"), "the SCIM check expects 401")
 }
 
 var provisioningGuideHeadings = []string{
