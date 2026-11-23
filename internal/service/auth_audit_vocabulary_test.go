@@ -157,6 +157,10 @@ func parseAuthAuditSources(t *testing.T, fset *token.FileSet) []authAuditSourceF
 				if entry.Name() == "testdata" {
 					return filepath.SkipDir
 				}
+				// The idkit example is a demo host with its own audit sink, not a GopherCRM audit writer.
+				if rel, relErr := filepath.Rel(root, path); relErr == nil && filepath.ToSlash(rel) == "internal/idkit/example" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
