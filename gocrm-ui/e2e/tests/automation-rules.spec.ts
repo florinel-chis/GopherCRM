@@ -1,4 +1,4 @@
-import { test, expect, request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, request as playwrightRequest, type APIRequestContext } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
@@ -15,16 +15,6 @@ import { apiResponse } from '../helpers/api';
  * the rule. The rule is saved disabled, so the automation worker running
  * inside the e2e backend never starts a run for it.
  */
-
-// The bell polls the count once a minute and the test timeout is 30 s, so
-// every wait for it is registered before the navigation that triggers it.
-const unreadCount = (page: Page) =>
-  page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.endsWith('/notifications/unread-count') &&
-      response.request().method() === 'GET' &&
-      response.status() === 200
-  );
 
 test.describe('Admin - Automation rules', () => {
   const stamp = `${Date.now()}`;
@@ -84,11 +74,16 @@ test.describe('Admin - Automation rules', () => {
   }) => {
     const bell = page.getByTestId('notification-bell');
 
-    // 1. The unread baseline, from the response the bell itself renders.
-    const firstCount = unreadCount(page);
+    // 1. The unread baseline, read through the API (a response the bell fetched can be
+    // discarded by the next navigation before its body is read), and the bell shows it.
+    const unread = async () => {
+      const response = await api.get(`${API_BASE_URL}/notifications/unread-count`, { headers });
+      expect(response.status()).toBe(200);
+      return (await response.json()).data.unread as number;
+    };
+    const before = await unread();
     await page.goto('/');
-    const before = (await (await firstCount).json()).data.unread as number;
-    await expect(bell).toHaveAttribute('data-unread', String(before));
+    await expect(bell).toHaveAttribute('data-unread', String(before), { timeout: 30_000 });
 
     // 2. The rule form: a lead_created trigger.
     await page.goto('/automation/rules/new');
@@ -169,14 +164,9 @@ test.describe('Admin - Automation rules', () => {
     await expect(dialog).toBeHidden();
 
     // 7. The dry run notified nobody: the count is where it started.
-    const secondCount = unreadCount(page);
+    expect(await unread()).toBe(before);
     await page.goto('/');
-    expect((await (await secondCount).json()).data.unread).toBe(before);
-    await expect(bell).toHaveAttribute('data-unread', String(before));
-
-    const apiCount = await api.get(`${API_BASE_URL}/notifications/unread-count`, { headers });
-    expect(apiCount.status()).toBe(200);
-    expect((await apiCount.json()).data.unread).toBe(before);
+    await expect(bell).toHaveAttribute('data-unread', String(before), { timeout: 30_000 });
   });
 
   test('admin dry-runs an unsaved new rule from the form and nothing is created', async ({ page }) => {
