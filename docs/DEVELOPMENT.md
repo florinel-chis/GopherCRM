@@ -2492,6 +2492,9 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   `python3 scripts/ci/check-doc-citations.py` checks every tracked `docs/**/*.md` and `README.md`,
   discovered through `git ls-files`, so a new doc is covered the moment it is tracked (pass file
   names as arguments to check only those; a file named explicitly is checked in full). The one
+  listed addition is `internal/idkit/README.md`, named in the script's `EXTRA_DEFAULT_FILES`; other
+  `README.md` files outside `docs/` are not discovered. `CHANGELOG.md` is deliberately not checked:
+  its released entries are history and name files that were later removed or renamed. The one
   exempt doc is `docs/CONCURRENCY.md`, listed in the script's `EXEMPT_FILES` with the test that
   pins it: `internal/config/concurrency_doc_test.go` pins every citation of the auth
   service files there (`internal/service/auth_service.go` and the per-flow files split from it, #639) to its file,

@@ -123,8 +123,13 @@ under `scim.BasePath` (`internal/idkit/scim/scim.go`); `server.Routes`
   (`internal/idkit/scim/server/managed.go`) gives their `externalId`.
 - A Users or Groups refusal is one of the sentinels in `internal/idkit/scim/server/errors.go`
   (`server.ErrNotFound` and the rest); anything else answers 500 and goes to the `Logger`.
-- Groups are the groups-claim values of the role mapping; they are listed and their members
-  patched, never created or deleted as new values.
+- Groups are the groups-claim values of the role mapping. They are listed and read, and their
+  members patched. A create (`POST /Groups`) writes no new value: it resolves to an existing
+  group by `externalId` or, failing that, `displayName`
+  (`Groups.Create` (`internal/idkit/scim/server/server.go`)), and answers 201 with that group,
+  or 400 `invalidValue` when none matches
+  (`Server.createGroup` (`internal/idkit/scim/server/groups.go`)). A delete
+  (`DELETE /Groups/{id}`) answers 405 with `Allow: GET, PATCH`.
 
 ## Issuers
 

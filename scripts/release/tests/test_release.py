@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -93,6 +94,21 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('### Added\n\n- Change 0 that wraps (#0).\n', notes)
         self.assertIn('- Change 199 that wraps (#199).\n\n### Fixed\n\n- Plain fix without a bold lead.\n', notes)
         self.assertNotIn('word', notes)
+
+    def test_changelog_sections_have_one_heading_of_each_kind(self):
+        text = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
+        sections = re.split(r'^(?=## \[)', text, flags=re.M)[1:]
+        self.assertTrue(sections)
+        for section in sections:
+            name = section.splitlines()[0]
+            headings = re.findall(r'^### (.+?)\s*$', section, re.M)
+            repeated = sorted({h for h in headings if headings.count(h) > 1})
+            self.assertEqual(repeated, [], f'{name} repeats ### {", ".join(repeated)}')
+        entry = release.notes(text, '1.3.0')
+        self.assertIn('### Upgrade notes', re.findall(r'^### .+$', entry, re.M))
+        body = release.release_notes(entry, 'b' * 40)
+        self.assertLessEqual(len(body), release.NOTES_LIMIT)
+        self.assertIn('### Upgrade notes', body)
 
     def test_release_notes_refuse_an_entry_too_long_even_condensed(self):
         entry = ''.join(f'- **{"x" * 150} {n}**\n' for n in range(500))

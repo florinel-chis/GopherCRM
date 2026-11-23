@@ -5,8 +5,8 @@ Citations by line number drift silently whenever the cited file changes, so
 the docs cite code by file plus symbol or anchor, and this check resolves
 those citations against the tracked tree. Without FILE arguments it checks
 every tracked docs/**/*.md and README.md (from `git ls-files`, never a
-directory walk) except the files in EXEMPT_FILES; a file passed explicitly is
-checked in full, exempt or not. Spans are backtick spans outside fenced code
+directory walk), plus the files in EXTRA_DEFAULT_FILES, except the files in
+EXEMPT_FILES; a file passed explicitly is checked in full, exempt or not. Spans are backtick spans outside fenced code
 blocks. Every checked file goes through all three rules.
 
 a. Paths. A span, without a leading ./ and a trailing :N, :N-M or :N,M, is a
@@ -57,6 +57,16 @@ from pathlib import Path
 EXEMPT_FILES = {
     'docs/CONCURRENCY.md': 'internal/config/concurrency_doc_test.go',
 }
+
+# Tracked docs outside docs/ that are checked by default as well. Discovery
+# does not widen to every README.md: only the files listed here are added,
+# and only while `git ls-files` lists them. CHANGELOG.md is deliberately not
+# checked: its released entries are history and name files that were later
+# removed or renamed (and migration stems without the .up/.down suffix), and
+# rewriting them would change what a release said.
+EXTRA_DEFAULT_FILES = (
+    'internal/idkit/README.md',
+)
 
 # The guides whose line-number citations were converted to symbol citations:
 # the fork and extension guides (#487), then the use-case, provisioning and
@@ -187,9 +197,10 @@ def is_planned_spec(doc, path):
 
 
 def default_files(repo_root):
-    """Every tracked docs/**/*.md plus README.md, minus EXEMPT_FILES."""
+    """Every tracked docs/**/*.md, README.md and EXTRA_DEFAULT_FILES entry, minus EXEMPT_FILES."""
     return [name for name in tracked_files(repo_root)
-            if ((name.startswith('docs/') and name.endswith('.md')) or name == 'README.md')
+            if ((name.startswith('docs/') and name.endswith('.md')) or name == 'README.md'
+                or name in EXTRA_DEFAULT_FILES)
             and name not in EXEMPT_FILES]
 
 
@@ -307,8 +318,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--repo-root', default=None, help='default: the repository holding this script')
     parser.add_argument('files', nargs='*',
-                        help='repo-relative doc files, checked in full; default: every tracked docs/**/*.md '
-                             'and README.md except %s' % ', '.join(sorted(EXEMPT_FILES)))
+                        help='repo-relative doc files, checked in full; default: every tracked docs/**/*.md, '
+                             'README.md and %s except %s' % (', '.join(EXTRA_DEFAULT_FILES),
+                                                            ', '.join(sorted(EXEMPT_FILES))))
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root) if args.repo_root else default_repo_root()
     files = args.files
