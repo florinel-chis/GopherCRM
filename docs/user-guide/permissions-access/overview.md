@@ -2,7 +2,8 @@
 
 This guide is for the administrator of a GopherCRM installation. It explains who can do what,
 how to change that, and how people can sign in through your company's identity provider. It
-describes what GopherCRM does today. The technical reference behind it is
+also covers the API keys, sign-in audit and webhooks screens. It describes what GopherCRM does
+today. The technical reference behind it is
 [AUTHORIZATION.md](../../AUTHORIZATION.md).
 
 **Roles.** Every user has exactly one role. Four system roles ship with GopherCRM: Admin, Sales,
@@ -31,4 +32,9 @@ for local accounts. Single sign-on is set up in Settings → Single sign-on.
 - [SCIM provisioning](scim-provisioning.md): how an identity provider creates and manages accounts through SCIM 2.0.
 - [Testing single sign-on](testing-single-sign-on.md): how to test single sign-on against your own
   Entra ID tenant before rolling it out, what to check and where to read the result.
+- [API keys](api-keys.md): creating, using and revoking your own API keys.
+- [Sign-in audit](sign-in-audit.md): the record of sign-ins and refusals, what each column holds,
+  how long rows are kept, and every method and reason code.
+- [Webhooks](webhooks.md): sending signed events to other systems, the test ping, secret rotation,
+  the delivery log and redelivery, pausing, and how the receiving system verifies a request.
 - [Frequently asked questions](faq.md): short answers to common questions.

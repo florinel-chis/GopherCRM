@@ -741,8 +741,8 @@ the two admin-only permissions (`settings.sso_manage`, `settings.scim_manage`). 
 ## Webhooks
 
 The screen at `/settings/webhooks` (#409) manages the outbound webhook endpoints and shows their
-delivery log; the events, the signature and the retry schedule are in the README section
-"Integrations: webhooks". The browser spec registers its endpoints under the reserved `.invalid`
+delivery log; the events, the signature and the retry schedule are in the
+[webhooks user guide](../user-guide/permissions-access/webhooks.md). The browser spec registers its endpoints under the reserved `.invalid`
 domain, which never resolves, so nothing is delivered outside the machine and no delivery of it
 can succeed. Its test-ping endpoint is `https://localhost/e2e-hooks-ping`, registered inactive: the
 egress guard refuses the loopback address when the ping dials, so the ping fails with

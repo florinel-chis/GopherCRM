@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because `LimitRequestBody` does not reach them; chunked bodies stay bounded only by the
   backend), whose `client_max_body_size 1m` and `proxy_read_timeout 60s`
   defaults are now written out. README, SETUP, DOCKER and FORKING link the section. Docs only.
+- Administrator user-guide pages for webhooks, API keys and the sign-in audit (#731):
+  `docs/user-guide/permissions-access/webhooks.md` (the Settings > Webhooks screen with the test
+  ping, secret rotation, the delivery log and redelivery, pausing and where its state is read, the
+  event types, delivery and retries, and signature verification), `api-keys.md` (creating, using
+  and revoking a key) and `sign-in-audit.md` (the filters and columns, retention, and every method
+  and reason code). The guide overview links them. The README webhook section is now a short
+  summary that links the new page, which holds the text that was there.
+  `scripts/ci/check-user-guide.py` checks the three pages, resolves webhook event names against the event catalogue in
+  `internal/webhook/catalog.go`, and checks that the sign-in audit page names every method and
+  reason code of `internal/service/auth_audit_vocabulary.go` and no other. Docs and checker only.
 
 ### Changed
 

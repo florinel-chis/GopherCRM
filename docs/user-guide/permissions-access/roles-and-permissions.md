@@ -104,7 +104,8 @@ with single sign-on get their role from the provider at every sign-in; see
 ## Assign a role to an API key
 
 An API key has no role and no permissions of its own. It acts with the permissions its owner holds
-at the moment of each request. To give an integration only what it needs:
+at the moment of each request. How to create, use and revoke a key is described in
+[API keys](api-keys.md). To give an integration only what it needs:
 
 1. Create a custom role that holds only the permissions the integration needs (see
    [Create a role](#create-a-role)).
@@ -171,4 +172,4 @@ id, the target user's id and the role name. The same rows are available through 
 
 Changes to the single sign-on settings are not audited yet. Sign-in attempts are recorded
 separately, in Settings → Sign-in audit (`/settings/sign-in-audit`, needs
-`audit.sign_ins_view`).
+`audit.sign_ins_view`); see [Sign-in audit](sign-in-audit.md).
