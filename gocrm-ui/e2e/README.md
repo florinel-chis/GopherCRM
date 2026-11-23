@@ -174,6 +174,8 @@ npm run test:e2e:debug              # Playwright inspector
 npm run test:e2e:ui                 # interactive UI mode
 npm run test:e2e:report             # open the last HTML report
 npm run test:e2e:admin              # admin CRUD specs, playwright.config.slow.ts
+npm run test:e2e:admin:headed       # the same admin specs with a visible browser
+npm run test:e2e:admin:suite        # admin-entity-suite.spec.ts alone, visible browser, slow config
 npm run test:e2e:admin:cleanup      # pattern-based delete on the development database, see below
 
 # A single spec
@@ -190,6 +192,15 @@ does not disable rate limiting elsewhere — authenticated routes keep their mod
 not a way to run the suite faster, only a way to stop the login limiter from producing false failures. For
 complete functional runs use `make e2e`, whose dedicated tagged binary isolates all live tiers;
 this manual normal-build path intentionally retains ordinary throttling behavior.
+
+Failure artifacts come from `playwright.config.ts`. Each failed test leaves a screenshot
+(`screenshot: 'only-on-failure'`)
+and its video (`video: 'retain-on-failure'`). A trace is recorded
+only when a test is retried (`trace: 'on-first-retry'`), and a run by hand has no retries
+(`retries` is 2 only when `CI` is set), so a local failure leaves no trace. `playwright.config.slow.ts`,
+used by the `test:e2e:admin*` scripts, keeps these settings and the HTML reporter but records video
+for every test (`video: 'on'`). Screenshots and videos go to `test-results/`, and
+`npm run test:e2e:report` opens the HTML report of the last run.
 
 `npm run test:e2e:admin:cleanup` runs `e2e/scripts/cleanup-admin-test-data.sh`, kept from the time
 the specs ran against the development database only. It connects with `mysql` as `DB_USER`

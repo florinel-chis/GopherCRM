@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/ADMIN_TESTING.md` is retired because it no longer matched the end-to-end suite.
+  `gocrm-ui/e2e/README.md` is the guide to that suite and now also lists the
+  `test:e2e:admin:headed` and `test:e2e:admin:suite` scripts and the failure artifacts (screenshots,
+  videos, traces on retry). `docs/testing/README.md`, the README documentation table and
+  `docs/DEVELOPMENT.md` point to it (#736). Docs only.
 - The 1.3.0 section of this changelog has one heading of each kind (Added, Changed, Removed,
   Fixed, Security), each entry kept word for word under its kind, and a new Upgrade notes
   subsection that collects the operator steps its entries already describe (#746).
