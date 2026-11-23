@@ -821,10 +821,29 @@ func TestServerProvisioningGuideApache(t *testing.T) {
 
 	// (v) Body limit and timeout equal the nginx TLS site's server level.
 	nginxServer := nginxOutsideLocations(t, nginxTLS)
+	maxBody := strconv.FormatInt(nginxServerSize(t, nginxServer, "client_max_body_size"), 10)
 	body := apacheSingle(t, https, "LimitRequestBody", ":443 site")
 	require.Len(t, body, 1)
-	assert.Equal(t, strconv.FormatInt(nginxServerSize(t, nginxServer, "client_max_body_size"), 10), body[0],
-		"LimitRequestBody equals client_max_body_size")
+	assert.Equal(t, maxBody, body[0], "LimitRequestBody equals client_max_body_size")
+	// LimitRequestBody does not reach requests mod_proxy_http forwards, so the
+	// limit on proxied bodies is a vhost-level Content-Length check answering 413.
+	for _, line := range []string{
+		"RewriteEngine On",
+		`RewriteCond expr "%{HTTP:Content-Length} -gt ` + maxBody + `"`,
+		"RewriteRule ^ - [R=413,L]",
+	} {
+		assert.True(t, vhostTexts[line], ":443 vhost level holds %s", line)
+	}
+	var bodyBullet string
+	for _, para := range strings.Split(section, "\n- ") {
+		if strings.HasPrefix(para, "The body limit") {
+			bodyBullet = para
+		}
+	}
+	require.NotEmpty(t, bodyBullet, "a bullet explains the body limit")
+	for _, word := range []string{"LimitRequestBody", "proxied", "Content-Length", "413", "chunked"} {
+		assert.Contains(t, bodyBullet, word, "the body limit bullet names %s", word)
+	}
 	timeout := apacheSingle(t, https, "ProxyTimeout", ":443 site")
 	require.Len(t, timeout, 1)
 	assert.Equal(t, strconv.FormatInt(nginxServerSeconds(t, nginxServer, "proxy_read_timeout"), 10), timeout[0],

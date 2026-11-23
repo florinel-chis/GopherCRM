@@ -22,8 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and TLS" (#749): the modules, a port-80 redirect site, `certbot certonly --apache`, and an HTTPS
   site with the SPA fallback, the browser headers on the web app only, `/quote-response` kept out
   of the access log, the client address from `REMOTE_ADDR` (plus a Cloudflare variant that keeps
-  it as the fallback and needs a firewall limiting the origin to Cloudflare) and the body and
-  timeout limits of the nginx site, whose `client_max_body_size 1m` and `proxy_read_timeout 60s`
+  it as the fallback and needs a firewall limiting the origin to Cloudflare) and the timeout and
+  body limit of the nginx site (the body limit for proxied requests is a `Content-Length` check,
+  because `LimitRequestBody` does not reach them; chunked bodies stay bounded only by the
+  backend), whose `client_max_body_size 1m` and `proxy_read_timeout 60s`
   defaults are now written out. README, SETUP, DOCKER and FORKING link the section. Docs only.
 
 ### Fixed

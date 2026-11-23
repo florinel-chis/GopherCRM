@@ -449,8 +449,9 @@ Enable it and run `nginx -t && systemctl reload nginx` again.
 
 On a server that runs Apache 2.4 instead of nginx, the setup below replaces the two nginx sites:
 it proxies the same paths, sends the backend the same client address, puts the same browser
-headers on the web app only and applies the same body and timeout limits. Paths follow Debian and
-Ubuntu (`/etc/apache2`, `a2enmod`, `a2ensite`); adapt them for other distributions.
+headers on the web app only and applies the same timeout and, to every request that declares its
+length, the same body limit. Paths follow Debian and Ubuntu (`/etc/apache2`, `a2enmod`,
+`a2ensite`); adapt them for other distributions.
 
 Enable the modules the sites use:
 
@@ -498,6 +499,12 @@ HTTPS site, for example `/etc/apache2/sites-available/gophercrm-https.conf`:
 
     LimitRequestBody 1048576
     ProxyTimeout 60
+
+    # LimitRequestBody does not reach proxied requests; refuse a declared body over 1 MiB
+    # before it is proxied.
+    RewriteEngine On
+    RewriteCond expr "%{HTTP:Content-Length} -gt 1048576"
+    RewriteRule ^ - [R=413,L]
 
     ProxyPreserveHost On
     ProxyAddHeaders Off
@@ -559,9 +566,16 @@ again.
   `/api/v1/`, `/health` and `/scim/v2/` keep the backend's own headers: this is the Apache form of
   "not on proxied API responses". Put no `Header` line at the `<VirtualHost>` level. A UI built with
   `VITE_API_BASE_URL` on another origin must add that origin to `connect-src`.
-- `LimitRequestBody 1048576` and `ProxyTimeout 60` equal the nginx TLS site's
-  `client_max_body_size 1m` and `proxy_read_timeout 60s`, so the quote email's 45 s budget fits
-  under the 60 s timeout on either server.
+- The body limit is nginx's `client_max_body_size 1m` in two parts. `LimitRequestBody 1048576`
+  applies only to requests Apache answers itself (the web root); mod_proxy_http forwards a
+  proxied body whatever its size. The vhost-level `RewriteCond expr "%{HTTP:Content-Length} -gt 1048576"`
+  with `RewriteRule ^ - [R=413,L]` therefore answers 413 to any request, proxied or not, whose
+  `Content-Length` exceeds 1 MiB, as nginx does; a body of exactly 1 MiB passes. A chunked body
+  (`Transfer-Encoding: chunked`, no `Content-Length`) is not checked by either line: Apache
+  forwards it, and only the backend's own caps (64 KiB on public form submissions and SCIM)
+  bound it. The web app's own requests carry a `Content-Length`.
+- `ProxyTimeout 60` equals the nginx TLS site's `proxy_read_timeout 60s`, so the quote email's
+  45 s budget fits under the 60 s timeout on either server.
 
 When Cloudflare (or another CDN) fronts the server, `REMOTE_ADDR` is the CDN's address and every
 visitor shares one rate-limit key. Add these lines to the HTTPS site, after its two `REMOTE_ADDR`
