@@ -688,7 +688,7 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
 The advertised `patch` feature is the Users patch below; the Users read, create, replace and
 patch are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
 `GET /health`. The shipped nginx configurations (the UI image's `gocrm-ui/docker/nginx.conf` and
-the TLS site of `docs/SERVER_PROVISIONING.md`) and that guide's Apache fragment forward `/scim/v2/`
+the TLS site of `docs/SERVER_PROVISIONING.md`) and that guide's Apache site forward `/scim/v2/`
 to the backend, so `PUBLIC_BASE_URL/scim/v2` reaches it (#728).
 
 ### Users read (#469)

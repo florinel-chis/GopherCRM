@@ -95,7 +95,8 @@ Notes on the wiring:
   password and every API call carries a token, so over plain HTTP both cross
   the network in clear text. The stack as shipped is for `localhost`; put a
   TLS-terminating reverse proxy in front of the UI port before anyone reaches
-  it over a network. Both files publish the backend's `8080` and the UI port on
+  it over a network (nginx and Apache sites for a host are in
+  [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#reverse-proxy-and-tls)). Both files publish the backend's `8080` and the UI port on
   every host interface (`docker-compose.yml:66-67,83-84`,
   `docker-compose.sqlite.yml:51-52,68-69`), so the proxy alone leaves both
   reachable over plain HTTP: remove the backend publication and bind the UI to
@@ -103,9 +104,9 @@ Notes on the wiring:
   [Several installations on one host](#several-installations-on-one-host).
 - The link of a quote email is `APP_BASE_URL/quote-response?token=...`. A reverse proxy in
   front of the UI port should not log the query string of `/quote-response` (turn its access log
-  off for that path, or log `$uri` rather than `$request`; nginx example in
-  `docs/SERVER_PROVISIONING.md` under "Reverse proxy and TLS"). The backend's own access log
-  records paths without the query string.
+  off for that path, or log `$uri` rather than `$request`). nginx and Apache examples are in
+  [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#reverse-proxy-and-tls) under "Reverse proxy and
+  TLS". The backend's own access log records paths without the query string.
 - `TRUSTED_PROXIES=172.28.0.0/16` matches the fixed compose subnet so the
   rate limiter keys on the real client IP forwarded by the ui nginx, not on
   the proxy container's address. If you change the subnet in

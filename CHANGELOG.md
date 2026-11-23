@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delivery log has an Actions column with a "Redeliver" button on `succeeded` and `failed` rows;
   a refusal (409) shows the server's message. The create-time secret notice now points at Rotate
   secret instead of deleting and registering the endpoint again. No API change (#727).
+- `docs/SERVER_PROVISIONING.md` has a complete Apache 2.4 setup next to nginx under "Reverse proxy
+  and TLS" (#749): the modules, a port-80 redirect site, `certbot certonly --apache`, and an HTTPS
+  site with the SPA fallback, the browser headers on the web app only, `/quote-response` kept out
+  of the access log, the client address from `REMOTE_ADDR` (plus a Cloudflare variant that keeps
+  it as the fallback and needs a firewall limiting the origin to Cloudflare) and the body and
+  timeout limits of the nginx site, whose `client_max_body_size 1m` and `proxy_read_timeout 60s`
+  defaults are now written out. README, SETUP, DOCKER and FORKING link the section. Docs only.
 
 ### Fixed
 
