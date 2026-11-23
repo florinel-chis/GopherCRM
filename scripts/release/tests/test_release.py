@@ -170,9 +170,10 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, 'gh_json', side_effect=[current, current, run_info]), patch.object(release, 'run', side_effect=command):
             self.assertEqual(self.manifest, release.download(self.root, tag='v1.3.0'))
 
-    def test_sql_release_coverage_requires_unskipped_real_roots(self):
+    def sql_release_events(self):
+        """A release-mode SQL log: every required cmd/migrate root and one integration root pass."""
         folder = self.root / 'internal/integration'
-        folder.mkdir(parents=True)
+        folder.mkdir(parents=True, exist_ok=True)
         (folder / 'example_test.go').write_text('func TestExampleMySQL(t *testing.T) {}\n')
         events = [{'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/cmd/migrate', 'Test': name} for name in
                   ['TestMigrationFresh_FullUpAndDown', 'TestMigrationUpgrade_FromMainAutoMigratedSchema',
@@ -217,9 +218,39 @@ class ReleaseTests(unittest.TestCase):
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})
-        def output():
-            return '\n'.join(json.dumps(event) for event in events)
-        sql.check(output(), self.root)
+        return events
+
+    @staticmethod
+    def sql_output(events):
+        return '\n'.join(json.dumps(event) for event in events)
+
+    def test_sql_release_coverage_requires_unskipped_real_roots(self):
+        events = self.sql_release_events()
+        sql.check(self.sql_output(events), self.root)
         events[-1]['Action'] = 'skip'
         with self.assertRaisesRegex(ValueError, 'skipped'):
-            sql.check(output(), self.root)
+            sql.check(self.sql_output(events), self.root)
+
+    def test_sql_release_coverage_accepts_dsn_helper_root_without_skips(self):
+        # #720: TestMySQLBaseDSNFromEnvironmentOnly checks the skip decision
+        # without emitting skip events, so a release log carrying it and its
+        # six subtests as passes is accepted.
+        events = self.sql_release_events()
+        root = 'TestMySQLBaseDSNFromEnvironmentOnly'
+        events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/cmd/migrate', 'Test': name}
+                      for name in [root] + [root + '/' + sub for sub in (
+                          'unset_skips', 'empty_skips', 'whitespace_skips',
+                          'set_value_is_returned_without_connecting',
+                          'missing_trailing_slash_is_appended',
+                          'query_string_is_kept_without_appending_a_slash')])
+        sql.check(self.sql_output(events), self.root)
+
+    def test_sql_release_coverage_rejects_skipped_or_failed_migration_root(self):
+        for action in ('skip', 'fail'):
+            with self.subTest(action=action):
+                events = self.sql_release_events()
+                for event in events:
+                    if event.get('Test') == 'TestMigrationFresh_FullUpAndDown':
+                        event['Action'] = action
+                with self.assertRaisesRegex(ValueError, 'failed or skipped'):
+                    sql.check(self.sql_output(events), self.root)

@@ -2116,6 +2116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TestMySQLBaseDSNFromEnvironmentOnly` (`cmd/migrate`) now checks the skip decision of the
+  `TEST_MYSQL_DSN` helper through a pure decision function and a recording fake instead of
+  skipping real subtests, so it emits no skip events and the release SQL gate
+  (`scripts/release/check-sql-tests.py`) passes again on MySQL 8 and MariaDB 10.11. The gate's
+  no-skip rule is unchanged, and the MySQL/MariaDB migration roots still skip without
+  `TEST_MYSQL_DSN`. Tests only (#720).
 - `docs/FEATURES.md` row 1.12 now gives the shared OpenID Connect sign-in table
   (`oidcSignInCases`) as 70 top-level subtests instead of 66: the four `audit_*` cases #463 added
   were never counted. The SQLite root runs 70 top-level subtests and the MySQL root 71, the extra
