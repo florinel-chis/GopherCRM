@@ -40,9 +40,11 @@ import { WebhookDeliveryLog } from './WebhookDeliveryLog';
 import { WebhookEndpointDialog } from './WebhookEndpointDialog';
 import { OneTimeSecretDialog } from '@/components/OneTimeSecretDialog';
 import {
+  usePendingWebhookIds,
   useRotateWebhookSecret,
   useTestWebhookEndpoint,
   webhookKeys,
+  webhookMutationKeys,
   type RotatedWebhookSecret,
 } from './webhookQueries';
 
@@ -129,21 +131,21 @@ const EndpointsTab: React.FC = () => {
     },
   });
 
-  const pingMutation = useTestWebhookEndpoint();
-
-  const sendPing = (endpoint: WebhookEndpoint) =>
-    pingMutation.mutate(endpoint.id, {
-      onSuccess: (result) => {
-        if (result.outcome === 'succeeded') {
-          showSuccess(pingMessage(result));
-        } else {
-          showError(pingMessage(result));
-        }
-      },
-      onError: (failure) => {
-        showError(getAPIError(failure)?.message ?? 'The test ping could not be sent.');
-      },
-    });
+  // Every ping reports its own outcome, also when another row was pressed
+  // before it settled, and a row stays disabled until its own ping ends.
+  const pingMutation = useTestWebhookEndpoint({
+    onSuccess: (result) => {
+      if (result.outcome === 'succeeded') {
+        showSuccess(pingMessage(result));
+      } else {
+        showError(pingMessage(result));
+      }
+    },
+    onError: (failure) => {
+      showError(getAPIError(failure)?.message ?? 'The test ping could not be sent.');
+    },
+  });
+  const pingingIds = usePendingWebhookIds(webhookMutationKeys.testEndpoint);
 
   const rotateMutation = useRotateWebhookSecret(setRotated);
 
@@ -239,8 +241,8 @@ const EndpointsTab: React.FC = () => {
                           </Button>
                           <Button
                             size="small"
-                            onClick={() => sendPing(endpoint)}
-                            disabled={pingMutation.isPending && pingMutation.variables === endpoint.id}
+                            onClick={() => pingMutation.mutate(endpoint.id)}
+                            disabled={pingingIds.has(endpoint.id)}
                             aria-label={`Send test ping to ${endpoint.url}`}
                           >
                             Send test ping

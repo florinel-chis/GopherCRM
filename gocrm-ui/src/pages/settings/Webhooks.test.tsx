@@ -440,6 +440,47 @@ describe('Webhooks', () => {
       release(pingResult({}));
       await waitFor(() => expect(button).toBeEnabled());
     });
+
+    it('reports each ping of two rows and keeps the first disabled until its own ping ends', async () => {
+      const releases = new Map<number, (value: WebhookPingResult) => void>();
+      vi.mocked(webhooksApi.testEndpoint).mockImplementation(
+        (id) =>
+          new Promise((resolve) => {
+            releases.set(id, resolve);
+          }),
+      );
+      render(<Webhooks />);
+      const first = await rowOf(active.url);
+      const second = await rowOf(inactive.url);
+      const firstButton = first.getByRole('button', { name: `Send test ping to ${active.url}` });
+      const secondButton = second.getByRole('button', {
+        name: `Send test ping to ${inactive.url}`,
+      });
+
+      fireEvent.click(firstButton);
+      await waitFor(() => expect(webhooksApi.testEndpoint).toHaveBeenCalledWith(4));
+      fireEvent.click(secondButton);
+      await waitFor(() => expect(webhooksApi.testEndpoint).toHaveBeenCalledWith(5));
+
+      // The first row stays disabled while its own ping runs, though the
+      // second row started a ping after it.
+      await waitFor(() => expect(secondButton).toBeDisabled());
+      expect(firstButton).toBeDisabled();
+
+      releases.get(4)?.(
+        pingResult({ outcome: 'failed', http_status: null, error_code: 'destination_refused' }),
+      );
+      expect(
+        await screen.findByText('Test ping failed: destination_refused (no response)'),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(firstButton).toBeEnabled());
+      expect(secondButton).toBeDisabled();
+
+      releases.get(5)?.(pingResult({ http_status: 204 }));
+      expect(await screen.findByText('Test ping succeeded (HTTP 204)')).toBeInTheDocument();
+      await waitFor(() => expect(secondButton).toBeEnabled());
+      expect(webhooksApi.testEndpoint).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('rotate secret', () => {

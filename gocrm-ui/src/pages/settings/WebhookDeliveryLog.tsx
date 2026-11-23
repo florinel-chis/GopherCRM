@@ -32,7 +32,12 @@ import {
 } from '@/api/endpoints';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
-import { useRedeliverWebhookDelivery, webhookKeys } from './webhookQueries';
+import {
+  usePendingWebhookIds,
+  useRedeliverWebhookDelivery,
+  webhookKeys,
+  webhookMutationKeys,
+} from './webhookQueries';
 
 // The endpoint filter offers one page of endpoints: the API caps a page at 100.
 const ENDPOINT_OPTIONS_LIMIT = 100;
@@ -95,15 +100,15 @@ export const WebhookDeliveryLog: React.FC = () => {
   };
 
   const { showSuccess, showError } = useSnackbar();
-  const redeliverMutation = useRedeliverWebhookDelivery();
-
-  const redeliver = (id: number) =>
-    redeliverMutation.mutate(id, {
-      onSuccess: () => showSuccess('Delivery queued for redelivery'),
-      onError: (failure) => {
-        showError(getAPIError(failure)?.message ?? 'The delivery could not be redelivered.');
-      },
-    });
+  // Every redelivery reports its own outcome, also when another row was
+  // pressed before it settled, and a row stays disabled until its own request ends.
+  const redeliverMutation = useRedeliverWebhookDelivery({
+    onSuccess: () => showSuccess('Delivery queued for redelivery'),
+    onError: (failure) => {
+      showError(getAPIError(failure)?.message ?? 'The delivery could not be redelivered.');
+    },
+  });
+  const redeliveringIds = usePendingWebhookIds(webhookMutationKeys.redeliverDelivery);
 
   const endpointOptions = useQuery({
     queryKey: webhookKeys.endpointOptions(),
@@ -248,11 +253,8 @@ export const WebhookDeliveryLog: React.FC = () => {
                           {REDELIVERABLE.has(delivery.status) ? (
                             <Button
                               size="small"
-                              onClick={() => redeliver(delivery.id)}
-                              disabled={
-                                redeliverMutation.isPending &&
-                                redeliverMutation.variables === delivery.id
-                              }
+                              onClick={() => redeliverMutation.mutate(delivery.id)}
+                              disabled={redeliveringIds.has(delivery.id)}
                               aria-label={`Redeliver delivery ${delivery.id}`}
                             >
                               Redeliver

@@ -347,5 +347,48 @@ describe('WebhookDeliveryLog', () => {
         expect(screen.getByRole('button', { name: 'Redeliver delivery 7' })).toBeEnabled(),
       );
     });
+
+    it('reports each redelivery of two rows and keeps the first disabled until its own request ends', async () => {
+      const settles = new Map<
+        number,
+        { resolve: (value: WebhookDelivery) => void; reject: (reason: unknown) => void }
+      >();
+      vi.mocked(webhooksApi.redeliverDelivery).mockImplementation(
+        (id) =>
+          new Promise((resolve, reject) => {
+            settles.set(id, { resolve, reject });
+          }),
+      );
+      render(<WebhookDeliveryLog />);
+      await screen.findByText('ticket.updated');
+      const first = screen.getByRole('button', { name: 'Redeliver delivery 8' });
+      const second = screen.getByRole('button', { name: 'Redeliver delivery 7' });
+
+      fireEvent.click(first);
+      await waitFor(() => expect(webhooksApi.redeliverDelivery).toHaveBeenCalledWith(8));
+      fireEvent.click(second);
+      await waitFor(() => expect(webhooksApi.redeliverDelivery).toHaveBeenCalledWith(7));
+
+      await waitFor(() => expect(second).toBeDisabled());
+      expect(first).toBeDisabled();
+
+      settles.get(8)?.reject({
+        response: { status: 409, data: { message: 'Webhook endpoint is deleted or inactive' } },
+      });
+      expect(
+        await screen.findByText('Webhook endpoint is deleted or inactive'),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Redeliver delivery 8' })).toBeEnabled(),
+      );
+      expect(screen.getByRole('button', { name: 'Redeliver delivery 7' })).toBeDisabled();
+
+      settles.get(7)?.resolve(delivery({ id: 7, status: 'pending' }));
+      expect(await screen.findByText('Delivery queued for redelivery')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Redeliver delivery 7' })).toBeEnabled(),
+      );
+      expect(webhooksApi.redeliverDelivery).toHaveBeenCalledTimes(2);
+    });
   });
 });
