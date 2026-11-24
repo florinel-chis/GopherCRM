@@ -15,7 +15,7 @@ import (
 // describes: its structure, the status and the key facts of every flow, the
 // lock chains, the retry rule, the #175 failure modes, every cited path, the
 // flow -> ticket map, and the links that point to it from EXTENDING,
-// DEVELOPMENT, ROADMAP, README and CHANGELOG. The document cites code by path
+// DEVELOPMENT, DEV_AUTH, DEV_ENTITIES, ROADMAP, README and CHANGELOG. The document cites code by path
 // and symbol, never by line (#743); scripts/ci/check-doc-citations.py checks
 // that each cited symbol is declared in its file. Every citation of the auth
 // service files (internal/service/auth_service.go and the per-flow files split
@@ -1195,9 +1195,12 @@ func TestConcurrencyDocExtendingLinks(t *testing.T) {
 }
 
 func TestConcurrencyDocCrossLinks(t *testing.T) {
-	development := readRepositoryFile(t, "docs/DEVELOPMENT.md")
-	for _, start := range []string{"**Lock order for session writes**", "**Lead and company lock order (#182)**"} {
-		assert.Contains(t, concurrencyDocParagraph(t, development, start, "docs/DEVELOPMENT.md"), "](CONCURRENCY.md)", start)
+	for _, link := range []struct{ path, start string }{
+		{"docs/DEV_AUTH.md", "**Lock order for session writes**"},
+		{"docs/DEV_ENTITIES.md", "**Lead and company lock order (#182)**"},
+	} {
+		page := readRepositoryFile(t, link.path)
+		assert.Contains(t, concurrencyDocParagraph(t, page, link.start, link.path), "](CONCURRENCY.md)", link.start)
 	}
 
 	bullets := concurrencyDocBullets(readRepositoryFile(t, "docs/ROADMAP.md"))

@@ -38,7 +38,7 @@ Priorities: 22 P0, 17 P1, 2 P2.
 - `cmd/main.go`, `cmd/automation_runtime.go`, `internal/config/config.go`
 - `migrations/20261028120000_add_follow_up_automation.{up,down}.sql`
 - `docs/FEATURES.md` section 4e, `docs/datamodel.md` (Follow-up Automation),
-  `docs/DEVELOPMENT.md` (Automation runtime)
+  `docs/DEV_RUNTIMES.md` (Automation runtime)
 
 **Constraints**
 
@@ -501,7 +501,7 @@ Priorities: 22 P0, 17 P1, 2 P2.
   lease cases (#237) — takeover, email at most once, a live run spared, the heartbeat lifecycle,
   concurrent workers, the MySQL lock order, log privacy and the production wiring — are pinned by
   the `TestAutomationRunLease*` roots listed in
-  [DEVELOPMENT.md](../DEVELOPMENT.md#automation-runtime) ("Run lease roots").
+  [DEV_RUNTIMES.md](../DEV_RUNTIMES.md#automation-runtime) ("Run lease roots").
 
 ### TC-AUT-025 — Lead and user erasure end the automation state inside the erasure transaction
 - **Priority:** P0

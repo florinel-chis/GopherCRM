@@ -284,10 +284,69 @@ class DocCitationCheckTest(unittest.TestCase):
         for name in expected:
             self.assertTrue((ROOT / name).is_file(), name)
 
+    # Rule d: every relative .md link and #anchor resolves. Each test fails on a
+    # broken fixture and passes once the fixture is fixed.
+
+    def assert_link_rule(self, broken, fixed, target, kind, links=1):
+        out = self.assert_fails_naming(broken, target, kind)
+        self.assertIn('docs/FORKING.md:%d:' % (VALID_DOC.count('\n') + 1 + broken.count('\n', 0, broken.index(target))), out)
+        self.write_doc(fixed)
+        code, out = run(self.root, 'docs/FORKING.md')
+        self.assertEqual(code, 0, out)
+        self.assertIn(', %d links,' % links, out)
+
+    def test_link_to_a_missing_anchor_fails(self):
+        self.write('docs/OTHER.md', '# Other\n\n## Present section\n')
+        self.assert_link_rule('See [it](OTHER.md#absent-section).\n', 'See [it](OTHER.md#present-section).\n',
+                              'OTHER.md#absent-section', 'missing anchor')
+
+    def test_link_to_a_missing_file_fails(self):
+        self.write('docs/OTHER.md', '# Other\n')
+        self.assert_link_rule('See [it](ABSENT.md).\n', 'See [it](OTHER.md).\n', 'ABSENT.md', 'missing link target')
+
+    def test_link_to_an_untracked_file_fails(self):
+        self.write('docs/LOCAL.md', '# Local\n', track=False)
+        self.write('README.md', '# Readme\n')
+        self.assert_link_rule('See [it](LOCAL.md).\n', 'See [it](../README.md).\n', 'LOCAL.md', 'missing link target')
+
+    def test_same_file_anchor_is_checked(self):
+        self.assert_link_rule('See [above](#fixtures).\n', 'See [above](#fixture).\n', '#fixtures', 'missing anchor')
+
+    def test_heading_punctuation_is_dropped_from_the_slug(self):
+        self.write('docs/OTHER.md', '# Other\n\n### Outbound webhooks (#345)\n')
+        self.assert_link_rule('See [it](OTHER.md#outbound-webhooks-(345)).\n',
+                              'See [it](OTHER.md#outbound-webhooks-345).\n',
+                              'OTHER.md#outbound-webhooks-(345', 'missing anchor')
+
+    def test_a_repeated_heading_gets_a_numbered_slug(self):
+        self.write('docs/OTHER.md', '# Other\n\n## Roots\n\n## Roots\n')
+        self.assert_link_rule('See [it](OTHER.md#roots-2).\n', 'See [it](OTHER.md#roots-1).\n',
+                              'OTHER.md#roots-2', 'missing anchor')
+
+    def test_a_heading_inside_a_fenced_block_does_not_count(self):
+        self.write('docs/OTHER.md', '# Other\n\n```sh\n# fenced\n```\n')
+        self.assert_link_rule('See [it](OTHER.md#fenced).\n', 'See [it](OTHER.md#other).\n',
+                              'OTHER.md#fenced', 'missing anchor')
+
+    def test_a_link_inside_a_fenced_block_is_not_checked(self):
+        self.assert_link_rule('See [it](ABSENT.md).\n',
+                              '```markdown\nSee [it](ABSENT.md).\n```\n', 'ABSENT.md', 'missing link target',
+                              links=0)
+
+    def test_a_link_inside_a_heading_keeps_its_text_in_the_slug(self):
+        self.write('docs/OTHER.md', '# Other\n\n### Audit *(details in the [API reference](api/index.html))*\n')
+        self.assert_link_rule('See [it](OTHER.md#audit-details-in-the-api-referenceapiindexhtml).\n',
+                              'See [it](OTHER.md#audit-details-in-the-api-reference).\n',
+                              'OTHER.md#audit-details-in-the-api-referenceapiindexhtml', 'missing anchor')
+
+    def test_a_titled_link_is_checked(self):
+        self.write('docs/x.md', '# X\n\n## A\n')
+        self.assert_link_rule('See [it](x.md#b "t").\n', 'See [it](x.md#a "t").\n', 'x.md#b', 'missing anchor')
+
     def test_real_tree_passes(self):
         code, out = run(ROOT)
         self.assertEqual(code, 0, out)
-        self.assertRegex(out, r'^OK: [1-9][0-9]* path citations, [1-9][0-9]* symbol citations')
+        self.assertRegex(out, r'^OK: [1-9][0-9]* path citations, [1-9][0-9]* symbol citations, [1-9][0-9]* links')
 
 
 if __name__ == '__main__':

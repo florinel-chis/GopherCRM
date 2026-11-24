@@ -92,12 +92,13 @@ never advances the batch. Disposition does not edit GitHub or resume the next ti
 `automation/langflow/gophercrm_runner/documentation.py` owns the deterministic mapping.
 Application changes suggest README, CHANGELOG, FEATURES and ROADMAP, plus relevant feature testing
 guides. Schema changes include the data model and upgrade/setup guidance. Configuration
-changes include setup and example environment settings. Auth/shared middleware and AEO
-changes include their operational/security guidance. Route, schema and configuration changes
+changes include setup and example environment settings. Auth/shared middleware changes include
+the developer guide with its DEV_AUTH and DEV_RBAC topic pages and the cross-cutting test guide;
+AEO changes include the AEO egress guide. Route, schema and configuration changes
 also suggest the fork guides (FORKING, EXTENDING); changes to the forms, automation, ticket and
 quote modules suggest USE_CASES, matched on their feature directories and file-name prefixes
 (`form_`, `automation`, `ticket`, `quote`), so an unrelated `UserForm.tsx` does not. Workflow and delivery changes include
-the general guides, DEVELOPMENT, VALIDATION_RELEASE, this runbook and the Langflow guides. Changed documentation
+the general guides, DEVELOPMENT with its DEV_TESTING_CI topic page, VALIDATION_RELEASE, this runbook and the Langflow guides. Changed documentation
 is always included; unmapped changes conservatively suggest general guidance.
 
 The plan records absent suggested files too: a reviewer must explain why they are irrelevant

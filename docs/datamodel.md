@@ -144,7 +144,7 @@ foreign key). Its down half first sets `role = 'support'` and `is_active = 0` on
 whose role is `custom` (erased rows untouched), then drops the foreign key, both indexes, the
 column and the three tables. SQLite: `MigrateDatabase`, which adds the foreign key by rebuilding
 `users` with enforcement off (the indexes survive). On every driver `MigrateDatabase` seeds the
-missing system rows (see *RBAC persistence* in [DEVELOPMENT.md](DEVELOPMENT.md)).
+missing system rows (see *RBAC persistence* in [DEV_RBAC.md](DEV_RBAC.md)).
 
 ## Lead Model
 
@@ -278,7 +278,7 @@ owned by a user. Deleting one is a soft delete that keeps the history. The title
 lost reason are staff-typed and may name the client: erasing the linked customer or lead keeps the
 row, its stage, amount, links, owner and history, and sets `title` to `[redacted]` and `notes` and
 `lost_reason` to `''` in the same transaction, live and soft-deleted deals alike (#245; see
-[DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data)). Erasing the owner does not.
+[DEV_ERASURE.md](DEV_ERASURE.md#deleting-personal-data)). Erasing the owner does not.
 Money is an integer amount in minor units next to an ISO 4217 code — sums are only meaningful per
 currency.
 
@@ -836,7 +836,7 @@ No index: rules read the attribution of one submission by primary key. Migration
 
 A form can open a support ticket instead of feeding a lead (#213). `forms.create_ticket` turns it
 on; a confirmed submission then opens one ticket for the live customer whose email matches the
-confirmed address (see [DEVELOPMENT.md](DEVELOPMENT.md#form-ticket-intake-213)).
+confirmed address (see [DEV_RUNTIMES.md](DEV_RUNTIMES.md#form-ticket-intake-213)).
 
 ```mermaid
 erDiagram

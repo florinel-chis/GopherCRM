@@ -16,7 +16,7 @@ from .validation import changed_paths
 
 POLICY_VERSION = 1
 PRODUCT = ('README.md', 'CHANGELOG.md', 'docs/FEATURES.md', 'docs/ROADMAP.md')
-WORKFLOW = (*PRODUCT, 'docs/DEVELOPMENT.md', 'docs/VALIDATION_RELEASE.md', 'docs/DOCUMENTATION_WORKFLOW.md',
+WORKFLOW = (*PRODUCT, 'docs/DEVELOPMENT.md', 'docs/DEV_TESTING_CI.md', 'docs/VALIDATION_RELEASE.md', 'docs/DOCUMENTATION_WORKFLOW.md',
             'automation/langflow/README.md', 'automation/langflow/BATCHES.md')
 FEATURE_DOCS = {
     'auth': '01-authentication', 'dashboard': '02-dashboard', 'lead': '03-leads',
@@ -129,7 +129,8 @@ def suggestions(paths):
             if 'aeo' in lower:
                 add(('docs/AEO_SECURITY.md',), 'AEO operations and security')
             if path.startswith('internal/middleware/') or 'auth' in lower:
-                add(('docs/DEVELOPMENT.md', 'docs/testing/09-cross-cutting.md'), 'security or shared behavior')
+                add(('docs/DEVELOPMENT.md', 'docs/DEV_AUTH.md', 'docs/DEV_RBAC.md', 'docs/testing/09-cross-cutting.md'),
+                    'security or shared behavior')
             if path.startswith(('cmd/', 'internal/config/')):
                 add(('docs/SETUP.md', '.env.example'), 'runtime configuration')
         elif path.startswith('migrations/'):
