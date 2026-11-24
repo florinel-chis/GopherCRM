@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The screenshot catalog (`docs/SCREENSHOTS.md`) is corrected and extended (#735). The Profile, API
+  Keys and Configuration captions and images show the screens as they are now (the profile form
+  and Change password, key create with an optional expiry and revoke, configuration edit and
+  reset), the password-reset entry is gone from the known gaps, and the intro states the real
+  count (86) and when each group was captured. Two images no capture spec produced
+  (`aeo/citation-shares.png`, `customers/06-saved-website.png`) are removed. Twenty-two captures
+  are added for the screens added since 1.2.0, with four new and two extended specs under
+  `gocrm-ui/e2e/screenshots/`: forgot and reset password, the API key create and configuration
+  edit and reset dialogs, companies, deals (list, board, detail), forms, roles and the role
+  editor, webhooks and their delivery log, single sign-on, the sign-in and role audits, SCIM tokens
+  and the public quote response page. Documentation and capture specs only.
 - The authorization guide (`docs/AUTHORIZATION.md`) and the API reference describe the permission
   model the routes use (#738). Each permission-guarded operation's 403 response and description
   name the `permissions.RouteKeys` key that opens it instead of a system role. The guide adds the
