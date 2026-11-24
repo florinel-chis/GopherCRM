@@ -61,7 +61,7 @@ jobs:
     name: Release migrations and integration (${{ matrix.db.name }})
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +94,7 @@ jobs:
       - name: Fresh, upgrade, rollback and real SQL integration tests
         run: |
           set -o pipefail
-          go test -json -race -count=1 ./cmd/migrate ./internal/integration | tee sql-tests.jsonl
+          go test -json -race -count=1 -timeout 30m ./cmd/migrate ./internal/integration | tee sql-tests.jsonl
           python3 scripts/release/check-sql-tests.py sql-tests.jsonl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

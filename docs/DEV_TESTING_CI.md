@@ -221,6 +221,10 @@ it; the remediation runner waits for every check on the pull request and treats 
 failed, so a red leg still stops its merge. On a pull request a change under `migrations/` also runs the
 `cmd/migrate`, `internal/service` and `internal/config` tests through the selection above (on
 MariaDB in the database gates job); see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
+The `./cmd/migrate` race run in this workflow (so in every pull request's `Migrations (MySQL 8)`
+leg as well) and in the release `sql-validation` job uses `go test -timeout 30m` inside a 40-minute
+job, because a slow runner took 2.4 times as long and a package timeout drops every root after the
+slow one; `scripts/release/tests/test_sql_coverage.py` pins both values.
 
 The same runner also hosts the feature analysis workflow (`gophercrm-runner analyze`, see the
 [runner guide](../automation/langflow/README.md#analyse-a-feature-request)), which writes a
