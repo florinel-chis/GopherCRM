@@ -184,6 +184,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The SCIM provisioning user guide no longer claims that removing a person from a group never
+  deactivates them (#768). Its "What is not served" section now says that a group removal gives
+  the person the role of the first matching `groups` mapping row, and that removing an active
+  person from their last mapped group deactivates them without erasing them, as the "Group
+  membership and roles" section and the code already did. Docs only.
 - The SCIM endpoint is reachable behind the shipped reverse proxies (#728). Neither the UI
   image's `gocrm-ui/docker/nginx.conf` nor the TLS site in `docs/SERVER_PROVISIONING.md`
   forwarded `/scim/v2/`, so identity providers calling `PUBLIC_BASE_URL/scim/v2` got the web app's
