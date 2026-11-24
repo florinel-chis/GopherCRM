@@ -148,6 +148,18 @@ describe('DealList', () => {
     );
   });
 
+  it("shows the Stage label on the outline above 'All stages' when no stage is selected", async () => {
+    render(<DealList />);
+    await rowOf('Website redesign');
+
+    const label = document.getElementById('deal-stage-filter-label') as HTMLElement;
+    expect(label).toHaveTextContent('Stage');
+    expect(label).toHaveAttribute('data-shrink', 'true');
+
+    const combobox = screen.getByRole('combobox', { name: /Stage/ });
+    expect(combobox).toHaveTextContent('All stages');
+  });
+
   it('sends open=true when "Open only" is switched on and drops it when switched off', async () => {
     render(<DealList />);
     await rowOf('Website redesign');

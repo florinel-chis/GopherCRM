@@ -184,6 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The stage filter on the deals list no longer draws its "Stage" label over "All stages"
+  when no stage is selected (#772): the label now sits on the outline, as on the products and
+  quotes lists. The deals list screenshot (`docs/screenshots/deals/01-list.png`) is recaptured.
 - The guides now agree on what `DISABLE_RATE_LIMIT=true` lifts (#775): the strict tier and the
   two SCIM limits on `/scim/v2` (the token limit and the refusal limit), and nothing else; the
   moderate and generous tiers stay active, and `SERVER_MODE=production` still refuses to start
