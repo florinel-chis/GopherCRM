@@ -165,8 +165,10 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   Settings → Single sign-on instead.
 - Bulk operations (/scim/v2/Bulk), sorting and ETags are not served.
 - To remove a person, have the provider deactivate them; a provider DELETE deactivates too. Erase
-  the account in GopherCRM if the data must go. Removing a person from a group never deactivates
-  or erases them.
+  the account in GopherCRM if the data must go. Removing a person from a group gives them the role
+  of the first mapping row with claim `groups` whose value is one of their remaining groups;
+  removing an active person from their last mapped group deactivates them, as `active` false does,
+  and never erases them (see Group membership and roles above).
 
 ## Audit
 
