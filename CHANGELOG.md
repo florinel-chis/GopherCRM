@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The developer guides `docs/DEVELOPMENT.md` and `docs/EXTENDING.md` match the code again. The
+  webhook catalogue lists all seven entities and the package import rule, the rate-limit table
+  lists every route of each tier and the separate SCIM limits and says what `DISABLE_RATE_LIMIT`
+  lifts, the bulk-status and customer-lookup text describe the permission checks, and the
+  overview, the test table, the `internal/testsupport` users, the measured counts and the CI
+  follow-up notes are current. EXTENDING describes the permission catalogue and system-role grants
+  as data and the frozen route matrix, and has new recipes for webhook events and for background
+  runtimes and outbound requests; DEVELOPMENT has a map of transactions and row locks, the
+  authentication flows, the last-admin guard and the background runtimes. The identity-layer,
+  lockout and session lock-order text now links to the idkit README and `CONCURRENCY.md` instead
+  of repeating them. Documentation only (#740).
 - The screenshot catalog (`docs/SCREENSHOTS.md`) is corrected and extended (#735). The Profile, API
   Keys and Configuration captions and images show the screens as they are now (the profile form
   and Change password, key create with an optional expiry and revoke, configuration edit and

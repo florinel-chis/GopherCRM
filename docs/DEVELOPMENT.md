@@ -7,8 +7,12 @@ feature and test-coverage matrix see [FEATURES.md](FEATURES.md).
 ## Project Overview
 
 GopherCRM is a CRM system built in Go with a React TypeScript frontend (`gocrm-ui/`). It manages
-Users, Leads, Customers, Tickets, Tasks, and API Keys with role-based access control (admin, sales,
-support, customer).
+users, leads, customers, companies, deals, tickets, tasks, products and quotes, and ships forms
+(embeddable lead capture and ticket intake), follow-up automation, AEO (answer-engine visibility
+tracking), outbound webhooks and API keys. Access is permission-based: the four system roles
+(admin, sales, support, customer) and custom roles grant permission keys with a scope. Users sign
+in with a password or through SSO (OpenID Connect), and an identity provider can provision
+accounts over SCIM.
 
 ## Development Commands
 
@@ -78,57 +82,78 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   `utils.RespondSuccess`/`RespondError`
 - **Route prefix**: API routes are mounted under `/api/v1` (configurable via `API_PREFIX`); `/health`
   and `/scim/v2` are mounted outside it
-- **Identity layer**: `internal/idkit` and its subpackages hold the identity layer (OIDC sign-in,
-  Entra rules, claim-to-role mapping, SCIM). They stay inside the main module until a second system
-  uses them and must not reach gin, gorm, `internal/models`, `internal/repository`, `internal/utils`
-  or logrus, directly or through other packages;
-  `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this. The SCIM protocol
-  package now lives in `internal/idkit/scim`, and the handlers convert `models.User` to
-  `scim.UserData`. The claim-to-role mapping lives in `internal/idkit/rolemap`: `rolemap.Match`
-  (`internal/idkit/rolemap/rolemap.go`) is the one first-match rule used by the OIDC callback, the
-  SCIM Users writes and the SCIM group patch. The generic OpenID Connect client helpers live in
-  `internal/idkit/oidc`: the issuer HTTP client, the cached discovered provider, the state, nonce
-  and PKCE values, the client secret or certificate code exchange, the claim rules and the
-  sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`); it defines no refusal codes
-  and logs nothing. The Entra ID rules live in `internal/idkit/entra`: the issuer and
-  tenant checks (`entra.IsIssuer`, `entra.Tenant`), the oid/tid link hint (`entra.LinkHint`) and
-  the Microsoft Graph group-overage resolution with its paging, origin, page-size, page-count and
-  deadline limits (`entra.GroupResolver`, `entra.EffectiveMaxPages`); it trusts one tenant, the
-  configured issuer's, and likewise defines no refusal codes and logs nothing. The interfaces the
-  host provides to the identity layer are declared in `internal/idkit/host.go`: `IdentityStore`,
-  `AccountStore`, `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `SessionEnder`,
-  `AuditSink`, `ConfigSource`, `TxRunner`, `Clock` and `Logger`. `IdentityStore`, `AccountStore`
-  and `SessionIssuer` join a transaction carried by ctx; `AttemptStore`, `AuditSink`,
-  `ConfigSource` and `SessionEnder` run only outside one. The OpenID Connect sign-in itself lives in
-  `internal/idkit/sso` and runs over those interfaces only: `sso.Service` (`internal/idkit/sso/service.go`)
-  has the start and the callback (the attempt claim, the code exchange, the token and claim
-  checks, the Graph and userinfo group reads, `rolemap.Match`, `entra.LinkHint`), one `TxRunner`
-  transaction, the audit event after it and the outcome log line; the account link rule is
-  `Service.signInAccount` (`internal/idkit/sso/link.go`): the exact `(issuer, subject)` pair, the
-  Entra ID `oid`+`tid` link only to a `source` `scim` identity under the same issuer, email never
-  links. The package declares the refusal and unavailable codes it decides (`sso.CodeStateInvalid`
-  and the rest, `internal/idkit/sso/codes.go`), with the same values as the registry in
-  `internal/service/auth_audit_vocabulary.go`, and `sso.RefuseAccount` attaches the account a
-  refusal concerns. `NewOIDCService` (`internal/service/auth_oidc.go`) wires GopherCRM's adapters
-  into it: `NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
-  `NewIDKitAuditSink` (only with `WithOIDCAudit`), `NewIDKitSessionEnder`, `NewIDKitConfigSource`,
-  `NewIDKitLogger` (component `oidc_sign_in`), the account store `oidcAccountStore` (the
-  governed role write of an existing account and the provisioning of a new one) and the governed
-  transaction `oidcSignInRunner` as the `TxRunner`, behind `oidcPasswordFirstRunner`, which
-  hashes the unusable password of a first sign-in before the transaction starts.
-  Two test kits sit next to the layer, and only tests import them: `internal/idkit/oidctest`,
-  an in-process TLS OpenID Connect issuer (`internal/idkit/oidctest/issuer.go` `oidctest.New`)
-  with no provider-specific code, and `internal/idkit/scim/scimtest`, a SCIM client over an
-  `http.Handler` that sends the bearer token and the SCIM media type and decodes SCIM error bodies
-  (`internal/idkit/scim/scimtest/client.go` `scimtest.Client`). `internal/idkit/README.md` describes the
-  packages, the host interfaces, the sign-in and SCIM rules and the limits of the layer, and
-  `internal/idkit/example` is a runnable host over in-memory stores that serves the sign-in and
-  the SCIM server; run its end-to-end tests with `go test ./internal/idkit/example`.
+- **Identity layer**: `internal/idkit` holds the identity layer, described in
+  [internal/idkit/README.md](../internal/idkit/README.md): `idkit` (the host interfaces in
+  `internal/idkit/host.go`), `oidc` (OpenID Connect client helpers), `entra` (Entra ID rules),
+  `rolemap` (claim-to-role mapping), `sso` (the sign-in), `scim` and `scim/server` (SCIM protocol
+  and server), the test kits `oidctest` and `scim/scimtest`, and `example` (a runnable host over
+  in-memory stores). It must not reach gin, gorm, `internal/models`, `internal/repository`,
+  `internal/utils` or logrus, directly or through other packages;
+  `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this. GopherCRM wires its
+  adapters in `NewOIDCService` (`internal/service/auth_oidc.go`); the adapters
+  (`NewIDKitIdentityStore`, `NewIDKitSessionIssuer` and the rest) live in
+  `internal/service/auth_oidc_host.go`.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
 modules in `src/api/endpoints/`, TanStack Query for data fetching, react-hook-form + zod for forms,
 pages organized per entity under `src/pages/`.
+
+### Transactions and row locks
+
+Choose the primitive by what the write needs; the full contract is under **Transaction management**
+below and the lock order of every flow is in [CONCURRENCY.md](CONCURRENCY.md).
+
+| Need | Use | Behaviour |
+|------|-----|-----------|
+| A service write that touches several rows, emits webhook or automation events, or both (the default) | `internal/service/txunit.go` `txDeps.Run` | Opens one transaction on the context (a savepoint when the context already carries one) and hands the callback a `txUnit`: the transaction, the repositories bound to it, the webhook `TxEmitter` and the automation repository, so everything commits or rolls back together. A service builds it with `newTxDeps(tm)`, which refuses a nil manager. |
+| A write that can lose a lock race and should be replayed (deadlock, lock wait timeout, SQLite busy) | `internal/utils/transaction.go` `TransactionManager.WithTransactionAndRetry` | Each attempt is a fresh root transaction; only an attempt that rolled back cleanly is replayed, never an ambiguous commit. Inside an active transaction it runs once under a savepoint, and a retryable failure comes back tagged `ErrNestedRetryDeferred`, so the enclosing root decides whether to replay. |
+| Read rows inside the transaction and keep them until commit, because the write depends on them | `internal/repository/locking.go` `LockingRead` | `SELECT … FOR UPDATE` on MySQL/MariaDB; the SQLite dialector drops the clause. The fresh `Session` keeps the clause off later statements, so bind only reads to the handle. |
+| Read rows that must not change before commit, while other readers may read them too | `internal/repository/locking.go` `SharedLockingRead` | `FOR SHARE` on MySQL 8, `LOCK IN SHARE MODE` on MariaDB; waits for a writer, not for other shared readers. |
+| Lock one entity by id through its repository | the per-repository `*LockingReader` interfaces, e.g. `internal/repository/interfaces.go` `TicketLockingReader` (also `TaskLockingReader`, `DealLockingReader`, `CompanyLockingReader`) | `GetByIDForUpdate(id)` on a repository bound to the transaction with `WithTx`; services take the interface as an option so the unlocked path stays available to callers without a transaction. |
+
+### Authentication flows
+
+| Flow | Code |
+|------|------|
+| Password login and the failed-attempt count | `internal/service/auth_login.go` `authService.Login` (and `LoginWithTokens`) |
+| Refresh-token rotation | `internal/service/auth_refresh.go` `authService.RefreshAccessToken` |
+| Logout (refresh revocation, `token_version` increment) | `internal/service/auth_logout.go` `authService.Logout` |
+| Password change | `internal/service/auth_password_change.go` `authService.ChangePassword` |
+| Password reset request and confirm | `internal/service/auth_password_reset.go` `authService.ConfirmPasswordReset` (and `RequestPasswordReset`) |
+| Bearer token check on every request | `internal/service/auth_tokens.go` `authService.ValidateToken` |
+| `ApiKey` header check | `internal/service/auth_apikey.go` `authService.ValidateAPIKey` |
+| Sign-in audit log, its query and its code registry | `internal/service/auth_audit.go`, `auth_audit_query.go`, `auth_audit_vocabulary.go` |
+| OpenID Connect sign-in and identity-provider sign-out | `internal/service/auth_oidc.go` `NewOIDCService`, with the idkit host adapters in `internal/service/auth_oidc_host.go` |
+| SCIM token authentication and limits | `internal/middleware/scim_auth.go` `SCIMAuth`, the tokens in `internal/service/scim_token.go`, the SCIM reads and writes in `internal/service/scim_*.go` |
+| HTTP handlers | `internal/handler/auth_handler.go` (password flows, refresh, logout) and `internal/handler/auth_oidc_handler.go` (OpenID Connect) |
+
+### Last-admin guard
+
+Every governed account write (an account create, a role or profile change, an activation or
+deactivation, an erasure, the SCIM user and group writes, the OpenID Connect sign-in's account
+write) must leave at least one active admin.
+`internal/service/last_admin_guard.go` `lockAdminSet` locks the active admin set as the first
+statement of the governed lock order and records it as the state before the write;
+`internal/service/last_admin_guard.go` `adminSet.checkAfter` then judges the state after the
+change and returns `ErrLastAdmin` when the set held an active admin before and none is left. It
+counts each changed account by what it is after the write, so an account that gains the admin
+role counts as well as one that loses it.
+
+### Background runtimes and outbound requests
+
+A background runtime is built from `internal/lifecycle`: `internal/lifecycle/loop.go` `NewLoop`
+runs a body at start and then on every tick or wake on one goroutine until `Stop`, and
+`internal/lifecycle/owner.go` `NewOwner` is the admission count and context of owned work that a
+shutdown closes and drains. The automation worker, the form retention purge, the bulk operation
+sweep, the webhook sender and the AEO runtime use them. A new runtime adds its `Stop` to the drain
+handle `setupDependencies` returns (`combineStops`), so the shutdown stops it under the same
+deadline. An outbound HTTP request to a URL an administrator or a user supplied goes through the
+egress guard: `internal/egress/public.go` `Guard.PublicHTTPClient` returns a client that reaches
+only that origin through public addresses and follows no redirect, and
+`internal/egress/public.go` `CheckPublicURL` validates the URL before it is stored. The AEO
+provider clients share the same dial-time checks under their own engine policy
+(`internal/aeo/egress.go`).
 
 ## Key Patterns
 
@@ -286,8 +311,8 @@ comes from `handler.Protected`, which builds each protected route's permission g
 is rejected at authentication time, and none is issued to such an owner (#342, see *Credential
 issuance under the owner lock*).
 
-After an account lock expires, the next wrong password begins a fresh five-attempt window.
-The exact expiry is eligible; an active lock still rejects correct credentials. See the
+Lockout: five failed login attempts lock the account for 15 minutes. After an account lock
+expires, the next wrong password begins a fresh five-attempt window. The exact expiry is eligible; an active lock still rejects correct credentials. See the
 deterministic lockout tests and the real HTTP/SQLite session regression in
 [authentication test cases](testing/01-authentication.md). Bounded auth changes use the
 [targeted auth validation profile](VALIDATION_RELEASE.md), including race tests and
@@ -390,20 +415,12 @@ the still-usable token and retry; a failed COMMIT is ambiguous (the rotation may
 in which case the retry answers 401 and the session ends.
 
 **Lock order for session writes** — every transaction that writes both an account and its refresh
-tokens locks the `users` row first and the `refresh_tokens` rows second: the login (owner, then
-the last-login write, then the refresh insert, #336), the reset (reset token, owner, refresh
-tokens), the rotation (owner, then the claim), the password change (owner, then the claim, the
-revocation and the successor) and the logout (owner, then the revocation, then the
-`token_version` increment, #236). `refresh_tokens.user_id` references `users` with a
-foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
-a rotation that claimed its token before locking the owner deadlocked against a password change
-(error 1213). The credential-issuing transactions follow the same owner-first rule (#342): the
-password-reset request locks the owner, reads `user_identities` without a lock (#444; only while
-`security.sso.allow_password` is off, #457), then spends
-and inserts `password_reset_tokens` (users → (read) user_identities → password_reset_tokens), and API-key create locks the owner, then inserts into `api_keys` (users →
-api_keys). The reset confirm (token first, then owner) inverts the request's order; see
-*Credential issuance under the owner lock* below. New session and credential flows must follow
-the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
+tokens locks the `users` row first and the `refresh_tokens` rows second. The per-flow orders
+(login, password reset, rotation, password change, logout, credential issuance) are in
+"Global lock order" and the flows of [CONCURRENCY.md](CONCURRENCY.md). Why users first: `refresh_tokens.user_id` references `users` with a foreign key, so on
+MySQL/MariaDB every successor insert takes a shared lock on the owner row; a rotation that claimed
+its token before locking the owner deadlocked against a password change (error 1213). New session
+and credential flows follow the same order.
 
 **OpenID Connect sign-in (#435)** — `POST /auth/oidc/start` and `POST /auth/oidc/callback`
 (`internal/idkit/sso`, wired by `internal/service/auth_oidc.go`, and
@@ -789,8 +806,8 @@ and `TestLoginWrongPasswordErasedDuringRecordSQLite`
 instance-local `loginBeforeLock` seam, between the lookup and the transaction; the MySQL roots run
 on a disposable `TEST_MYSQL_DSN` schema built by the real migrations, see each wait in
 `information_schema.PROCESSLIST` on two consecutive polls and assert that no ordering ends in
-error 1213. They skip without the variable and fail when it is unreachable. Registering the new
-roots in `scripts/ci/check-go.py` and `scripts/ci/check-auth.py` is an operator follow-up.
+error 1213. They skip without the variable and fail when it is unreachable. `scripts/ci/check-auth.py`
+discovers these files through its `auth*_test.go` patterns.
 
 **Password change** (#116) — `ChangePassword(userID, current, new, refreshToken)` verifies the
 current password and hashes the new one before any transaction, then runs one transaction: locking
@@ -855,8 +872,8 @@ and forces a logout against a rotation of the same user in both orderings, each 
 (`internal/repository`); `TestUserTokenVersionJSONHidden`, `TestUserTokenVersionSQLiteUpgrade`
 (`internal/models`); `TestUserTokenVersionMigrationFiles`, `TestUserTokenVersionMigration`
 (`cmd/migrate`); and, over HTTP, `TestAccessTokenRevocationAPISQLite`
-(`tests/auth_access_token_revocation_test.go`). Registering the migration roots in the Database
-migrations workflow is an operator follow-up.
+(`tests/auth_access_token_revocation_test.go`). The Database migrations workflow runs the
+migration roots.
 
 **One step ends every credential** (#526) — `revokeAllCredentials`
 (`internal/service/credential_revocation.go`) takes `credentialStores` (the users, refresh token
@@ -1231,8 +1248,8 @@ Regression roots (`internal/integration`, on the real Auth, routes, handlers and
 `TestUserWritesAreRoleGovernedOnTheRealRouter` (`cmd`), which shows that `setupRouter` wires the
 governance option.
 
-**Account security** — account lockout after 5 failed login attempts (15 min) and password
-complexity validation (min 10 chars, upper + lower + digit + special).
+**Account security** — account lockout (the rule is stated once, under **Authentication** above)
+and password complexity validation (min 10 chars, upper + lower + digit + special).
 
 **Sort validation** — all repository sort queries validate `sortBy` against per-entity column
 allowlists via `utils.ValidateSort()` to prevent SQL injection.
@@ -1288,8 +1305,8 @@ without touching `updated_at`, so a backfilled database takes no write. Regressi
 `TestQuoteTaxMigrationFiles` (it held the newest-migration assertion until #343 moved it to
 `TestQuoteQuantityMigrationFiles`), `TestQuoteTaxMigration` (`cmd/migrate`); and, over HTTP,
 `TestQuoteTaxAPISQLite` (`tests/quote_tax_test.go`). The MySQL roots skip without
-`TEST_MYSQL_DSN`; registering them in `scripts/ci/check-go.py` and the migration roots in the
-Database migrations workflow is an operator follow-up.
+`TEST_MYSQL_DSN`; the migration roots run in the Database migrations workflow. Registering the
+other roots in `scripts/ci/check-go.py` is an operator follow-up.
 
 **Quote quantities (#343).** A line quantity is an exact decimal from 0.001 to 1,000,000 with no
 non-zero digit beyond the third decimal place.
@@ -1358,9 +1375,9 @@ Regression roots: `TestQuoteQuantityParse`, `TestQuoteQuantityJSON`, `TestQuoteL
 `TestRoleMigrationFiles`) and
 `TestQuoteQuantityMigration` (`cmd/migrate`); and, over HTTP, `TestQuoteFractionalQuantityAPISQLite`
 (`tests/quote_quantity_test.go`). The existing quote tests changed only how they build quantities
-(`models.QuoteQuantityFromUnits`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the
-new roots in `scripts/ci/check-go.py` and the migration roots in the Database migrations workflow
-is an operator follow-up.
+(`models.QuoteQuantityFromUnits`). The MySQL roots skip without `TEST_MYSQL_DSN`; the migration
+roots run in the Database migrations workflow. Registering the other new roots in
+`scripts/ci/check-go.py` is an operator follow-up.
 
 **Quote email: no transaction during SMTP, a conditional stamp after it** — `QuoteService.Email`
 reads the latest `quote_status_changes` id *first*, then the quote and the customer's *current*
@@ -1836,8 +1853,8 @@ SQLite from `MigrateDatabase`. Regression roots: `TestTicketOverdue`, `TestTicke
 `TestTicketDueAtLifecycleSQLite`, `TestTicketDueAtInvalidWritesNothingSQLite`,
 `TestTicketFirstResponseSQLite`, `TestTicketSLAFieldsOnEveryReadPathSQLite`
 (`internal/integration`); `TestTicketSLAFieldsMigration`, `TestTicketSLAFieldsMigrationFiles`
-(`cmd/migrate`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in
-the Database migrations workflow is an operator follow-up.
+(`cmd/migrate`). The MySQL roots skip without `TEST_MYSQL_DSN`; the Database migrations workflow
+runs the migration roots.
 
 **Ticket list filters (#218).** `GET /tickets` takes optional `status` and `priority` query
 parameters, each one exact, case-sensitive value of `models.TicketStatus` or
@@ -2181,9 +2198,8 @@ the lead's `company_id` inside each attempt), `TestLeadCompanyLockOrderOutcomesS
 second party's wait in `information_schema.PROCESSLIST` on two consecutive polls, and count the
 attempts with an instance-local counter); `TestLeadCompanyContendedHandlerMapping`
 (`internal/handler`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema (migrated by
-`AutoMigrate` without foreign keys), skip without it and fail when it is unreachable. CI limit:
-`make verify-backend` has no DSN and skips them; registering the roots in
-`scripts/ci/check-go.py` is an operator follow-up.
+`AutoMigrate` without foreign keys), skip without it and fail when it is unreachable. CI limit: `make verify-backend` has no DSN and skips them; `scripts/ci/check-go.py transaction`
+discovers the MySQL roots through its `lead*`, `company*` and `bulk*` test-file patterns.
 
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
@@ -2195,7 +2211,12 @@ longer attribute a hit to the email column.
 **Bulk endpoints** — only `POST /leads|tickets|tasks/bulk/status` exist, registered by
 `SetupBulkStatusRoutes` outside the entity groups. `BulkHandler` depends on `BulkStatusService`
 (`internal/service/bulk_status_service.go`), which holds nothing but the three status operations.
-Each one normalises the ids (1–100, duplicates count once), checks the role, writes a pending
+The route's permission guard runs first (for tickets the handler checks `tickets.update` before
+reading the body); the handler then passes the caller's `leads.update` / `tickets.update` /
+`tasks.update` scope to `bulkStatusService.BulkSet*Status(ctx, actorID, scope, ...)`. Scope `all`
+may change any record, scope `own` only the caller's own records (leads it owns, tickets and tasks
+assigned to it), and any other scope is refused. Each one normalises the ids (1–100, duplicates
+count once), checks the scope, writes a pending
 `bulk_operations` history row, then inside ONE transaction reads every listed record through
 `BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
 or in a forbidden transition (the offending ids go into `error.details`), and only then writes
@@ -2266,20 +2287,23 @@ looping sweeps with no error 1213) (`internal/repository`); `TestBulkOperationSt
 (`internal/models`); `TestBulkOperationRecoveryProductionWiring` (`cmd`, the real wiring over a
 SQLite file); `TestBulkOperationStatusIndexMigrationFiles` and `TestBulkOperationStatusIndexMigration`
 (`cmd/migrate`). CI limit: the MySQL roots in `internal/service` and `internal/repository`
-`bulk*_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them. Registering the migration roots in the Database
-migrations workflow is an operator follow-up.
+`bulk*_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them. The Database migrations workflow runs the
+migration roots.
 
-**Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
+**Rate limiting** — all three tiers are wired, in `cmd/main.go`, `SetupFormPublicRoutes` and
+`SetupQuotePublicRoutes`, and the SCIM provider has its own two limits:
 
 | Tier | Limit | Where it is applied |
 |------|-------|---------------------|
-| `RateLimitStrict()` | 10 req/min, burst 5 | the **public** `/auth` group (`register`, `login`, `refresh`, `password-reset`, `password-reset/confirm`) — the `authRoutes` group in `setupDependencies` — plus the public form `submit` and `confirm` routes via `SetupFormPublicRoutes` |
+| `RateLimitStrict()` | 10 req/min, burst 5 | the **public** `/auth` group — `GET /auth/registration`, `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/password-reset`, `/auth/password-reset/confirm`, `POST /auth/oidc/start`, `POST /auth/oidc/callback` and `GET /auth/oidc/frontchannel-logout` (the `authRoutes` group in `setupDependencies`) — plus the public form `submit` and `confirm` routes via `SetupFormPublicRoutes`, and the quote client response routes `GET` and `POST /quotes/public/response` via `SetupQuotePublicRoutes` (one shared instance) |
 | `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the `protected` group in `setupDependencies`, which is where `/auth/logout` and `/auth/change-password` live too (the `protectedAuth` subgroup). Charged before authentication (#466), so requests with refused or missing credentials count too, and a 429 can answer before a 401 |
-| `RateLimitGenerous()` | 240 req/min, burst 40 | the three public form GETs — definition, `embed.js` and the hosted view — via `SetupFormPublicRoutes` |
+| `RateLimitGenerous()` | 240 req/min, burst 40 | the three public form GETs — definition, `embed.js` and the hosted view — via `SetupFormPublicRoutes`, and `POST /quotes/public/render` (the PDF render read, its own instance) via `SetupQuotePublicRoutes` |
+| SCIM limits | per token: `SCIM_RATE_LIMIT_PER_MINUTE` / `SCIM_RATE_LIMIT_BURST` (1500/150); refusals per client address: 10/min, burst 5 | `/scim/v2`, inside `middleware.SCIMAuth`; built by `internal/middleware/rate_limit.go` `NewSCIMRateLimits`, described under **SCIM provider tokens and discovery (#468)** above |
 
-All three tiers are live, but the split is public-forms versus everything else, **not** reads versus
-writes. On authenticated traffic there is no separate tier for reads: the generous tier is reachable
-only through the unauthenticated `/forms/public` GETs, so any doc or comment implying that an
+All three tiers are live, but the split is public routes versus authenticated traffic, **not** reads
+versus writes. On authenticated traffic there is no separate tier for reads: the generous tier is
+reachable only through unauthenticated routes (the three `/forms/public` GETs and the
+`POST /quotes/public/render` read), so any doc or comment implying that an
 authenticated read gets a more generous budget is wrong. The inline comment beside the moderate tier
 in `cmd/main.go` now matches the code — it read "60 req/min" until 2026-09-18, when it was corrected
 to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is keyed on
@@ -2329,9 +2353,10 @@ state (`TestRateLimitTierIsolation`) and the client keys with the IPv6 /64 group
 `internal/middleware/rate_limit_live_test.go` adds `TestProductionRefusesRateLimitSwitch`, the
 startup refusal of the switches below in production mode.
 
-`DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside
-`middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, so the
-moderate tier on authenticated traffic stays active regardless — including on `/auth/logout` and
+`DISABLE_RATE_LIMIT=true` bypasses the strict tier and the two SCIM limits. The check lives inside
+`middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, and
+inside `NewSCIMRateLimits`, which then returns nil. The generous tier stays active, and so does the
+moderate tier on authenticated traffic — including on `/auth/logout` and
 `/auth/change-password`, which are authenticated and therefore never saw the strict tier to begin
 with. That remains the behavior of ordinary builds outside production mode. With
 `DISABLE_RATE_LIMIT=true` and `SERVER_MODE=production` the server refuses to start, whether the
@@ -2351,7 +2376,7 @@ no browser assertion or retry setting is relaxed.
 | Layer | Location | Runner |
 |-------|----------|--------|
 | Backend unit | colocated `*_test.go` | `go test ./...` — testify suites, mocks from `internal/mocks/` |
-| Backend integration | `test/integration/`, `tests/` | `go test ./...` — in-memory SQLite |
+| Backend integration | `test/integration/`, `tests/`, `internal/integration/` | `go test ./...` — in-memory SQLite |
 | Frontend unit | `gocrm-ui/src/**/*.test.tsx` | `npm test -- --run --maxWorkers=3` — Vitest + React Testing Library, one run on three workers |
 | E2E | `gocrm-ui/e2e/tests/` | `npm run test:e2e` — Playwright, Chromium |
 
@@ -2392,7 +2417,8 @@ import it, so it is never linked into the server.
   `ForEachDialect` runs one test body in the subtests `sqlite` and `mysql`, the second skipping
   without `TEST_MYSQL_DSN`.
 
-The `internal/repository` tests use it; the other packages still have their own helpers.
+The `internal/repository`, `internal/service` and `internal/webhook` tests use it; the other
+packages still have their own helpers.
 
 **CI outside a release runs targeted Go tests (#365).** For a pull request, a merge-queue group and a
 push to `main`, CI runs hygiene, backend, frontend and the database gates job:
@@ -2858,7 +2884,7 @@ settings:
 - `API_PREFIX` (default `/api/v1`)
 - `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
-- `DISABLE_RATE_LIMIT` — test-only; lifts the strict tier. `true` stops startup when
+- `DISABLE_RATE_LIMIT` — lifts the strict tier and the two SCIM limits; for tests only. `true` stops startup when
   `SERVER_MODE` is `production`
 - `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker and runs the
   boot-time stale sweep; the API and the event capture work without it, but no run starts or
@@ -3226,7 +3252,7 @@ purge probes the table with `tx.Migrator().HasTable`; when it exists every failu
 back with an error naming the table and the customer id only. `DELETE
 /customers/{id}/external-ids/{mappingId}` deletes only a row of that customer (else 404).
 `GET /customers` enters lookup mode when the query carries `source`, `scope` or `external_id`: after
-the role check (admin, sales, support) the handler validates the three values, with no service call
+the `customers.view` check the handler validates the three values, with no service call
 on a refusal, and answers the list shape with at most one live customer. A service built without
 its repository or transaction manager returns `service.ErrCustomerExternalIDsUnavailable` from
 every method. Log lines carry operation names, `customer_id`, `mapping_id`, counts and presence
@@ -3243,8 +3269,7 @@ consecutive polls) (`internal/service`); `TestCustomerExternalIDHandlerErrorMapp
 (`internal/handler`); `TestCustomerExternalIDAPISQLite` (`tests`);
 `TestCustomerExternalIDErasureLeavesNoPersonalDataInAnyTable` (`test/integration`);
 `TestCustomerExternalIDProductionWiring` (`cmd`). The MySQL roots use a disposable `TEST_MYSQL_DSN`
-schema and skip without it; registering the migration roots in the Database migrations workflow is
-an operator follow-up.
+schema and skip without it; the Database migrations workflow runs the migration roots.
 
 **Product external ids (#239).** `product_external_ids` copies the customer pattern for the
 catalogue: `product_id` (NOT NULL, `fk_product_external_ids_product` to `products.id`), `source
@@ -3622,8 +3647,10 @@ two service instances with separate pools on one SQLite file or one disposable `
 schema); `TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`,
 `TestEngineFinalizeRefusedWhenNotOwned` (`internal/aeo`); `TestAEOReplicaAPISQLite` (`tests`);
 `TestAEOReplicaProductionWiring` (`cmd`). The MySQL roots skip without the variable and fail
-when it is unreachable; registering them in `scripts/ci/check-go.py` and the migration roots in
-the Database migrations workflow is an operator follow-up.
+when it is unreachable; `scripts/ci/check-go.py` discovers them through its `aeo*_test.go`
+patterns (the `aeo` and `transaction` profiles). Registering the migration roots
+`TestAEORunOwnershipMigration{,Files}` in the Database migrations workflow
+is an operator follow-up.
 
 **AEO export (#244).** `GET /aeo/export` (`AEOHandler.Export`, `internal/handler/aeo_export.go`)
 sits in the `/aeo` read group, so admin, sales and support reach it and the customer role gets 403
@@ -4110,15 +4137,18 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   still writes only `url`, `event_types` and `is_active`.
 - **Catalogue and emitter.** `internal/webhook/catalog.go` is the one registry of the entities
   that emit events: `NewCatalogue` and the default catalogue (`Lead`, `Customer`, `Ticket`,
-  `Deal`, `Task`, in that order) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
+  `Deal`, `Task`, `Company`, `Quote`, in that order; `defaultCatalogue`) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
   ping's type is never one), and the two refusal messages (`SubscribeRule`, behind
   `webhook.WebhookEventTypesRule`, and `FilterRule`, used by the handler and by
   `WebhookService.ListDeliveries`). `TestCatalogueSwaggerEnums` keeps the seven event type `enum`
   lists of `api/swagger.json` equal to it. `internal/webhook/emitter.go` holds the outbox writer:
   `NewEmitter` returns an `Emitter` (the no-op `Nop` for a nil repository), whose `Bind(tx)` gives a
   `TxEmitter` with `Created`, `Updated` and `Deleted(ctx, entity, ids...)`; an entity the catalogue
-  does not register is refused before any read. `internal/webhook` imports, from this module, only
-  `internal/errors`, `internal/models`, `internal/repository` and `internal/utils`. A new entity
+  does not register is refused before any read. From this module `internal/webhook` imports
+  `internal/errors`, `internal/models`, `internal/repository`, `internal/utils`, `internal/egress`
+  (the outbound request guard) and `internal/lifecycle` (the worker runtime); it must not reach
+  `internal/aeo`, `internal/service` or `internal/handler`, directly or through other packages, which
+  `internal/webhook/boundary_test.go` `TestWebhookImportBoundary` enforces. A new entity
   needs one catalogue entry and one emitter call per write path; the event types, the check and
   the messages follow.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e)`,
