@@ -47,7 +47,8 @@ file, not by trusting the coverage matrix.
 - `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`RateLimitStrict` (`internal/middleware/rate_limit.go`),
   applied in `setupDependencies` (`cmd/main.go`)). Any case that issues more than five auth requests in quick
   succession must space them out (≈6 s per extra token) or run the backend with
-  `DISABLE_RATE_LIMIT=true`, which bypasses the strict tier only.
+  `DISABLE_RATE_LIMIT=true`, which bypasses the strict tier and the two SCIM limits and keeps the
+  moderate and generous tiers.
 - Deleting a user is irreversible GDPR erasure (`internal/repository/erasure.go`). Only delete
   accounts the test itself created.
 

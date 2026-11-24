@@ -184,6 +184,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guides now agree on what `DISABLE_RATE_LIMIT=true` lifts (#775): the strict tier and the
+  two SCIM limits on `/scim/v2` (the token limit and the refusal limit), and nothing else; the
+  moderate and generous tiers stay active, and `SERVER_MODE=production` still refuses to start
+  with it set. README, FEATURES, AUTHORIZATION, DEVELOPMENT, the testing catalog, the e2e README
+  and `.env.example` no longer narrow it to the strict tier, and README and `.env.example` now
+  list the public quote routes in the strict and generous tiers. `TestDisableRateLimitDocsMatchCode`
+  in `internal/config` pins the wording to the functions that read the variable. Docs only.
 - The SCIM provisioning user guide no longer claims that removing a person from a group never
   deactivates them (#768). Its "What is not served" section now says that a group removal gives
   the person the role of the first matching `groups` mapping row, and that removing an active

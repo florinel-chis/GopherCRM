@@ -32,7 +32,7 @@ published; that local scope is separate from CI.
    with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true`. This bypasses all live limiter tiers for functional
    tests so one case cannot exhaust another case's tokens. Normal binaries ignore this switch;
    `make verify-backend` verifies normal enforcement and the build-tag boundary. The existing
-   `DISABLE_RATE_LIMIT=true` strict-tier setting is also retained.
+   `DISABLE_RATE_LIMIT=true` setting (it lifts the strict tier and the two SCIM limits) is also retained.
    Its log goes to `test-results/e2e-backend.log`.
 3. Starts the OpenID Connect test issuer (`scripts/e2e/oidc-issuer`, built to a binary) on
    `https://127.0.0.1:<E2E_OIDC_PORT>` and waits for its discovery document; see "Single sign-on
@@ -187,7 +187,8 @@ The Vite dev server is started automatically by the config's `webServer` block
 restart it with the exported value if necessary. The backend is **not** started for you.
 
 `DISABLE_RATE_LIMIT=true` is worth setting: it bypasses the strict 10 req/min limiter on
-`/auth/register` and `/auth/login`, which the login and registration specs would otherwise trip. It
+`/auth/register` and `/auth/login`, which the login and registration specs would otherwise trip,
+and the two SCIM limits on `/scim/v2`. It
 does not disable rate limiting elsewhere — authenticated routes keep their moderate tier — so it is
 not a way to run the suite faster, only a way to stop the login limiter from producing false failures. For
 complete functional runs use `make e2e`, whose dedicated tagged binary isolates all live tiers;

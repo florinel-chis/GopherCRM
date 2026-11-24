@@ -582,7 +582,7 @@ Refused SCIM authentications are counted per reason, client network and UTC minu
 refusal over it is answered 429 and writes nothing). Password change, reset request, reset completion and
 logout rows (#550) are one per request as well: the strict `/auth` tier bounds the two reset
 routes, the authenticated tier bounds `POST /auth/change-password` and `POST /auth/logout`.
-`DISABLE_RATE_LIMIT=true` lifts the strict tier and a
+`DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits (token and refusal), and a
 `gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
 test-only. With `DISABLE_RATE_LIMIT` or the e2e switch set, `SERVER_MODE=production` stops startup.
 
@@ -720,7 +720,8 @@ audit row; over it the answer is 429 and no audit row is written. Refusals never
 token. The refusal limit is judged after the token lookup, so a throttled refusal still costs one
 indexed lookup; in exchange, refusals from an address a provider shares never hold back a valid
 token. Both 429s use the SCIM error shape. `DISABLE_RATE_LIMIT=true` and the `gophercrm_e2e`
-build switch lift both limits as they lift the `/auth` tier (the server refuses to start in
+build switch lift both the SCIM token limit and the SCIM refusal limit, as they lift the strict
+`/auth` tier (the server refuses to start in
 production mode with either one set).
 
 **Errors.** Errors of the SCIM group use the RFC 7644 §3.12 shape with the content type

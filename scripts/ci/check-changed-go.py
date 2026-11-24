@@ -51,9 +51,12 @@ EXTERNAL_READERS = (
     (('scripts/ci/check-api-docs.py',), ('scripts/ci/apiroutes',)),
     # cmd/lead_erasure_hooks_wiring_test.go walks both trees.
     (('internal/', 'cmd/'), ('cmd',)),
-    # The configuration documentation tests quote these sources.
+    # The configuration documentation tests quote these sources. The
+    # DISABLE_RATE_LIMIT doc test (#775) reads internal/middleware/rate_limit.go;
+    # its reader walk covers all of cmd/ and internal/, wider than this row, so a
+    # new reader elsewhere is caught by a full run.
     (('internal/models/', 'internal/service/', 'internal/utils/', 'internal/repository/',
-      'cmd/', 'scripts/release/'), ('internal/config',)),
+      'internal/middleware/', 'cmd/', 'scripts/release/'), ('internal/config',)),
     # scripts/release/dsn_test.go reads the release workflow.
     (('.github/workflows/release.yml',), ('scripts/release',)),
 )

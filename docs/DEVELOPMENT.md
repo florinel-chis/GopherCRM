@@ -272,7 +272,7 @@ switch comes from the environment or from `.env` (`middleware.CheckRateLimitSwit
 three live tiers, avoiding cross-test token-bucket state and dashboard 429s. Ordinary binaries
 ignore this switch, even if it is set. The tagged binary also keeps every tier enabled unless the
 switch is exactly `true`, and refuses to start with it in production mode. Do not deploy the tagged test binary. `make verify-backend` tests live-tier
-burst enforcement, the legacy strict-only switch, ordinary-build isolation, and the tagged opt-out;
+burst enforcement, the `DISABLE_RATE_LIMIT` switch (strict tier lifted, moderate and generous kept), ordinary-build isolation, and the tagged opt-out;
 no browser assertion or retry setting is relaxed.
 
 ## Gotchas

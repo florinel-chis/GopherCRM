@@ -116,6 +116,7 @@ class SelectionTests(unittest.TestCase):
             'internal/service/x.go': ('internal/config', 'cmd'),
             'internal/models/x.go': ('internal/config', 'cmd'),
             'internal/repository/x.go': ('internal/config', 'cmd'),
+            'internal/middleware/rate_limit.go': ('internal/middleware', 'internal/config'),
             # Its own package, and the configuration tests read the release scripts.
             'scripts/release/build.sh': ('scripts/release', 'internal/config'),
         }
