@@ -49,7 +49,7 @@ branch CI takes. For the Go side, CI has two modes only:
   against MariaDB 10.11 (`TEST_MYSQL_DSN` set, skips not rejected). A documentation-only change runs
   no Go test. The browser matrix is skipped, and so is the migrations matrix unless a pull request
   changes migration code: then its MySQL 8 leg runs (see [Migration CI](#migration-ci)). The selection rules and the
-  external-readers table are in [DEVELOPMENT.md](DEVELOPMENT.md#testing).
+  external-readers table are in [DEV_TESTING_CI.md](DEV_TESTING_CI.md#testing).
 - **`full`** (the release workflow, or a manual dispatch of CI with the `full` input): the two-engine
   migrations matrix, `make verify-api-docs`, `make verify-backend` (the formatting check
   `scripts/ci/check-go-format.py`, then build, vet and `-race` tests), then

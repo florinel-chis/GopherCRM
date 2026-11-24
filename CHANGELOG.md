@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/DEVELOPMENT.md` is split into a short guide with a package map and an index, and seven
+  topic pages that hold the long-form sections unchanged: `docs/DEV_TRANSACTIONS.md`,
+  `docs/DEV_AUTH.md`, `docs/DEV_RBAC.md`, `docs/DEV_ENTITIES.md`, `docs/DEV_ERASURE.md`,
+  `docs/DEV_RUNTIMES.md` and `docs/DEV_TESTING_CI.md`. Links and citations in the other docs, the
+  doc tests and the documentation-impact map point at the page that now holds each section.
+  `scripts/ci/check-doc-citations.py` has a fourth rule: every relative Markdown link to a `.md`
+  file and every `#anchor` in the checked docs must resolve to a tracked file and one of its
+  headings (#744).
 - The developer guides `docs/DEVELOPMENT.md` and `docs/EXTENDING.md` match the code again. The
   webhook catalogue lists all seven entities and the package import rule, the rate-limit table
   lists every route of each tier and the separate SCIM limits and says what `DISABLE_RATE_LIMIT`

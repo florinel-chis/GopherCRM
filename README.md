@@ -486,7 +486,7 @@ from tickets and tasks still resolve: business records survive, the person does 
 Erasure follows the person, not the table: a lead, the customer it was converted into and that
 customer's own customer-role login are erased together whichever of them you delete. Staff
 accounts are never erased that way, and only an admin may delete a converted lead. Erasures made
-before this rule existed are not repaired automatically: `docs/DEVELOPMENT.md` lists the queries
+before this rule existed are not repaired automatically: `docs/DEV_ERASURE.md` lists the queries
 that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
 are all soft-deleted have no supported path yet.
 
@@ -496,7 +496,7 @@ transaction overwrites it: deal titles become `[redacted]` and their notes and l
 emptied, quote titles become `[redacted]` and their notes are emptied whatever the quote status,
 quote line descriptions are reset to the product names, and notifications about those deals are
 deleted (#245). A client response link mailed for a quote of an erased customer stops working
-(#395). Ticket and task text is kept; see `docs/DEVELOPMENT.md` for the ticket redaction
+(#395). Ticket and task text is kept; see `docs/DEV_ERASURE.md` for the ticket redaction
 procedure.
 
 Two consequences:
@@ -513,7 +513,7 @@ Rows soft-deleted *before* this behaviour existed still hold personal data;
 deliberately not wired into auto-migration.
 
 Full rationale, the cascade rules for converted leads, and the operational caveats are in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#deleting-personal-data).
+[docs/DEV_ERASURE.md](docs/DEV_ERASURE.md#deleting-personal-data).
 
 ## Development
 
@@ -1182,7 +1182,14 @@ gophercrm/
 | [docs/DOCKER.md](docs/DOCKER.md) | Running with Docker Compose (MySQL or SQLite), backups and SQLite upgrade notes, the production override example and the image's quote PDF browser |
 | [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md) | Preparing a fresh systemd server (MySQL or MariaDB) for the release-tarball deploy path, quote PDF setup, and the [Reverse proxy and TLS](docs/SERVER_PROVISIONING.md#reverse-proxy-and-tls) sites for nginx or Apache 2.4 |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Worked recipes for concrete deployments, with their gaps |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration, deletion semantics |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide index: commands, architecture layers, package map, conventions, gotchas, configuration, API reference |
+| [docs/DEV_TRANSACTIONS.md](docs/DEV_TRANSACTIONS.md) | Transaction manager contract, service transaction units, request context |
+| [docs/DEV_AUTH.md](docs/DEV_AUTH.md) | Sign-in, sessions and refresh tokens, API keys, credential revocation, single sign-on, SCIM |
+| [docs/DEV_RBAC.md](docs/DEV_RBAC.md) | Role assignment, custom roles, admin-only permissions, role API, last-admin guard |
+| [docs/DEV_ENTITIES.md](docs/DEV_ENTITIES.md) | Entity rules: quotes, mail delivery, ordered reads, tasks and tickets, list filters, leads and companies, bulk endpoints |
+| [docs/DEV_ERASURE.md](docs/DEV_ERASURE.md) | Deletion semantics: the personal-data erasure, what is scrubbed and kept, operator procedures |
+| [docs/DEV_RUNTIMES.md](docs/DEV_RUNTIMES.md) | Background runtimes: AEO, automation, outbound webhooks, form retention, form mail and ticket intake |
+| [docs/DEV_TESTING_CI.md](docs/DEV_TESTING_CI.md) | Test layout, CI jobs and gates, documentation checks, API docs gate |
 | [docs/EXTENDING.md](docs/EXTENDING.md) | Adding or removing entities, routes, migrations and modules |
 | [docs/CONCURRENCY.md](docs/CONCURRENCY.md) | Lock order and retry rule for multi-table writes |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |

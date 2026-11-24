@@ -6,7 +6,7 @@ sign-in design at the end is a note for later work and says so.
 
 The work is tracked in #258 and specified in #259. The source of truth for every table below is
 `internal/permissions`; `go test -count=1 ./internal/permissions` fails when this guide and the
-package disagree (see the Testing section of [DEVELOPMENT.md](DEVELOPMENT.md)). The administrator
+package disagree (see the Testing section of [DEV_TESTING_CI.md](DEV_TESTING_CI.md)). The administrator
 guide, in plain language and task by task, is
 [user-guide/permissions-access/overview.md](user-guide/permissions-access/overview.md).
 
@@ -435,7 +435,7 @@ needs `roles.audit_view`.
 The three rules above are decided inside one transaction per write, after the rows are locked.
 The lock order is in [CONCURRENCY.md](CONCURRENCY.md#rbac-user-role-and-role-writes), flow "RBAC
 user-role and role writes"; the order of the refusals, the error codes and the persistence layer
-are in [DEVELOPMENT.md](DEVELOPMENT.md), "RBAC persistence" and "Role API and governed user
+are in [DEV_RBAC.md](DEV_RBAC.md), "RBAC persistence" and "Role API and governed user
 writes".
 
 ## Sign-in audit log

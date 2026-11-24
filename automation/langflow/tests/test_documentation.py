@@ -143,6 +143,13 @@ class DocumentationTests(unittest.TestCase):
         with self.assertRaises(GateError):
             docs.plan(self.root / 'missing', self.base, self.base)
 
+    def test_auth_and_workflow_changes_suggest_the_developer_topic_pages(self):
+        auth = {d['path'] for d in docs.suggestions(['internal/middleware/auth.go'])}
+        self.assertTrue({'docs/DEVELOPMENT.md', 'docs/DEV_AUTH.md', 'docs/DEV_RBAC.md'}.issubset(auth))
+        workflow = {d['path'] for d in docs.suggestions(['.github/workflows/ci.yml'])}
+        self.assertIn('docs/DEV_TESTING_CI.md', workflow)
+        self.assertNotIn('docs/DEV_TESTING_CI.md', {d['path'] for d in docs.suggestions(['internal/middleware/auth.go'])})
+
     def test_container_and_deployment_changes_include_operational_guides(self):
         for path in ('Dockerfile', 'docker-compose.yml', '.dockerignore', '.github/workflows/deploy.yml'):
             selected = {d['path'] for d in docs.suggestions([path])}

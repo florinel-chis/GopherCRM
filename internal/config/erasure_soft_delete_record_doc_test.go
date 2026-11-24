@@ -17,11 +17,11 @@ const erasureSoftDeleteRecordedClause = "in the Delete-chain form used now, toge
 	"`TestIdentityErasureMySQL`, on MariaDB 10.11 (QA) and on MySQL 8.0 (the #355 acceptance run)"
 
 // TestErasureSoftDeleteRecordedDocs pins #355: docs/CONCURRENCY.md (Lead-rooted
-// erasure) and docs/DEVELOPMENT.md (Lead erasure against lead conversion) state
+// erasure) and docs/DEV_ERASURE.md (Lead erasure against lead conversion) state
 // the recorded MariaDB 10.11 and MySQL 8.0 results of the Delete-chain soft
 // delete instead of the transient caveat.
 func TestErasureSoftDeleteRecordedDocs(t *testing.T) {
-	for _, path := range []string{concurrencyDocFile, "docs/DEVELOPMENT.md"} {
+	for _, path := range []string{concurrencyDocFile, "docs/DEV_ERASURE.md"} {
 		t.Run(path, func(t *testing.T) {
 			text := concurrencyDocNormalize(readRepositoryFile(t, path))
 			assert.NotContains(t, text, erasureSoftDeleteTransientCaveat,

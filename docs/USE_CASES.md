@@ -58,8 +58,8 @@ These caveats apply to every recipe that takes in leads through forms.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
   matches that person's address, in the same erasure
-  (`docs/DEVELOPMENT.md`, "Deleting personal data", `scrubUnlinkedSubmissions`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md`, "matches no erased row"). Set `FORM_RETENTION_DAYS` (3 days at
+  (`docs/DEV_ERASURE.md`, "Deleting personal data", `scrubUnlinkedSubmissions`); every other
+  unlinked submission stays (`docs/DEV_ERASURE.md`, "matches no erased row"). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -70,7 +70,7 @@ These caveats apply to every recipe that takes in leads through forms.
   visitor shares the proxy's address and one rate-limit bucket.
 - **A request cancelled before its commit writes nothing; one cancelled after it does not undo
   anything.** Public form submit and confirm, lead conversion and bulk status updates run on the
-  HTTP request's context (`docs/DEVELOPMENT.md`, "Request context (#107)", #194). A visitor who closes the tab while
+  HTTP request's context (`docs/DEV_TRANSACTIONS.md`, "Request context (#107)", #194). A visitor who closes the tab while
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
   before the response is written (`formService.storeReceivedSubmission` (`internal/service/form_public.go`) and
@@ -159,7 +159,7 @@ and turns some into deals and quotes.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
    every instance by default (`AUTOMATION_ENABLED`, `AutomationConfig.Enabled` (`internal/config/config.go`)). Several API
    instances sharing one MySQL/MariaDB database may all run it: run claims carry a heartbeat
-   lease (#237, `docs/DEVELOPMENT.md`, "Run leases"). Keep replica clocks in sync and stop every
+   lease (#237, `docs/DEV_RUNTIMES.md`, "Run leases"). Keep replica clocks in sync and stop every
    instance before an upgrade; a SQLite deployment stays one process.
 6. Decide whether `contacted` and `qualified` are the right conversion statuses for your team, and
    change `leads.conversion.*` in Settings if not.
@@ -416,9 +416,9 @@ history. This is a staff-maintained register, not a shared helpdesk.
   tickets, can be mapped to an external system's ids (delivered, #212): `POST
   /customers/{id}/external-ids` and the exact lookup `GET /customers?source=&scope=&external_id=`.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md`, "Business records. Free text may have been typed"). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEV_ERASURE.md`, "Business records. Free text may have been typed"). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
-  `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
+  `docs/DEV_ERASURE.md` (*Deleting personal data*) describes.
 - Ticket automation triggers are delivered (#242, rule screens #312): an admin rule, built in the
   rule form with the entity Ticket, can start on `ticket_created`, `ticket_updated`,
   `ticket_status_changed` (from/to ticket statuses) or a daily schedule over
@@ -459,7 +459,7 @@ A supplier that answers requests for quotation from business customers.
 - **Erasure:** erasing a customer or lead keeps its deals and quotes, links, totals and history,
   and overwrites their staff-typed text in the same transaction, whatever the quote status: deal
   title `[redacted]` with empty notes and lost reason, quote title `[redacted]` with empty notes,
-  and each line's description reset to its product's name (#245; `docs/DEVELOPMENT.md`, *Deleting
+  and each line's description reset to its product's name (#245; `docs/DEV_ERASURE.md`, *Deleting
   personal data*). Keep anything an Article 17(3) exemption requires outside those fields, for
   example in the accounting system.
 - **Do not promise:** an order, a delivery date, an inventory commitment, or a stock, order or ERP
@@ -572,7 +572,7 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts` (`assignLead`) | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `applyFormAttribution` (`internal/service/form_attribution.go`); `formService.applySubmissionLead` (`internal/service/form_lead_link.go`); `FormSubmission` (`internal/models/form.go`) | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `formService.RetryDelivery` (`internal/service/form_mail_delivery.go`) | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md`, "Deleting personal data" (`scrubUnlinkedSubmissions`, "matches no erased row", "Operator procedure for ticket text") | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEV_ERASURE.md`, "Deleting personal data" (`scrubUnlinkedSubmissions`, "matches no erased row", "Operator procedure for ticket text") | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
 | Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; the `backend` service's `environment` block in `docker-compose.yml` and `docker-compose.sqlite.yml`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
@@ -582,12 +582,12 @@ planning around an issue number.
 | Delivered: the lead `external_id` lookup is routed as `GET /leads?external_id=` (admin any lead, sales own leads). Still open: no mapping table for leads | 3 | `LeadHandler.List` (`internal/handler/lead_handler.go`) | #215 |
 | Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `TicketHandler.List` (`internal/handler/ticket_handler.go`); `docs/FEATURES.md` 5.5 | #259 |
 | Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
-| Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
+| Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEV_ENTITIES.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
-| Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_run_lease.go`, `internal/service/automation_recovery.go`; `docs/DEVELOPMENT.md`, "Run leases (#237)" | #237 |
+| Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_run_lease.go`, `internal/service/automation_recovery.go`; `docs/DEV_RUNTIMES.md`, "Run leases (#237)" | #237 |
 | Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346); a single-use client accept/decline link in the quote email with its two public API routes (#382) and the public page that answers it (#383); the quote as a PDF, downloadable and attached to the quote email, when the server has a Chrome or Chromium binary (#384). Still open: tax categories, reverse charge, per-country rules | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346, #382, #383, #384 |
-| Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
+| Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEV_ERASURE.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
-| Delivered: AEO export of one run or a 7/30/90-day window as CSV or JSON (`GET /aeo/export`, admin, sales, support; at most 10,000 answers), with download buttons on the AEO dashboard and in the prompts answer drawer (#318). Still open: threshold alerting; scheduled or emailed client reports are a deliberate cut (#320, docs/ROADMAP.md); the screenshot suite stays fixtures only | 1, 3 | `internal/handler/aeo_export.go`; `gocrm-ui/src/pages/aeo/aeoExport.ts`; `docs/DEVELOPMENT.md`, "AEO export (#244)"; `gocrm-ui/e2e/screenshots/10-aeo.spec.ts` (`mockAeoApi`, fixtures only) | #244, #318, #320 |
+| Delivered: AEO export of one run or a 7/30/90-day window as CSV or JSON (`GET /aeo/export`, admin, sales, support; at most 10,000 answers), with download buttons on the AEO dashboard and in the prompts answer drawer (#318). Still open: threshold alerting; scheduled or emailed client reports are a deliberate cut (#320, docs/ROADMAP.md); the screenshot suite stays fixtures only | 1, 3 | `internal/handler/aeo_export.go`; `gocrm-ui/src/pages/aeo/aeoExport.ts`; `docs/DEV_RUNTIMES.md`, "AEO export (#244)"; `gocrm-ui/e2e/screenshots/10-aeo.spec.ts` (`mockAeoApi`, fixtures only) | #244, #318, #320 |

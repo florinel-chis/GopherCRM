@@ -53,7 +53,7 @@ Download PDF button and quote emails are text only), single sign-on off (`OIDC_E
 `LOG_LEVEL=info` (`sso.spec.ts` reads an Info line of the backend log), whatever the root `.env`
 says. The real PDF
 chain (Chrome, the `/quote-render` page, the API, the printed text) is checked by hand with
-`scripts/e2e/quote-pdf-smoke.sh` from the repo root; the recipe is in `docs/DEVELOPMENT.md`. On macOS it keeps the machine awake (`caffeinate -i`),
+`scripts/e2e/quote-pdf-smoke.sh` from the repo root; the recipe is in `docs/DEV_ENTITIES.md`. On macOS it keeps the machine awake (`caffeinate -i`),
 since an idle sleep mid-run shows up as a cascade of page-load timeouts.
 
 Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The

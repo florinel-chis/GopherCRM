@@ -7,7 +7,8 @@ those citations against the tracked tree. Without FILE arguments it checks
 every tracked docs/**/*.md and README.md (from `git ls-files`, never a
 directory walk), plus the files in EXTRA_DEFAULT_FILES, except the files in
 EXEMPT_FILES (none at present); a file passed explicitly is checked in full,
-exempt or not. Spans are backtick spans outside fenced code blocks. Every checked file goes through all three rules.
+exempt or not. Spans are backtick spans outside fenced code blocks.
+Every checked file goes through all four rules.
 
 a. Paths. A span, without a leading ./ and a trailing :N, :N-M or :N,M, is a
    path when it has no whitespace, contains /, does not start with /, and its
@@ -29,6 +30,18 @@ b. Symbols. A Go symbol is cited as `P.go` `S` (path span, one space, symbol
    scripts/ci/docsymbols, run once per check.
 c. Line citations. A checked file may not contain a file.go:N, .ts, .tsx,
    .py, .sh or .sql line citation anywhere, fenced blocks included.
+d. Links. Every inline Markdown link ](target) or ](target "title") outside
+   fenced code blocks is judged by its target, the title stripped. A target
+   with a URL scheme or a leading / is not checked, nor is a path that does
+   not end in .md (an image, a source file); the checked targets are a
+   #anchor (same file) and a path ending in .md, optionally followed by a
+   #anchor. The path, resolved against the citing file's directory, must be
+   a tracked file, and the anchor must be a heading slug of the target or an
+   explicit <a name=...> / <a id=...>. A slug is built the way GitHub builds
+   it from a heading outside fenced blocks: inline links replaced by their
+   text, backticks removed, lower-cased, every character other than a letter,
+   digit, _, - or space dropped, spaces turned into -; a repeated slug gets
+   the suffix -1, -2 and so on.
 
 Existence is judged against `git ls-files` only, never the working tree, so
 an untracked or gitignored local file does not count and a local run agrees
@@ -42,6 +55,7 @@ Usage: python3 scripts/ci/check-doc-citations.py [--repo-root DIR] [FILE ...]
 import argparse
 import fnmatch
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -115,6 +129,13 @@ LINE_CITATION = re.compile(r'\.(go|ts|tsx|py|sh|sql):[0-9]+')
 # (`x` (`S` (`P.go`) cannot hide a citation.
 GAP_PATH_FIRST = ' '
 GAP_SYMBOL_FIRST = ' ('
+# Rule d: an inline link target with an optional quoted title, a URL scheme,
+# a heading, an inline link inside heading text, and an explicit HTML anchor.
+LINK = re.compile(r'\]\(\s*(<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|\'[^\'\n]*\'))?\s*\)')
+URL_SCHEME = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
+HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
+INLINE_LINK = re.compile(r'!?\[([^\]]*)\]\([^)]*\)')
+HTML_ANCHOR = re.compile(r'<a\s[^>]*\b(?:name|id)\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 
 
 def default_repo_root():
@@ -155,6 +176,45 @@ def outside_fences(text):
             continue
         if not in_fence:
             yield number, line
+
+
+def heading_slug(text):
+    """The GitHub anchor of a heading's text, before the duplicate suffix."""
+    text = INLINE_LINK.sub(lambda m: m.group(1), text).replace('`', '').lower()
+    text = ''.join(c for c in text if c.isalnum() or c in '_- ')
+    return text.replace(' ', '-')
+
+
+def anchors(text):
+    """The anchors a document defines: heading slugs (outside fences) and explicit HTML anchors."""
+    found, seen = set(), {}
+    for _, line in outside_fences(text):
+        heading = HEADING.match(line)
+        if heading:
+            slug = heading_slug(heading.group(1))
+            if slug in seen:
+                seen[slug] += 1
+                found.add('%s-%d' % (slug, seen[slug]))
+            else:
+                seen[slug] = 0
+                found.add(slug)
+        for match in HTML_ANCHOR.finditer(line):
+            found.add(match.group(1))
+    return found
+
+
+def links(text):
+    """(line, target) of every inline link outside fenced blocks that rule d judges."""
+    result = []
+    for number, line in outside_fences(text):
+        for match in LINK.finditer(line):
+            target = match.group(1)
+            if target.startswith('<') and target.endswith('>'):
+                target = target[1:-1]
+            if not target or URL_SCHEME.match(target) or target.startswith('/'):
+                continue
+            result.append((number, target))
+    return result
 
 
 class Tree:
@@ -236,7 +296,7 @@ def check(repo_root, files):
     """Return (problems, counts) for the given repo-relative doc files."""
     repo_root = Path(repo_root)
     problems = []
-    counts = {'paths': 0, 'skipped': 0, 'symbols': 0}
+    counts = {'paths': 0, 'skipped': 0, 'symbols': 0, 'links': 0}
     try:
         tree = Tree(repo_root)
     except (OSError, subprocess.CalledProcessError) as exc:
@@ -289,12 +349,41 @@ def check(repo_root, files):
         for number, line in enumerate(text.splitlines(), 1):
             for match in LINE_CITATION.finditer(line):
                 problems.append('%s:%d: `%s`: line citation' % (name, number, line_context(line, match)))
+        problems.extend(check_links(repo_root, tree, name, text, counts))
         if name in CONVERTED_FILES:
             if file_paths == 0:
                 problems.append('%s: no path citation found; the extractor or the guide is broken' % name)
             if file_pairs == 0:
                 problems.append('%s: no symbol citation found; the extractor or the guide is broken' % name)
     return problems, counts
+
+
+def check_links(repo_root, tree, name, text, counts):
+    """Rule d problems for one doc; counts every judged link."""
+    problems = []
+    cache = {}
+    for number, target in links(text):
+        path, _, anchor = target.partition('#')
+        if path and not path.endswith('.md'):
+            continue
+        counts['links'] += 1
+        if path:
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), path))
+            if resolved not in tree.files:
+                problems.append('%s:%d: `%s`: missing link target' % (name, number, target))
+                continue
+        else:
+            resolved = name
+        if not anchor:
+            continue
+        if resolved not in cache:
+            try:
+                cache[resolved] = anchors((Path(repo_root) / resolved).read_text(encoding='utf-8'))
+            except OSError:
+                cache[resolved] = set()
+        if anchor not in cache[resolved]:
+            problems.append('%s:%d: `%s`: missing anchor' % (name, number, target))
+    return problems
 
 
 def line_context(line, match):
@@ -329,8 +418,9 @@ def main(argv=None):
         for line in problems:
             print(line)
         return 1
-    print('OK: %d path citations, %d symbol citations, %d skipped placeholders, ignored outputs '
-          'or planned specs, in %d files' % (counts['paths'], counts['symbols'], counts['skipped'], len(files)))
+    print('OK: %d path citations, %d symbol citations, %d links, %d skipped placeholders, ignored outputs '
+          'or planned specs, in %d files' % (counts['paths'], counts['symbols'], counts['links'],
+                                             counts['skipped'], len(files)))
     return 0
 
 

@@ -29,7 +29,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Lead visibility has one policy, by the caller's `leads.view` scope: `all` sees every lead, `own` the caller's, not held none (on the system matrix: admin, sales, every other role) | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
 | A task's deal link has one policy, by the caller's `deals.view` scope: `all` sees every deal, `own` the caller's, not held none (on the system matrix: admin, sales, every other role). A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
-| Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
+| Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEV_ERASURE.md#deleting-personal-data) |
 | A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go` `autoMigrateModels`, `migrations/`, `cmd/migrate/schema_parity_migration_test.go` | [Database](DEVELOPMENT.md#database) |
 | Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" |
 
@@ -153,7 +153,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   transaction and hands the callback the transaction, the `WithTx` repositories and the webhook
   and automation outlets bound to it. Which lock or retry primitive a write needs is in the
   decision table of [DEVELOPMENT.md](DEVELOPMENT.md#transactions-and-row-locks). `QuoteService` is the reference for conditional claims in one transaction
-  (DEVELOPMENT.md, "Quotes: conditional claims, one transaction each").
+  (DEV_ENTITIES.md, "Quotes: conditional claims, one transaction each").
 - Record-level visibility (who sees which row) belongs here or in the repository query, applied
   **before** pagination, so counts and pages agree. If the entity can link a lead, apply
   `CanViewLead` on write and redact on every read; never write a separate role check for a lead
@@ -192,7 +192,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (fixture kind, valid body, note; seed a fixture kind for the entity in `seedRouteMatrix`) and give
   it a `permissions.RouteKeys` entry, as in §4. A route that is neither recorded, nor listed after
   the freeze, nor on the test's public list fails `TestRouteMatrixCoversEveryProtectedRoute`
-  (DEVELOPMENT.md, "System-role route matrix").
+  (DEV_TESTING_CI.md, "System-role route matrix").
 - Permissions for a new entity: add the entity's keys to the catalogue in
   `internal/permissions/catalogue.go` and its grants for each system role to
   `internal/permissions/system_roles.go`, then update the golden
@@ -261,7 +261,7 @@ Decide first whether the new table stores personal data or only refers to people
   external identifier under a unique key must be **deleted**, not blanked.
 - Extend `TestIdentityErasure{SQLite,MySQL}` (`internal/repository/identity_erasure_test.go`) and
   the sweep tests so the person is seeded into the new table before the erasure.
-- Update the matrix in [DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data). Known gaps you
+- Update the matrix in [DEV_ERASURE.md](DEV_ERASURE.md#deleting-personal-data). Known gaps you
   inherit: ticket free text, which the erasure keeps and an operator redacts first through the
   documented procedure (#214), tasks rendered from `{{deal.title}}` before an erasure (they keep
   the text; deal and quote text itself is scrubbed since #245), and what the erasure lock order of
@@ -307,10 +307,10 @@ schema). A root that skipped proves nothing.
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
   Bulk changes follow `SetupBulkStatusRoutes` (`internal/handler/routes.go`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md, "Bulk endpoints"). A new protected route also goes into the
+  per-item authorization (DEV_ENTITIES.md, "Bulk endpoints"). A new protected route also goes into the
   route tests of `cmd`: the system-role golden is frozen and is not regenerated, so list the route
   on `routeMatrixAfterFreeze`, give it a `matrixRequests` entry and add its key to
-  `permissions.RouteKeys` (DEVELOPMENT.md, "System-role route matrix"). A change to what an
+  `permissions.RouteKeys` (DEV_TESTING_CI.md, "System-role route matrix"). A change to what an
   existing route answers to a system role fails the replay of the golden.
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
@@ -339,7 +339,7 @@ schema). A root that skipped proves nothing.
 
 ## 6. Add an automation event or step
 
-Read [Automation runtime](DEVELOPMENT.md#automation-runtime) first. The vocabulary lives in
+Read [Automation runtime](DEV_RUNTIMES.md#automation-runtime) first. The vocabulary lives in
 `internal/models/automation.go`: ten event types plus the `schedule` trigger (the `Event types.` const
 block), five origins (`Event origins.`) and six step types (`Step types.`).
 
@@ -696,7 +696,7 @@ quote entity (#518). Steps, in order:
 
 Tests: a service test per write path that asserts one outbox row in the same transaction and none
 after a rollback (`internal/service/quote_webhook_events_test.go` is the pattern), plus a
-handler or API test. Long form: [DEVELOPMENT.md](DEVELOPMENT.md#outbound-webhooks-345).
+handler or API test. Long form: [DEV_RUNTIMES.md](DEV_RUNTIMES.md#outbound-webhooks-345).
 
 ## 15. Background runtimes and outbound requests
 
