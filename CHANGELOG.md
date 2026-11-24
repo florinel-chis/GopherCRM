@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-24
+
 ### Added
 
 - Settings > Webhooks has buttons for the three webhook admin routes of 1.3.0. Each endpoint row
@@ -4110,7 +4112,8 @@ was tagged, and do not cover those three.
 - ESLint reports 40 errors and 137 warnings in the frontend, mostly unused Playwright fixture
   arguments and `any` types. These pre-date this work and were not touched. `tsc -b` is clean.
 
-[Unreleased]: https://github.com/florinel-chis/GopherCRM/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/florinel-chis/GopherCRM/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.0.0...v1.1.0

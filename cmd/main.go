@@ -24,7 +24,7 @@ import (
 )
 
 // @title GopherCRM API
-// @version 1.3.0
+// @version 1.4.0
 // @description GopherCRM is a self-hosted CRM: users, leads, customers, companies, deals, products, quotes, tickets, tasks, labels, follow-up automation, notifications, embeddable lead-capture forms and answer-engine visibility tracking (AEO). Every operation in this reference lives under the base path /api/v1 (configurable through API_PREFIX). GET /health is served outside the base path and is deliberately not part of this reference.
 // @description
 // @description ## Authentication

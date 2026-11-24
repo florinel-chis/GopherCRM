@@ -9057,7 +9057,7 @@ info:
     Browser requests are admitted only from the configured origins (localhost development origins plus CORS_ALLOWED_ORIGINS), with credentials allowed, the methods GET, POST, PUT, PATCH, DELETE and OPTIONS and the request headers Origin, Content-Type, Authorization and X-Request-ID. A request from any other origin is refused with a bare 403 before any handler or log line. The public form endpoints under /forms/public answer any origin without credentials (methods GET, POST and OPTIONS, request header Content-Type).
     Every response except a CORS preflight answer or a CORS rejection carries X-Request-ID: the value the client sent in that header, otherwise a generated UUID. The same value is meta.request_id in the envelope. Browsers on the configured origins can read X-Request-ID and Content-Length (exposed headers); the public form endpoints expose no headers, so a cross-origin page reads the id from meta.request_id instead.
   title: GopherCRM API
-  version: 1.3.0
+  version: 1.4.0
 paths:
   /aeo/citations:
     get:
