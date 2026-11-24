@@ -239,7 +239,7 @@ export const Component: React.FC = () => {
           />
 
           <FormControl size="small" sx={{ minWidth: 170 }}>
-            <InputLabel id="deal-stage-filter-label">Stage</InputLabel>
+            <InputLabel id="deal-stage-filter-label" shrink>Stage</InputLabel>
             <Select
               labelId="deal-stage-filter-label"
               id="deal-stage-filter"
@@ -247,6 +247,7 @@ export const Component: React.FC = () => {
               onChange={(e) => handleStageFilter(e.target.value)}
               label="Stage"
               displayEmpty
+              notched
               renderValue={(value: DealStage | '') =>
                 value === '' ? 'All stages' : DEAL_STAGES.find((s) => s.value === value)?.label
               }
