@@ -2,6 +2,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
+import shlex
 import unittest
 
 
@@ -183,6 +185,110 @@ class MigrationCoverageTests(unittest.TestCase):
         self.events.append({'Action': 'fail', 'Package': PREFIX + 'internal/models'})
         with self.assertRaisesRegex(ValueError, 'failed or skipped'):
             self.check()
+
+
+# The ./cmd/migrate race run must fit on a slow runner. Release run 45154161780: the slow attempt
+# took 2.4x as long (565 s against 239 s for the roots before TestWebhookEventTypesWidthMigration),
+# so the slow-runner package total is about 615-625 s; 2.5x that is about 1560 s (26 min).
+MIN_MIGRATE_GO_TIMEOUT_SECONDS = 1560
+# The job limit must outlive the Go timeout so Go writes its goroutine dump and the later
+# coverage and artifact steps still run instead of being cancelled with the job.
+MIN_JOB_HEADROOM_SECONDS = 300
+GO_DURATION = re.compile(r'(?:\d+(?:\.\d+)?[hms])+')
+GO_DURATION_PART = re.compile(r'(\d+(?:\.\d+)?)([hms])')
+JOB_KEY = re.compile(r'^  [A-Za-z0-9_-]+:\s*$')
+
+
+def go_duration_seconds(value):
+    if not GO_DURATION.fullmatch(value):
+        raise ValueError(f'unsupported Go duration {value!r}; use h/m/s units such as 30m or 1h5m')
+    units = {'h': 3600, 'm': 60, 's': 1}
+    return sum(float(number) * units[unit] for number, unit in GO_DURATION_PART.findall(value))
+
+
+def job_line_range(lines, job):
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == f'  {job}:'), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if JOB_KEY.match(lines[i])), len(lines))
+    return start, end
+
+
+def migrate_commands(lines):
+    """Return (first line index, joined command) for every go test line naming ./cmd/migrate."""
+    commands = []
+    i = 0
+    while i < len(lines):
+        first = i
+        text = lines[i]
+        while text.rstrip().endswith('\\') and i + 1 < len(lines):
+            i += 1
+            text = text.rstrip()[:-1] + ' ' + lines[i].strip()
+        if 'go test' in text and './cmd/migrate' in text.split():
+            commands.append((first, text.strip()))
+        i += 1
+    return commands
+
+
+class MigrateWorkflowTimeoutTests(unittest.TestCase):
+    WORKFLOWS = (
+        ('.github/workflows/migrations.yml', 'migrations'),
+        ('.github/workflows/release.yml', 'sql-validation'),
+    )
+
+    def test_go_duration_parser(self):
+        self.assertEqual(go_duration_seconds('30m'), 1800)
+        self.assertEqual(go_duration_seconds('1h5m'), 3900)
+        self.assertEqual(go_duration_seconds('90s'), 90)
+        for bad in ('30', '30min', '', '1d', '-5m'):
+            with self.assertRaises(ValueError, msg=bad):
+                go_duration_seconds(bad)
+
+    def test_migrate_runs_have_go_timeout_and_job_headroom(self):
+        for path, job in self.WORKFLOWS:
+            with self.subTest(workflow=path, job=job):
+                self.check_workflow(path, job)
+
+    def check_workflow(self, path, job):
+        lines = (ROOT / path).read_text().splitlines()
+        span = job_line_range(lines, job)
+        self.assertIsNotNone(span, f'{path}: job {job!r} not found')
+        start, end = span
+
+        commands = migrate_commands(lines)
+        self.assertEqual(len(commands), 1,
+                         f'{path}: expected exactly one go test command naming ./cmd/migrate, '
+                         f'found {len(commands)}')
+        line_index, command = commands[0]
+        self.assertTrue(start < line_index < end,
+                        f'{path}: the ./cmd/migrate go test command is outside job {job!r}')
+
+        args = shlex.split(command)
+        values = []
+        for index, arg in enumerate(args):
+            if arg == '-timeout':
+                values.append(args[index + 1] if index + 1 < len(args) else '')
+            elif arg.startswith('-timeout='):
+                values.append(arg[len('-timeout='):])
+        self.assertEqual(len(values), 1,
+                         f'{path}: the ./cmd/migrate go test command must pass exactly one '
+                         f'-timeout flag, found {len(values)} (without one Go defaults to 10m)')
+        try:
+            go_timeout = go_duration_seconds(values[0])
+        except ValueError as error:
+            self.fail(f'{path}: {error}')
+        self.assertGreaterEqual(
+            go_timeout, MIN_MIGRATE_GO_TIMEOUT_SECONDS,
+            f'{path}: -timeout {values[0]} is below 26m (2.5x the slow-runner package total)')
+
+        limits = [re.fullmatch(r'    timeout-minutes:\s*(\d+)\s*', line)
+                  for line in lines[start:end]]
+        limits = [match for match in limits if match]
+        self.assertEqual(len(limits), 1, f'{path}: job {job!r} must set one timeout-minutes')
+        job_seconds = int(limits[0].group(1)) * 60
+        self.assertGreaterEqual(
+            job_seconds, go_timeout + MIN_JOB_HEADROOM_SECONDS,
+            f'{path}: job {job!r} timeout-minutes must exceed the Go -timeout by at least 5 minutes')
 
 
 if __name__ == '__main__':

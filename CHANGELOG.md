@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `./cmd/migrate` race runs in CI get `go test -timeout 30m` (was 10m in the migrations
+  workflow and Go's 10m default in the release `sql-validation` job) and both jobs a 40-minute
+  limit (was 15 and 20), so a slow runner no longer drops the remaining migration roots. The
+  migrations job limit applies to every pull request's `Migrations (MySQL 8)` run too.
+  `scripts/release/tests/test_sql_coverage.py` pins both values (#747).
 - `docs/DEVELOPMENT.md` is split into a short guide with a package map and an index, and seven
   topic pages that hold the long-form sections unchanged: `docs/DEV_TRANSACTIONS.md`,
   `docs/DEV_AUTH.md`, `docs/DEV_RBAC.md`, `docs/DEV_ENTITIES.md`, `docs/DEV_ERASURE.md`,
