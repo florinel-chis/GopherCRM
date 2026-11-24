@@ -1271,11 +1271,13 @@ gophercrm/
   authentication (#466), so requests with refused or missing credentials on protected routes
   are charged too.
   `RateLimitStrict` (10/min, burst 5) guards the `/auth`
-  group and, via `SetupFormPublicRoutes`, the public form submit and confirm routes;
+  group, the public form submit and confirm routes (`SetupFormPublicRoutes`) and the public quote
+  response routes `/quotes/public/response` (`SetupQuotePublicRoutes`);
   `RateLimitGenerous` (240/min, burst 40) is applied only to the public form *reads*
-  (`embed.js`, the definition and the hosted view). `DISABLE_RATE_LIMIT=true` bypasses the strict
-  tier alone — the check lives inside `RateLimitStrict` — so the moderate tier still applies to
-  test traffic.
+  (`embed.js`, the definition and the hosted view) and to `/quotes/public/render`.
+  `DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits on `/scim/v2` (the SCIM
+  token limit and the SCIM refusal limit); the checks live inside `RateLimitStrict` and
+  `NewSCIMRateLimits`. The moderate and generous tiers still apply to test traffic.
 - **Rate limits are per process and per middleware instance.** Clients are counted per IPv4
   address and per IPv6 /64 network. Each instance tracks at most 10,000 clients; when it is full, a
   new client is still admitted and the least recently active record is dropped (that client

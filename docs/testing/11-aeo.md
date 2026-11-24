@@ -483,7 +483,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Preconditions:** Admin token; backend started without `DISABLE_RATE_LIMIT`.
 - **Steps:**
   1. Issue 130 `GET /api/v1/aeo/providers` calls inside a minute.
-- **Expected:** The moderate tier (120/min, burst 30) starts answering 429. `DISABLE_RATE_LIMIT=true` does **not** lift this — it only bypasses the strict `/auth` tier — so a fast E2E suite can 429 itself here exactly as it can elsewhere.
+- **Expected:** The moderate tier (120/min, burst 30) starts answering 429. `DISABLE_RATE_LIMIT=true` does **not** lift this — it bypasses the strict `/auth` tier and the two SCIM limits, nothing else — so a fast E2E suite can 429 itself here exactly as it can elsewhere.
 - **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`.
 
 ---

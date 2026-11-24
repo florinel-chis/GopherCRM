@@ -50,7 +50,7 @@ coverage matrix.
   (`middleware.RateLimitStrict`, applied to the `authRoutes` group in `setupDependencies`). A role
   case that logs a second and third user in burns one token each, and the whole suite shares one IP.
   Space auth requests ~6 s apart or run the backend with `DISABLE_RATE_LIMIT=true`, which bypasses
-  **only** the strict tier. Every authenticated request additionally consumes the moderate tier —
+  the strict tier and the two SCIM limits and nothing else. Every authenticated request additionally consumes the moderate tier —
   120 req/min, burst 30 (`middleware.RateLimitModerate`, applied once to the `protected` group in
   `setupDependencies`, before authentication since #466, so requests with refused or missing
   credentials on protected routes are charged too) — which is *not* bypassable; a spec that loops over 30+ page loads without
@@ -714,14 +714,15 @@ into a sign-out test.
   G37 covers the generous tier, which reaches the public form GETs but no authenticated route.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rate-limit.spec.ts` (new)
 
-### TC-XCUT-041 — DISABLE_RATE_LIMIT bypasses the auth tier only
+### TC-XCUT-041 — DISABLE_RATE_LIMIT bypasses the strict tier and the SCIM limits, not the moderate tier
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Backend started with `DISABLE_RATE_LIMIT=true` and a `SERVER_MODE` other than
   `production` (in production mode the server refuses to start with the switch set).
 - **Steps:** Repeat TC-XCUT-039, then repeat TC-XCUT-040.
 - **Expected:** The login burst no longer produces a 429 — `RateLimitStrict()` returns a pass-through
-  handler when the variable is set (the `DISABLE_RATE_LIMIT` check inside `middleware.RateLimitStrict`).
+  handler when the variable is set (the `DISABLE_RATE_LIMIT` check inside `middleware.RateLimitStrict`;
+  the same variable lifts the two SCIM limits, `middleware.NewSCIMRateLimits` then returning nil).
   The authenticated burst **still** produces
   429s: the moderate tier has no such switch. A suite that assumes the flag removes all limiting will
   flake on long list-heavy specs.

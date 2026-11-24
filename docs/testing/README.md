@@ -210,7 +210,7 @@ fail in ways that look like application bugs.
 5. **Deletes are irreversible.** Deleting a user, customer or lead is GDPR erasure, not a soft
    delete. A test may only delete records it created itself, and dialog-capture tests must cancel,
    never confirm.
-6. **`DISABLE_RATE_LIMIT` lifts only the strict `/auth` tier.** The moderate tier — 120 req/min,
+6. **`DISABLE_RATE_LIMIT` lifts the strict `/auth` tier and the two SCIM limits.** The moderate tier — 120 req/min,
    burst 30, keyed per IP — still applies to every authenticated request. A fast suite hammering
    list endpoints from localhost can trip it; it also makes the 5-attempt account lockout
    unobservable unless the env var is set (the limiter 429s the sixth attempt first). `make e2e`

@@ -9,7 +9,8 @@ import { API_BASE_URL } from '../helpers/env';
 // documents. This file makes roughly ten calls into the /auth group — register,
 // login, change-password, logout, re-login — and the strict tier on that group
 // (10/min, burst 5) will otherwise 429 partway through and flake the run. The
-// env var lifts the strict tier only; moderate limiting stays on.
+// env var lifts the strict tier and the two SCIM limits; moderate and generous
+// limiting stay on.
 
 interface ThrowawayUser {
   email: string;
