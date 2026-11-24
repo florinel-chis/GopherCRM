@@ -9,7 +9,7 @@ for every pattern named here; when the two disagree, DEVELOPMENT.md and the code
 and deploying a fork see [FORKING.md](FORKING.md); for choosing a starting point see
 [USE_CASES.md](USE_CASES.md).
 
-Counts in this guide were measured on `4dfe404`, with the command next to each one.
+Counts in this guide were measured on `a51e336f`, with the command next to each one.
 
 ## 1. Rules that protect you
 
@@ -98,8 +98,8 @@ references (products and quotes sit after the comment "Product and Quote before 
 - Create the pair with `go run ./cmd/migrate -command create -name add_<entity>`
   (`createNewMigration` (`cmd/migrate/main.go`)). It writes
   `migrations/<version>_add_<entity>.{up,down}.sql`, where `<version>` is the newest existing
-  version + 1 (the clock is used only for an empty directory). The repository holds 12 pairs (`ls
-  migrations/*.up.sql | wc -l`, measured on 4dfe404).
+  version + 1 (the clock is used only for an empty directory). The repository holds 46 pairs (`ls
+  migrations/*.up.sql | wc -l`, measured on a51e336f).
 - New tables use `CREATE TABLE IF NOT EXISTS`, with column, index and constraint names identical to
   what AutoMigrate produces. The new binary may already have created the table before the operator
   runs the migration. Copy the header and body of
@@ -148,8 +148,11 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   `fmt.Errorf("product %d not found: %w", id, apperrors.ErrProductNotFound)`
   (`validateProduct` and `productService.GetByID` in `internal/service/product_service.go`). Declare new sentinels in
   `internal/errors/errors.go` next to the existing ones.
-- Multi-step writes take `*utils.TransactionManager` and run inside `WithTransaction`, using the
-  `WithTx` repositories. `QuoteService` is the reference for conditional claims in one transaction
+- Multi-step writes take `*utils.TransactionManager` and run through
+  `internal/service/txunit.go` `txDeps.Run` (built with `newTxDeps(tm)`), which opens one
+  transaction and hands the callback the transaction, the `WithTx` repositories and the webhook
+  and automation outlets bound to it. Which lock or retry primitive a write needs is in the
+  decision table of [DEVELOPMENT.md](DEVELOPMENT.md#transactions-and-row-locks). `QuoteService` is the reference for conditional claims in one transaction
   (DEVELOPMENT.md, "Quotes: conditional claims, one transaction each").
 - Record-level visibility (who sees which row) belongs here or in the repository query, applied
   **before** pagination, so counts and pages agree. If the entity can link a lead, apply
@@ -183,13 +186,18 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (`handler.SetupProductRoutes(protected, productHandler)`). There is no container; the wiring is plain code.
 - If a static path sits next to a `/:id` route, extend `TestAllRouteSetupsCoexist`
   (`internal/handler/routes_test.go`).
-- Every protected route is recorded in the system-role route matrix,
-  `cmd/testdata/system_role_route_matrix.json`. Declare each new route in `matrixRequests`
-  (`cmd/system_role_route_matrix_test.go`: fixture kind, valid body, note), seed a fixture kind for
-  the entity in `seedRouteMatrix`, and regenerate in the same pull request:
-  `go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix`. A route that is neither
-  recorded nor on the test's public list fails `TestRouteMatrixCoversEveryProtectedRoute`
+- The system-role route matrix, `cmd/testdata/system_role_route_matrix.json`, is frozen: the
+  golden is not regenerated. List each new route on
+  `cmd/system_role_route_matrix_test.go` `routeMatrixAfterFreeze`, declare it in `matrixRequests`
+  (fixture kind, valid body, note; seed a fixture kind for the entity in `seedRouteMatrix`) and give
+  it a `permissions.RouteKeys` entry, as in §4. A route that is neither recorded, nor listed after
+  the freeze, nor on the test's public list fails `TestRouteMatrixCoversEveryProtectedRoute`
   (DEVELOPMENT.md, "System-role route matrix").
+- Permissions for a new entity: add the entity's keys to the catalogue in
+  `internal/permissions/catalogue.go` and its grants for each system role to
+  `internal/permissions/system_roles.go`, then update the golden
+  `internal/permissions/testdata/system_roles.golden.json`, the tables of
+  [AUTHORIZATION.md](AUTHORIZATION.md) and `gocrm-ui/src/permissions/systemRoleFixture.ts` (§10).
 
 ### 3.8 Mocks
 
@@ -496,9 +504,9 @@ several layers at once:
   `systemRoleFixture.test.ts`). Routes, navigation and buttons read permission keys, not role
   names (`src/permissions/noRoleGating.test.ts` fails on a role-name gate).
 
-Measured on 4dfe404: 28 non-test Go files reference `models.Role`
+Measured on a51e336f: 28 non-test Go files reference `models.Role`
 (`command grep -rl "models\.Role" internal cmd --include='*.go' | command grep -v _test.go | wc -l`)
-and 14 non-test frontend files contain a `'support'` or `"support"` literal
+and 6 non-test frontend files contain a `'support'` or `"support"` literal
 (`command grep -rl "'support'\|\"support\"" gocrm-ui/src --include='*.ts' --include='*.tsx' | command grep -v '\.test\.' | wc -l`).
 
 Recipe:
@@ -516,8 +524,15 @@ Recipe:
    `POST /users` or `cmd/create-admin`.
 
 **A permission** (one more route for an existing role) is the same recipe in small: change the
-guard, add the denied-role and allowed-role tests, and change the matching frontend guard. There is
-no permission matrix as data; a fork that needs several new roles should consider building one.
+guard, add the denied-role and allowed-role tests, and change the matching frontend guard. The
+permission matrix is data: the keys and their tree are `internal/permissions/catalogue.go`
+`catalogue`, the grants of each system role are `internal/permissions/system_roles.go`
+`systemRoles`, and the route-to-key table is `permissions.RouteKeys`. A new key or grant changes
+the golden `internal/permissions/testdata/system_roles.golden.json`, which
+`TestSystemRoleMatricesEqualGolden` compares with `systemRoles`, and the tables of
+[AUTHORIZATION.md](AUTHORIZATION.md), which `TestAuthorizationGuideMatchesCatalogue` compares with
+the catalogue; update both, and the frontend fixture, in the same change. A new route goes on
+`cmd/system_role_route_matrix_test.go` `routeMatrixAfterFreeze` (§3.7).
 A role for an integration needs no code: it is a custom role created through `POST /roles`, see
 [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 
@@ -576,7 +591,7 @@ leads, customers and deals), configuration, and erasure. Every other module depe
 The selector knows 9 profiles: `full`, `mailer`, `aeo`, `migration`, `transaction`,
 `auth-persistence`, `auth`, `runner` and `contextual`
 (the `profile = (...)` expression of `plan` in
-`automation/langflow/gophercrm_runner/validation.py`, measured on 4dfe404). Each
+`automation/langflow/gophercrm_runner/validation.py`, measured on a51e336f). Each
 bounded profile's scope is in [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md).
 
 Points that catch people out:
@@ -642,3 +657,61 @@ The repository also ships development tooling in `automation/langflow/` (the rem
 that takes one GitHub issue at a time through a worktree, tests, an independent review, a pull
 request and CI. Adopting it on a fork is described in
 [automation/langflow/README.md](../automation/langflow/README.md).
+
+## 14. Add a webhook event or entity
+
+Webhook events are declared once and derived everywhere else. The reference implementation is the
+quote entity (#518). Steps, in order:
+
+1. Add the `Entity` const in `internal/webhook/catalog.go` and append it to
+   `defaultCatalogue`, the `internal/webhook/catalog.go` `NewCatalogue` call. The event types
+   (`<entity>.created`, `.updated`, `.deleted`), the `IsEventType` check and the refusal messages
+   follow from it.
+2. Add a `WebhookState()` for the model in `internal/models/webhook_state.go` (the pattern is
+   `internal/models/webhook_state.go` `Lead.WebhookState`): the columns an update compares to
+   decide whether an `updated` event is due. `TestWebhookStateCoversUpdateColumns`
+   (`internal/repository/webhook_state_columns_test.go`) fails when a repository update writes a
+   column the state does not compare, or the state compares one no update writes; add the entity
+   to it.
+3. Add a `With<Entity>Webhooks` service option (the pattern is
+   `internal/service/lead_service.go` `WithLeadWebhooks`) and wire it in `cmd/main.go`
+   `setupDependencies` with the shared emitter. Every write path then makes one `TxEmitter` call
+   (`Created`, `Updated` or `Deleted`) inside the write's own transaction, usually the
+   `Webhooks` outlet of the `txDeps.Run` unit, so the outbox row commits or rolls back with the
+   write.
+4. Add the new event types to the swagger `enums` tags of `WebhookEndpoint.EventTypes` and
+   `WebhookDelivery.EventType` (`internal/models/webhook.go`), of the request bodies and the
+   `event_type` filter in `internal/handler/webhook_handler.go`, and the counts in their
+   descriptions, then run `make swagger`. `internal/webhook/catalog_test.go`
+   `TestCatalogueSwaggerEnums` fails while any event type list of `api/swagger.json` differs from
+   the catalogue.
+5. Check the headroom: an endpoint may list at most
+   `internal/webhook/endpoint_service.go` `webhookEventTypesMaxItems` event types (32; 21 exist),
+   and the stored subscription must fit the `varchar(512)` column,
+   `internal/models/webhook.go` `webhookEventTypesColumnMaxBytes`. Widening the column needs a
+   migration pair (§3.3) as well as the AutoMigrate tag.
+6. Describe the new events on the user-guide page
+   `docs/user-guide/permissions-access/webhooks.md`; `scripts/ci/check-user-guide.py` resolves
+   every event type the page names against the catalogue.
+
+Tests: a service test per write path that asserts one outbox row in the same transaction and none
+after a rollback (`internal/service/quote_webhook_events_test.go` is the pattern), plus a
+handler or API test. Long form: [DEVELOPMENT.md](DEVELOPMENT.md#outbound-webhooks-345).
+
+## 15. Background runtimes and outbound requests
+
+- **A background runtime** (a worker, a sweep, a queue) is built from `internal/lifecycle`:
+  `internal/lifecycle/loop.go` `NewLoop` runs a body at start and then on every tick or wake on one
+  goroutine until `Stop`, and `internal/lifecycle/owner.go` `NewOwner` admits each unit of owned
+  work and lets a shutdown close admission and drain it. Add the runtime's `Stop` to the drain
+  handle `setupDependencies` returns (`combineStops` in `cmd/main.go`), so a shutdown stops it
+  under the same deadline as the others. `internal/service/bulk_operation_recovery_runtime.go` is
+  a small reference.
+- **An outbound HTTP request** to a URL that an administrator or a user supplied goes through the
+  egress guard, never through `http.DefaultClient`: `internal/egress/public.go`
+  `Guard.PublicHTTPClient` returns a client that reaches only that origin through public
+  addresses and follows no redirect, and `internal/egress/public.go` `CheckPublicURL` validates
+  the URL when it is stored. The webhook sender is the reference (`internal/webhook/runtime.go`,
+  `internal/webhook/endpoint_service.go`). AEO provider calls use the engine policy in
+  `internal/aeo/egress.go` instead.
+- Long form: [DEVELOPMENT.md](DEVELOPMENT.md#background-runtimes-and-outbound-requests).
