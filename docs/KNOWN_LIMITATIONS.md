@@ -21,9 +21,9 @@ What the shipped code does not do, or does only under conditions. Ideas that are
   over plain HTTP (the bundled nginx without TLS) each tab locks on its own, and two tabs
   refreshing at the same moment can still sign each other out when the losing tab's rejection
   arrives before the winner stored the successor. Other open tabs learn about a sign-in or
-  sign-out only on their next request. A login that verified the old password a moment before a
-  password change commits can still be issued a session afterwards, and login is not yet
-  serialised against erasure under the owner lock (#183).
+  sign-out only on their next request. Login itself is not affected: a password change, reset,
+  deactivation or erasure that commits before a login takes the owner lock refuses that login, and
+  one that commits after it ends the session the login issued (#336, see `docs/CONCURRENCY.md`).
 - **Outbound email needs SMTP configuration.** Without `SMTP_HOST` set, every mail — the
   password-reset link (redacted), the forms mail, the quote email and the `send_email` step of an
   automation rule — goes to the application log instead of a mailbox, and the sending code cannot

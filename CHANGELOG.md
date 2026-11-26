@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The single sign-on FAQ now says that switching a password account to single sign-on in place is
+  not supported and recommends keeping the password account or a separate identity; deleting the
+  account is described as the erasure it is, with a link to the erasure guide. The login gaps
+  closed by #336 are removed from the session entry of `docs/KNOWN_LIMITATIONS.md` and from row
+  1.11 of `docs/FEATURES.md`; the cross-tab gaps (#184) stay. Docs only. (#791)
 - README is now a short landing page (#786): the intro, a short feature list, the quick start,
   Docker, deploying, a documentation list and the API pointer. Known Limitations moved to a new
   page, `docs/KNOWN_LIMITATIONS.md`, and every link to it was updated. Prerequisites and setup,
