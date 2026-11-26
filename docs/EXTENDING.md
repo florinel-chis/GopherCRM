@@ -1,5 +1,7 @@
 # Extending GopherCRM
 
+> **For:** Developers adding or removing entities, routes, migrations or modules. Part of the [documentation index](README.md).
+
 A cookbook for application developers and coding agents who add to, or cut from, GopherCRM. Each
 recipe names a reference implementation to copy, the files to touch in order, the tests that prove
 the change, and the gate that will check it.

@@ -1,5 +1,7 @@
 # Server provisioning for the release-tarball deploy
 
+> **For:** Operators preparing a Linux server for the release-tarball deploy. Part of the [documentation index](README.md).
+
 This guide prepares a fresh Linux server for the deploy path described in
 [FORKING.md](FORKING.md#52-release-tarball-and-systemd-through-the-shipped-workflows) section 5.2:
 the Release workflow builds a tarball, the Deploy workflow sends it over SSH, and

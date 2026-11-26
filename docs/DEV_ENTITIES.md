@@ -1,5 +1,7 @@
 # Entities
 
+> **For:** Developers changing the rules of the business entities. Part of the [documentation index](README.md).
+
 The rules of the business entities: quotes and their links, mail delivery, ordered and paginated
 reads, tasks and tickets, list filters, lookup indexes, lead owners and the lead and company lock
 order, and the bulk status endpoints. Deleting personal data is in

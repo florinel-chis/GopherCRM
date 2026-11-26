@@ -1,5 +1,7 @@
 # Concurrency: lock order and retry rule
 
+> **For:** Developers changing a write that locks rows of more than one table. Part of the [documentation index](README.md).
+
 One place for the row-lock order and the retry rule of every write that locks rows of more than
 one table: the erasures, lead conversion and update, company delete, bulk status, the session and
 credential flows (identity-provider sign-out included), and RBAC writes, and of API-key revoke, a

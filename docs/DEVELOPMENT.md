@@ -1,5 +1,7 @@
 # GopherCRM Development Guide
 
+> **For:** Developers working in this repository. Part of the [documentation index](README.md).
+
 Reference for developers working in this repository: commands, layering, and the conventions the
 codebase enforces. For first-time setup instructions see [SETUP.md](SETUP.md); for the
 feature and test-coverage matrix see [FEATURES.md](FEATURES.md).

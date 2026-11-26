@@ -1,5 +1,7 @@
 # Personal-data deletion
 
+> **For:** Developers changing what deleting a user, customer or lead does. Part of the [documentation index](README.md).
+
 What deleting a user, customer or lead does: the erasure cascade, what is scrubbed and what is
 kept, external ids, the operator procedures, the limits and the log policy. Part of the developer guide; the index is in [DEVELOPMENT.md](DEVELOPMENT.md).
 

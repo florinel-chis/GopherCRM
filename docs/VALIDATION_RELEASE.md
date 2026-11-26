@@ -1,5 +1,7 @@
 # Contextual validation and releases
 
+> **For:** Contributors and maintainers choosing checks, cutting releases and deploying. Part of the [documentation index](README.md).
+
 Validation selects checks relevant to the changed code, with application health smoke
 on ordinary changes and the complete matrix before releases. It does not claim that a
 path map proves the absence of regressions. Unmapped shared changes retain full coverage; mapped transaction changes use direct

@@ -1,5 +1,7 @@
 # AEO provider egress and failure diagnostics
 
+> **For:** Operators who configure AEO provider endpoints or diagnose failed runs. Part of the [documentation index](README.md).
+
 The AEO module sends each tracked prompt, and the engine's API key, to every configured answer
 engine. Administrators can change provider base URLs in **Settings > AEO**, so without a policy
 that setting could point a key at any host, including loopback, the private network or a cloud

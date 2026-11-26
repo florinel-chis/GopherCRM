@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A documentation index, `docs/README.md`, that groups every document by reader, opens with three
+  start-here paths (try it locally, deploy to a server, start developing) and gives each document
+  one line on what it answers. Each top-level page in `docs/` now opens with a line saying who it
+  is for and linking back to the index. Docs only. (#783)
 - A user guide index, `docs/user-guide/README.md`, for people who use the web app and the
   administrators who set it up, and four user-guide pages that take over the usage content of
   README (#782): `docs/user-guide/getting-started.md` (opening the app, the first sign-in, public

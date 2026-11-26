@@ -1,5 +1,7 @@
 # GopherCRM Screenshot Catalog
 
+> **For:** Anyone who wants to see the screens. Part of the [documentation index](README.md).
+
 Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
 captured from the running application by the Playwright suite in `gocrm-ui/e2e/screenshots/`, at a
 1440x900 viewport with `deviceScaleFactor: 2`.

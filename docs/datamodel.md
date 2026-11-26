@@ -1,5 +1,7 @@
 # GopherCRM Data Model Documentation
 
+> **For:** Developers and database administrators. Part of the [documentation index](README.md).
+
 This document describes the tables that the MySQL/MariaDB migrations in `migrations/` and the
 SQLite schema step `MigrateDatabase` (`internal/models/database.go`) create, with the rules the
 backend applies to them.
