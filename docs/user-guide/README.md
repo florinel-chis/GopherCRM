@@ -2,8 +2,8 @@
 
 This guide is for people who use the GopherCRM web app day to day, and for the administrators who
 set it up for them. Installation, development and the API are described elsewhere: the
-[project README](../../README.md), the [setup walkthrough](../SETUP.md) and the
-[developer guide](../DEVELOPMENT.md).
+[setup walkthrough](../SETUP.md), the [developer guide](../DEVELOPMENT.md) and the
+[documentation index](../README.md), which lists the API reference.
 
 ## Getting started
 

@@ -138,7 +138,7 @@ task-form-validation-demo.md
 docs/_build/
 
 # ---------------------------------------------------------------------------
-# Keep documentation images tracked (referenced from README.md)
+# Keep documentation images tracked (referenced from README.md and the user guide)
 # ---------------------------------------------------------------------------
 !docs/img/
 !docs/img/**

@@ -15,7 +15,8 @@ import (
 // describes: its structure, the status and the key facts of every flow, the
 // lock chains, the retry rule, the #175 failure modes, every cited path, the
 // flow -> ticket map, and the links that point to it from EXTENDING,
-// DEVELOPMENT, DEV_AUTH, DEV_ENTITIES, ROADMAP, README and CHANGELOG. The document cites code by path
+// DEVELOPMENT, DEV_AUTH, DEV_ENTITIES, ROADMAP, the docs/README.md index and CHANGELOG
+// (README.md must not list it: docs/README.md is the index). The document cites code by path
 // and symbol, never by line (#743); scripts/ci/check-doc-citations.py checks
 // that each cited symbol is declared in its file. Every citation of the auth
 // service files (internal/service/auth_service.go and the per-flow files split
@@ -1450,21 +1451,22 @@ func leadErasurePlanBody(t *testing.T, rel string) string {
 }
 
 func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
-	// The README Documentation table is the only docs index: the guide has a
-	// row there and no bullet elsewhere.
-	const link = "[docs/CONCURRENCY.md](docs/CONCURRENCY.md)"
-	var row, bullet bool
-	for _, line := range strings.Split(readRepositoryFile(t, "README.md"), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.HasPrefix(line, "| "+link+" |") {
-			row = true
-		}
-		if strings.HasPrefix(line, "- "+link) {
-			bullet = true
+	// docs/README.md is the only docs index: the guide has exactly one bullet
+	// there, and README.md lists it neither in a table row nor in a bullet.
+	const indexLink = "[CONCURRENCY.md](CONCURRENCY.md)"
+	indexBullets := 0
+	for _, line := range strings.Split(readRepositoryFile(t, "docs/README.md"), "\n") {
+		if strings.HasPrefix(strings.TrimRight(line, "\r"), "- "+indexLink) {
+			indexBullets++
 		}
 	}
-	assert.True(t, row, "README.md has a Documentation-table row starting %q", "| "+link+" |")
-	assert.False(t, bullet, "README.md has no bullet starting %q: the Documentation table is the index", "- "+link)
+	assert.Equal(t, 1, indexBullets, "docs/README.md has exactly one bullet starting %q", "- "+indexLink)
+	const readmeLink = "[docs/CONCURRENCY.md](docs/CONCURRENCY.md)"
+	for _, line := range strings.Split(readRepositoryFile(t, "README.md"), "\n") {
+		line = strings.TrimRight(line, "\r")
+		assert.False(t, strings.HasPrefix(line, "| "+readmeLink), "README.md has no table row starting %q: docs/README.md is the index", "| "+readmeLink)
+		assert.False(t, strings.HasPrefix(line, "- "+readmeLink), "README.md has no bullet starting %q: docs/README.md is the index", "- "+readmeLink)
+	}
 
 	changelog := readRepositoryFile(t, "CHANGELOG.md")
 	start := strings.Index(changelog, "## [Unreleased]")

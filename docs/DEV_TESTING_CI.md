@@ -131,13 +131,14 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
 - **A new test that reads files outside its own package needs a row** in `EXTERNAL_READERS`
   (`scripts/ci/check-changed-go.py`), with a case in `scripts/ci/tests/test_changed_go.py`. Until it
   has one, only a full run exercises it when those files change.
-- **`internal/config` pins documentation text** (`README.md`, `CHANGELOG.md`, `SERVER_PROVISIONING.md`
-  and `docs/{DEVELOPMENT,FORKING,DOCKER,USE_CASES,ROADMAP,EXTENDING,SETUP}.md`). A documentation-only
+- **`internal/config` pins documentation text** (`README.md`, `CHANGELOG.md`, `SERVER_PROVISIONING.md`,
+  `docs/README.md` (the CONCURRENCY index bullet), `docs/KNOWN_LIMITATIONS.md` (the
+  `DISABLE_RATE_LIMIT` sentences) and `docs/{DEVELOPMENT,FORKING,DOCKER,USE_CASES,ROADMAP,EXTENDING,SETUP}.md`). A documentation-only
   pull request runs no Go test, so it can break one of those pins and still be green; the next change
   that selects `internal/config` then fails for a reason outside its diff. Run
   `go test -count=1 ./internal/config` after editing those files. `internal/permissions` pins
   `docs/AUTHORIZATION.md` in the same way (its catalogue and matrix tables against the code, the
-  keys and routes of its integration-user section, and the pointers to it in `README.md`,
+  keys and routes of its integration-user section, and the pointers to it in `docs/README.md`,
   `docs/FEATURES.md` and `CHANGELOG.md`): run
   `go test -count=1 ./internal/permissions` after editing any of those four.
 - **The administrator guide under `docs/user-guide/permissions-access/` is checked by name**

@@ -131,7 +131,7 @@ The audit-defect list of the backend build-out and its loose ends are done. Stil
   or through SCIM), a SCIM group change that leaves the account in no mapped group (which
   deactivates it) or that gives it a role lacking a permission the old one had, and the identity
   provider's front-channel sign-out (`GET /auth/oidc/frontchannel-logout`, which logs the account
-  out); see README "Known Limitations" and [AUTHORIZATION.md](AUTHORIZATION.md). Still open: a
+  out); see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) and [AUTHORIZATION.md](AUTHORIZATION.md). Still open: a
   refresh rotation leaves the access token it replaces valid until expiry, and a role change made
   any other way leaves the account's access tokens valid until expiry. Revoking a single access
   token would need a `jti` denylist, which is not planned.

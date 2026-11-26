@@ -94,6 +94,7 @@ CONVERTED_FILES = (
     'docs/datamodel.md',
     'docs/SETUP.md',
     'docs/CONCURRENCY.md',
+    'docs/KNOWN_LIMITATIONS.md',
 )
 
 # Gitignored build outputs and local configuration the guides legitimately

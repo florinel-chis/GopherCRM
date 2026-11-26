@@ -147,8 +147,8 @@ tell apart, matches no row, and the call answers 409 `ErrQuoteChangedDuringSend`
 window in which a stale rendering is recorded as the last email. A `Mailer` failure is 502
 `MAIL_DELIVERY_FAILED` and stamps nothing. The development `LogMailer` (no `SMTP_HOST`) is not a
 failure: its `Send` logs and returns nil, so the quote is stamped although nothing was delivered —
-the same fallback the password reset shares (form mail records it `log_only`, see the README's
-known limitations). The subject is `Quote Q-000042 from <name>`, the name resolved at send time by
+the same fallback the password reset shares (form mail records it `log_only`, see
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The subject is `Quote Q-000042 from <name>`, the name resolved at send time by
 `service.ResolveMailProductName` from the configuration source the service already holds for the
 default currency (see *Mail product name*, #292; `GopherCRM` when that source is nil),
 the recipient is never copied onto the quote, the body (`RenderQuoteEmail`) ends every line with

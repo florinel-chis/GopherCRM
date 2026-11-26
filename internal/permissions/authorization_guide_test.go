@@ -12,8 +12,8 @@ import (
 
 // The guide tests pin docs/AUTHORIZATION.md to this package: the catalogue
 // and matrix tables are compared with Leaves and ForSystemRole, the phase 2
-// design note with the seam list of #259, and the pointers in README,
-// docs/FEATURES.md and CHANGELOG with the guide's path.
+// design note with the seam list of #259, and the pointers in the
+// docs/README.md index, docs/FEATURES.md and CHANGELOG with the guide's path.
 
 const (
 	guideRepoRoot = "../.."
@@ -221,15 +221,26 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		return false
 	}
 
+	// docs/README.md is the only docs index: the guide has exactly one bullet
+	// there, and README.md lists it neither in a table row nor in a bullet,
+	// which would make a second index.
+	const indexLink = "[AUTHORIZATION.md](AUTHORIZATION.md)"
+	indexBullets := 0
+	for _, line := range strings.Split(readGuideFile(t, "docs/README.md"), "\n") {
+		if strings.HasPrefix(line, "- "+indexLink) {
+			indexBullets++
+		}
+	}
+	if indexBullets != 1 {
+		t.Errorf("docs/README.md must have exactly one bullet starting %q, found %d", "- "+indexLink, indexBullets)
+	}
 	readme := readGuideFile(t, "README.md")
 	const link = "[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)"
-	// The Documentation table is README's only docs index: a bullet list of
-	// guides next to it would be a second index.
 	if hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "- "+link) }) {
-		t.Errorf("README.md must not have a bullet starting %q: the Documentation table is the index", "- "+link)
+		t.Errorf("README.md must not have a bullet starting %q: docs/README.md is the index", "- "+link)
 	}
-	if !hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "| "+link+" |") }) {
-		t.Errorf("README.md must have a Documentation-table row starting %q", "| "+link+" |")
+	if hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "| "+link) }) {
+		t.Errorf("README.md must not have a table row starting %q: docs/README.md is the index", "| "+link)
 	}
 
 	features := readGuideFile(t, "docs/FEATURES.md")

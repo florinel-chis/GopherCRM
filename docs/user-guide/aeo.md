@@ -115,7 +115,7 @@ answers. A failed finalizing write leaves its row for recovery even if the
 work drains successfully. The AEO drain waits at most 15 seconds. If a provider call or database write still has not
 released by then, the process exits without closing the database and the run row left in
 `running` is failed once its heartbeat is older than 3 minutes, by the next boot or start on any
-replica, exactly as after a crash (see [Known Limitations](../../README.md#known-limitations)).
+replica, exactly as after a crash (see [Known limitations](../KNOWN_LIMITATIONS.md)).
 
 ## Prompt generation
 

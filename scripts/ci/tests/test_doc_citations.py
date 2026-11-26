@@ -272,13 +272,14 @@ class DocCitationCheckTest(unittest.TestCase):
 
     def test_converted_files_cover_every_converted_guide(self):
         # #487 converted the fork and extension guides, #488 the rest of the
-        # guides that cited code by line and #743 docs/CONCURRENCY.md; each
+        # guides that cited code by line and #743 docs/CONCURRENCY.md; #786
+        # moved a README symbol citation to docs/KNOWN_LIMITATIONS.md. Each
         # must stay under rule c.
         expected = {
             'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
             'docs/SERVER_PROVISIONING.md', 'README.md',
             'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
-            'docs/CONCURRENCY.md',
+            'docs/CONCURRENCY.md', 'docs/KNOWN_LIMITATIONS.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
         for name in expected:

@@ -6,6 +6,15 @@ This guide sets up the backend and the frontend for local development. For a for
 configuration that matters in production, deployment), read [FORKING.md](FORKING.md), section 2 "First
 run", instead of repeating it here. Docker users read [DOCKER.md](DOCKER.md).
 
+## Get the code
+
+```bash
+git clone https://github.com/florinel-chis/GopherCRM.git
+cd GopherCRM
+```
+
+Every command below runs from this directory unless it says otherwise.
+
 ## Backend Setup
 
 ### 1. Prerequisites
@@ -14,6 +23,7 @@ run", instead of repeating it here. Docker users read [DOCKER.md](DOCKER.md).
 - Either MySQL 8.0+ / MariaDB 10.11 (the default driver), or nothing at all for SQLite
   (`DB_DRIVER=sqlite`, see step 3).
 - Git.
+- Make, optional: the `make` targets below wrap the plain `go` and `mysql` commands shown next to them.
 - Optional, for quote PDF output: a headless Chrome or Chromium and a font, see
   [Quote PDF output](SERVER_PROVISIONING.md#quote-pdf-output). Without it everything else works.
 
@@ -45,7 +55,8 @@ Then edit `.env`. The settings that matter for a first run (all read in `interna
   replace it before anything else.
 - `DB_DRIVER`: `mysql` (default) or `sqlite`. Any other value stops startup.
 - MySQL: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`.
-- SQLite: `DB_PATH` (default `gophercrm.db`; it must not contain `?`).
+- SQLite: `DB_PATH` (default `gophercrm.db`, relative to the working directory; see
+  [SQLite](#sqlite) below).
 - `SERVER_PORT` (default 8080) and `SERVER_HOST` (empty = every interface; `127.0.0.1` behind a reverse
   proxy).
 
@@ -54,6 +65,42 @@ Then edit `.env`. The settings that matter for a first run (all read in `interna
   [Quote PDF output](SERVER_PROVISIONING.md#quote-pdf-output).
 
 `.env.example` is the commented reference for every other variable.
+
+#### SQLite
+
+On SQLite the server-connection settings (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+`DB_PASSWORD`) are ignored, and no `make create-db` is needed. SQLite suits development, demos, CI
+and small single-instance deployments. Things to know before relying on it:
+
+- **Everything serializes on one connection.** SQLite takes a database-wide
+  write lock, so the pool is deliberately capped at a single connection: within
+  the backend process reads queue behind writes exactly as writes do, and there
+  is no read concurrency to be had. What WAL mode buys here is that a *separate*
+  reader — the `VACUUM INTO` snapshot below, or a `sqlite3` shell — is not
+  blocked by the backend's writes. Run only one backend process against one
+  file.
+- **The file must live on a local filesystem.** WAL mode relies on shared-memory
+  locking that NFS, SMB and similar network shares do not implement reliably;
+  putting the database on one risks corruption.
+- **The database is three files.** `gophercrm.db` plus the `-wal` and `-shm`
+  siblings. A graceful shutdown checkpoints the WAL back into the main file; a
+  process killed outright leaves it in place, which is normal and recovers on the
+  next open.
+- **Never copy a live database file.** To back it up, either stop the backend and
+  copy all three files, or take an online snapshot with
+  `sqlite3 gophercrm.db "VACUUM INTO 'backup.db'"`. A bare `cp` of `gophercrm.db`
+  on a running system produces a stale or torn copy.
+- **Back up before upgrading.** On SQLite the schema advances only through the
+  auto-migration that runs at startup — the `migrations/` SQL is MySQL-only — and
+  auto-migration is not reversible. Take the offline copy or the `VACUUM INTO`
+  snapshot above first. What each release changes in the file, and the free disk
+  its first start needs, is in
+  [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database).
+- **`DB_PATH` must not contain `?`**; the connector appends its own pragma query
+  string, so startup rejects a path that already carries one.
+
+Docker users get this prewired in `docker-compose.sqlite.yml`; see
+[DOCKER.md](DOCKER.md#sqlite-flavor-no-database-server).
 
 ### 4. Install dependencies
 
@@ -99,6 +146,7 @@ For scripted provisioning: `bin/create-admin -non-interactive -email ... -name .
 
 - Node.js 22 or later (CI and `gocrm-ui/Dockerfile` use 22).
 - npm.
+- A modern web browser.
 
 ### 2. Install and configure
 
