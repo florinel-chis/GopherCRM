@@ -372,8 +372,8 @@ test needs `TEST_MYSQL_DSN` and skips without it.
 
 ## API Reference
 
-The REST surface is enumerated in the [README](../README.md#api-documentation). The complete
-reference is generated and checked in under `api/`:
+The [README](../README.md#api-documentation) points to the reference; the reference itself is the
+list of the REST surface. It is generated and checked in under `api/`:
 
 - `api/swagger.json` and `api/swagger.yaml`: the Swagger 2.0 spec, built by swag v1.16.6 from the
   annotations on the routed handlers, the request/response types in `internal/handler/` and
