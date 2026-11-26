@@ -8,7 +8,7 @@ every tracked docs/**/*.md and README.md (from `git ls-files`, never a
 directory walk), plus the files in EXTRA_DEFAULT_FILES, except the files in
 EXEMPT_FILES (none at present); a file passed explicitly is checked in full,
 exempt or not. Spans are backtick spans outside fenced code blocks.
-Every checked file goes through all four rules.
+Every checked file goes through all six rules; rule f only warns.
 
 a. Paths. A span, without a leading ./ and a trailing :N, :N-M or :N,M, is a
    path when it has no whitespace, contains /, does not start with /, and its
@@ -31,17 +31,31 @@ b. Symbols. A Go symbol is cited as `P.go` `S` (path span, one space, symbol
 c. Line citations. A checked file may not contain a file.go:N, .ts, .tsx,
    .py, .sh or .sql line citation anywhere, fenced blocks included.
 d. Links. Every inline Markdown link ](target) or ](target "title") outside
-   fenced code blocks is judged by its target, the title stripped. A target
-   with a URL scheme or a leading / is not checked, nor is a path that does
-   not end in .md (an image, a source file); the checked targets are a
-   #anchor (same file) and a path ending in .md, optionally followed by a
-   #anchor. The path, resolved against the citing file's directory, must be
-   a tracked file, and the anchor must be a heading slug of the target or an
-   explicit <a name=...> / <a id=...>. A slug is built the way GitHub builds
-   it from a heading outside fenced blocks: inline links replaced by their
-   text, backticks removed, lower-cased, every character other than a letter,
-   digit, _, - or space dropped, spaces turned into -; a repeated slug gets
-   the suffix -1, -2 and so on.
+   fenced code blocks, image links ![..](..) included, is judged by its
+   target, the title stripped. A target with a URL scheme or a leading / is
+   not checked. Any other target is a #anchor (same file) or a relative path
+   of any type (.md, an image, .html, .yml, LICENSE), optionally followed by
+   a #anchor. The path, resolved against the citing file's directory, must be
+   a tracked file or a directory with a tracked file below it. The anchor is
+   checked only on a same-file #anchor and a .md target: it must be a heading
+   slug of the target or an explicit <a name=...> / <a id=...>. A slug is
+   built the way GitHub builds it from a heading outside fenced blocks: inline
+   links replaced by their text, backticks removed, lower-cased, every
+   character other than a letter, digit, _, - or space dropped, spaces turned
+   into -; a repeated slug gets the suffix -1, -2 and so on. Reference-style
+   links ([x]: path) and HTML <img src> are not checked.
+e. Tables. Outside fenced blocks, a line containing | that is directly
+   followed by a delimiter row (a row of | and :---: cells, | required, so a
+   setext underline or a horizontal rule is not one) is a table header, and
+   its column count must equal the delimiter row's. Columns are counted the
+   GFM way: the stripped line loses one leading | and one unescaped trailing
+   |, then splits on every | without a backslash before it; a backtick span
+   does not protect a pipe, as on GitHub. Data rows are not judged, because
+   GitHub pads or cuts them.
+f. Long lines (warning only). A line over LONG_LINE characters outside
+   fenced blocks and table blocks (header, delimiter and following lines up
+   to the first blank line or line without |, judged by rule e or not) is
+   reported as a warning; warnings never change the exit code.
 
 Existence is judged against `git ls-files` only, never the working tree, so
 an untracked or gitignored local file does not count and a local run agrees
@@ -137,6 +151,11 @@ URL_SCHEME = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
 HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
 INLINE_LINK = re.compile(r'!?\[([^\]]*)\]\([^)]*\)')
 HTML_ANCHOR = re.compile(r'<a\s[^>]*\b(?:name|id)\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+# Rule e: a GFM table delimiter row and an unescaped cell separator.
+DELIMITER_ROW = re.compile(r'^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$')
+CELL_SEPARATOR = re.compile(r'(?<!\\)\|')
+# Rule f: the longest line outside fenced blocks and tables that passes without a warning.
+LONG_LINE = 1000
 
 
 def default_repo_root():
@@ -202,6 +221,44 @@ def anchors(text):
         for match in HTML_ANCHOR.finditer(line):
             found.add(match.group(1))
     return found
+
+
+def is_delimiter_row(line):
+    return '|' in line and DELIMITER_ROW.match(line) is not None
+
+
+def column_count(line):
+    """The number of cells GFM counts in a table row."""
+    line = line.strip()
+    if line.startswith('|'):
+        line = line[1:]
+    if line.endswith('|') and not line.endswith('\\|'):
+        line = line[:-1]
+    return len(CELL_SEPARATOR.split(line))
+
+
+def tables(text):
+    """(tables, table lines): (header line, header columns, delimiter columns) of every table
+    outside fenced blocks, and the line numbers of every table block (header, delimiter and the
+    rows up to the first blank line or line without |)."""
+    lines = list(outside_fences(text))
+    found, block = [], set()
+    i = 0
+    while i < len(lines):
+        number, line = lines[i]
+        following = lines[i + 1] if i + 1 < len(lines) else None
+        if ('|' in line and following is not None and following[0] == number + 1
+                and is_delimiter_row(following[1])):
+            found.append((number, column_count(line), column_count(following[1])))
+            block.update((number, following[0]))
+            i += 2
+            while (i < len(lines) and lines[i][0] == lines[i - 1][0] + 1
+                   and lines[i][1].strip() and '|' in lines[i][1]):
+                block.add(lines[i][0])
+                i += 1
+            continue
+        i += 1
+    return found, block
 
 
 def links(text):
@@ -294,14 +351,14 @@ def citations(text):
 
 
 def check(repo_root, files):
-    """Return (problems, counts) for the given repo-relative doc files."""
+    """Return (problems, counts, warnings) for the given repo-relative doc files."""
     repo_root = Path(repo_root)
-    problems = []
-    counts = {'paths': 0, 'skipped': 0, 'symbols': 0, 'links': 0}
+    problems, warnings = [], []
+    counts = {'paths': 0, 'skipped': 0, 'symbols': 0, 'links': 0, 'tables': 0}
     try:
         tree = Tree(repo_root)
     except (OSError, subprocess.CalledProcessError) as exc:
-        return ['git ls-files failed in %s: %s' % (repo_root, exc)], counts
+        return ['git ls-files failed in %s: %s' % (repo_root, exc)], counts, warnings
     parsed = {}
     for name in files:
         doc = repo_root / name
@@ -317,7 +374,7 @@ def check(repo_root, files):
     try:
         declared = go_symbols(repo_root, go_paths)
     except (OSError, RuntimeError, ValueError) as exc:
-        return problems + ['go symbol helper failed: %s' % exc], counts
+        return problems + ['go symbol helper failed: %s' % exc], counts, warnings
 
     for name, (text, paths, pairs) in parsed.items():
         file_paths = file_pairs = 0
@@ -351,12 +408,20 @@ def check(repo_root, files):
             for match in LINE_CITATION.finditer(line):
                 problems.append('%s:%d: `%s`: line citation' % (name, number, line_context(line, match)))
         problems.extend(check_links(repo_root, tree, name, text, counts))
+        found, table_lines = tables(text)
+        for number, header, delimiter in found:
+            counts['tables'] += 1
+            if header != delimiter:
+                problems.append('%s:%d: table header has %d columns, separator %d' % (name, number, header, delimiter))
+        for number, line in outside_fences(text):
+            if number not in table_lines and len(line) > LONG_LINE:
+                warnings.append('%s:%d: warning: line of %d characters (over %d)' % (name, number, len(line), LONG_LINE))
         if name in CONVERTED_FILES:
             if file_paths == 0:
                 problems.append('%s: no path citation found; the extractor or the guide is broken' % name)
             if file_pairs == 0:
                 problems.append('%s: no symbol citation found; the extractor or the guide is broken' % name)
-    return problems, counts
+    return problems, counts, warnings
 
 
 def check_links(repo_root, tree, name, text, counts):
@@ -365,13 +430,13 @@ def check_links(repo_root, tree, name, text, counts):
     cache = {}
     for number, target in links(text):
         path, _, anchor = target.partition('#')
-        if path and not path.endswith('.md'):
-            continue
         counts['links'] += 1
         if path:
             resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), path))
-            if resolved not in tree.files:
+            if resolved not in tree.files and resolved not in tree.dirs:
                 problems.append('%s:%d: `%s`: missing link target' % (name, number, target))
+                continue
+            if not resolved.endswith('.md'):
                 continue
         else:
             resolved = name
@@ -414,14 +479,16 @@ def main(argv=None):
         except (OSError, subprocess.CalledProcessError) as exc:
             print('git ls-files failed in %s: %s' % (repo_root, exc))
             return 1
-    problems, counts = check(repo_root, files)
+    problems, counts, warnings = check(repo_root, files)
     if problems:
-        for line in problems:
+        for line in problems + warnings:
             print(line)
         return 1
-    print('OK: %d path citations, %d symbol citations, %d links, %d skipped placeholders, ignored outputs '
-          'or planned specs, in %d files' % (counts['paths'], counts['symbols'], counts['links'],
-                                             counts['skipped'], len(files)))
+    print('OK: %d path citations, %d symbol citations, %d links, %d tables, %d skipped placeholders, '
+          'ignored outputs or planned specs, in %d files' % (counts['paths'], counts['symbols'], counts['links'],
+                                                             counts['tables'], counts['skipped'], len(files)))
+    for line in warnings:
+        print(line)
     return 0
 
 

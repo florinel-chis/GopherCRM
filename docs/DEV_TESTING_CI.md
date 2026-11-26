@@ -163,7 +163,7 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   symbol citations too (#743), and `internal/config/concurrency_doc_test.go` pins each of its
   auth-service symbols (`internal/service/auth_service.go` and the per-flow files split from it,
   #639) to the statement the doc cites it for (#581).
-  Every doc goes through all four rules. Every backticked
+  Every doc goes through all six rules (a to f; rule f only warns). Every backticked
   repository path must be a tracked file or directory, judged by `git ls-files` only, so an
   untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must
   match a tracked file, and a path with `<`, `>`, `{`, `}` or `$` is a placeholder. The gitignored
@@ -188,13 +188,24 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   Dockerfile line citations in `docs/FORKING.md` and the Compose line citations in
   `docs/DOCKER.md` stay, because tests recompute them from the files
   (`TestComposeUIDocCitations` for `docs/DOCKER.md`) and rule c does not match `.yml` citations.
-  Rule d checks the links: every inline Markdown link outside a fenced block whose target has no
-  URL scheme and does not start with `/` must name a `.md` file, optionally with a `#anchor`, or a
-  bare `#anchor` in the same file. The file is resolved against the citing doc's directory and must
-  be tracked, and the anchor must be the GitHub slug of one of the target's headings outside fenced
-  blocks (link text kept, backticks and punctuation dropped, spaces turned into `-`, a repeated
-  heading suffixed `-1`, `-2`) or an explicit `<a name>`/`<a id>`. A moved or renamed heading
-  therefore fails the check in every doc that still links its old anchor.
+  Rule d checks the links: every inline Markdown link outside a fenced block, image links
+  included, whose target has no URL scheme and does not start with `/` must name a
+  local file of any type (a `.md` doc, an image, an `.html`, `.yml` or `LICENSE` file), optionally
+  with a `#anchor`, or a bare `#anchor` in the same file. The path is resolved against the citing
+  doc's directory and must be a tracked file or a directory with a tracked file below it. The
+  anchor is checked on a `.md` target or in the same file, never on another file type, and must be
+  the GitHub slug of one of the target's headings outside fenced blocks (link text kept, backticks
+  and punctuation dropped, spaces turned into `-`, a repeated heading suffixed `-1`, `-2`) or an
+  explicit `<a name>`/`<a id>`. A moved or renamed heading therefore fails the check in every doc
+  that still links its old anchor. Reference-style links and HTML `<img src>` are not checked.
+  Rule e checks the tables: outside fenced blocks, a line with `|` directly followed by a
+  delimiter row (`|---|:--:|`, a `|` required) is a table header, and its column count must equal
+  the delimiter row's, or the check reports `table header has N columns, separator M`. Columns
+  are counted the way GitHub counts them: one leading and one unescaped trailing `|` dropped, then
+  a split on every `|` without a backslash before it, a pipe inside backticks included. Data rows
+  are not judged, because GitHub pads or cuts them. Rule f only warns: a line over 1,000
+  characters outside fenced blocks and table blocks is printed as
+  `warning: line of N characters (over 1000)` and leaves the exit code unchanged.
   Its unit test, `scripts/ci/tests/test_doc_citations.py`, runs the check with its default
   discovery on the real tree inside `make verify-hygiene`.
 
