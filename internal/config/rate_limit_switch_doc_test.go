@@ -67,7 +67,7 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 	t.Run("every page names the strict tier and the SCIM limits", func(t *testing.T) {
 		lifts := regexp.MustCompile(`\b(lifts?|bypass(es)?)\b`)
 		for _, page := range []string{
-			"README.md",
+			"docs/KNOWN_LIMITATIONS.md",
 			"docs/FEATURES.md",
 			"docs/AUTHORIZATION.md",
 			"docs/DEVELOPMENT.md",
@@ -97,7 +97,7 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 
 	t.Run("the production refusal is kept", func(t *testing.T) {
 		for _, page := range []string{
-			"README.md",
+			"docs/KNOWN_LIMITATIONS.md",
 			"docs/FEATURES.md",
 			"docs/AUTHORIZATION.md",
 			"docs/DEVELOPMENT.md",

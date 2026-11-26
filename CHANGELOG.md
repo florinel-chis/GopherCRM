@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README is now a short landing page (#786): the intro, a short feature list, the quick start,
+  Docker, deploying, a documentation list and the API pointer. Known Limitations moved to a new
+  page, `docs/KNOWN_LIMITATIONS.md`, and every link to it was updated. Prerequisites and setup,
+  including the clone step and the SQLite operational notes, merged into `docs/SETUP.md`;
+  Development, Project Structure and Tech Stack merged into `docs/DEVELOPMENT.md`. The usage
+  sections were removed, because `docs/user-guide/` holds them, and the fork notes, because
+  `docs/FORKING.md` covers them. The doc tests that read README's documentation table now read the
+  index in `docs/README.md`. Docs and doc tests only.
 - README's per-endpoint API lists (23 route groups) are replaced by a short "API Documentation"
   section that points to the generated reference in `api/` (`index.html`, `swagger.yaml`,
   `swagger.json`), names the SCIM server and keeps the `GET /health` webhooks field. Every removed

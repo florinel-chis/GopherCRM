@@ -90,7 +90,7 @@ Checked against the code on `98dabb04` (#733):
   (`AEOHandler.Export` (`internal/handler/aeo_export.go`), #244); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
   single quote is delivered, #384).
 - Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
-  not apply and the server ships no CSRF protection (README "Known Limitations"). A cookie session
+  not apply and the server ships no CSRF protection ([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). A cookie session
   added in a fork must ship with session-bound CSRF protection (#261).
 - An issued JWT ends early only through the events that increment `users.token_version` (#236):
   logout (including the single sign-on front-channel logout, `GET /auth/oidc/frontchannel-logout`,
@@ -98,9 +98,9 @@ Checked against the code on `98dabb04` (#733):
   an administrator or through SCIM, where a provider DELETE deactivates too), a SCIM group change
   that leaves the account in no mapped group, and a SCIM group change that gives it a role lacking
   a permission the old one had; an erased account's tokens are refused as well. A role change made any other way does not end it, and the token a refresh
-  rotation replaces stays valid until it expires (README "Known Limitations").
+  rotation replaces stays valid until it expires ([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)).
 - The automation worker (#237) and AEO runs with the daily schedule (#229) are coordinated across
-  replicas on MySQL/MariaDB (README "Known Limitations"; section 5.4). Several processes on one
+  replicas on MySQL/MariaDB ([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md); section 5.4). Several processes on one
   SQLite file are not supported.
 
 ### 1.3 Open issues you inherit
@@ -258,7 +258,7 @@ conflict on each upstream sync.
 | Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` (`createAppTheme`); the light theme's primary colour follows the `ui.theme.primary_color` setting for signed-in users |
 | Mail subjects and body | the product name in the password reset subject and body, the quote subject and the ticket reply subject comes from `general.company_name` through `service.ResolveMailProductName` (`internal/service/product_name.go`), else `GopherCRM`, and is configurable in Settings; the templates stay in `internal/mailer/smtp.go` (`SendPasswordReset`, password reset), `internal/service/quote_email.go` (`QuoteEmailSubject`) and `internal/service/ticket_comment_email.go` (`TicketCommentEmailSubject`) |
 | API title | `// @title` in the general API block above `main` (`cmd/main.go`), then `make swagger` |
-| README images | `docs/img/gophercrm-*.png` |
+| README and user-guide images | `docs/img/gophercrm-*.png` |
 
 The **Settings** company name (`general.company_name`) and primary colour
 (`ui.theme.primary_color`) apply to the signed-in UI (#291): the name appears in the navigation
@@ -307,8 +307,9 @@ Change these before your first release or before running the tooling against you
 - `REPO` (the `REPO =` assignment in `scripts/release/release.py`) — the release script creates, downloads and publishes
   releases on this repository.
 - the `*` owner line of `.github/CODEOWNERS`.
-- README badges and links in `README.md` (the CI and latest-release badges, the two `git clone` commands and the Releases link) and the compare links at the end of
-  `CHANGELOG.md`.
+- README badges and links in `README.md` (the CI and latest-release badges, the Quick start `git clone` command and
+  the Releases link in the Documentation section), the `git clone` step in `docs/SETUP.md` and the compare links at
+  the end of `CHANGELOG.md`.
 - If you use the remediation runner: `repository`, `tracker` (issue 94 upstream), the issue lists
   and `completion_target` in your copy of `automation/langflow/gophercrm_runner/config.example.json`.
 
@@ -422,7 +423,7 @@ environment. `docs/AEO_SECURITY.md` explains why. So can `OIDC_GRAPH_MAX_PAGES`,
 >   `/api/v1/auth/oidc/frontchannel-logout`. Left at their
 >   defaults, both send recipients to `localhost`.
 > - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
->   reports success (README "Known Limitations"); form mail and ticket comment mail
+>   reports success ([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)); form mail and ticket comment mail
 >   (`email_customer`, #219) are then recorded `log_only`. A form mail
 >   that fails is recorded per mail and shown to staff (`GET /forms/deliveries`), and admin and
 >   sales retry it by hand; nothing retries automatically.
@@ -548,8 +549,8 @@ renews every 30 s; every write after the claim (step advance, release, both emai
 a check just before the send) is fenced on that owner, and a stale sweep at boot and at every tick
 recovers a run whose heartbeat is older than 3 minutes, so a run of a crashed replica is resumed by
 another without a restart and a live run is never touched. Replica clocks must agree to well under
-90 s, and an upgrade stops every replica before starting the new version (README "Known
-Limitations"). Rate limits are per process, so they are not shared between replicas. The form
+90 s, and an upgrade stops every replica before starting the new version
+([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). Rate limits are per process, so they are not shared between replicas. The form
 retention purge (`FORM_RETENTION_DAYS`) is also safe on every replica, because extra sweeps only
 compete for the same rows.
 

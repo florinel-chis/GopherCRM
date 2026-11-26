@@ -563,7 +563,7 @@ it is the cleanest removal.
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (the `aeo.view` `ProtectedRoute` group in `routes/index.tsx`), the AEO nav group (`MainLayout.tsx`, the `title: 'AEO'` entry), the AEO case in `ConfigurationSettings.test.tsx` |
 | Tests and CI | AEO tests; `aeo-providers.spec.ts`; screenshot spec `10-aeo.spec.ts`; the `aeo` profile, `AEO_REQUIRED_ROOTS` and the `aeo` entry in `validation.py` (imported at the top of `scripts/ci/check-go.py`); the AEO port and variables in `scripts/e2e/run.sh`; `internal/aeo/tls_roots_e2e.go` goes with the package |
-| Docs | `docs/AEO_SECURITY.md`, `docs/testing/11-aeo.md`, README and FEATURES sections |
+| Docs | `docs/AEO_SECURITY.md`, `docs/testing/11-aeo.md`, `docs/user-guide/aeo.md`, the README feature bullet and FEATURES sections |
 
 **Other modules:**
 

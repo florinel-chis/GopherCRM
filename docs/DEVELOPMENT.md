@@ -6,8 +6,8 @@ Reference for developers working in this repository: commands, layering, and the
 codebase enforces. For first-time setup instructions see [SETUP.md](SETUP.md); for the
 feature and test-coverage matrix see [FEATURES.md](FEATURES.md).
 
-This page keeps the overview, the commands, the architecture, the package map, the conventions,
-the gotchas, the configuration and the API reference. The long-form sections live on seven topic
+This page keeps the overview, the commands, the architecture, the package map and the repository
+layout, the tech stack, the conventions, the gotchas, the configuration and the API reference. The long-form sections live on seven topic
 pages, listed under [Topic pages](#topic-pages).
 
 ## Project Overview
@@ -39,6 +39,9 @@ go test -run TestFunctionName ./internal/service/
 
 # Run tests for a specific package
 go test ./internal/handler/
+
+# Run the integration suites (in-memory SQLite, no MySQL needed)
+go test ./test/integration/ ./tests/
 ```
 
 ### Frontend (run from `gocrm-ui/`)
@@ -46,6 +49,7 @@ go test ./internal/handler/
 ```bash
 npm run dev            # Vite dev server (expects the backend on :8080)
 npm run build          # tsc -b && vite build
+npm run preview        # Serve the production build locally
 npm run lint           # ESLint (lint:fix to auto-fix)
 npm run format         # Prettier over src/
 npm test               # Vitest unit tests (watch mode)
@@ -151,6 +155,62 @@ The authentication flows are mapped to their code in
 | `internal/egress` | The guard for outbound requests to URLs an administrator or a user supplied | [DEV_RUNTIMES.md](DEV_RUNTIMES.md#outbound-webhooks-345) |
 | `internal/lifecycle` | The loop and the owner every background runtime is built from | [DEV_RUNTIMES.md](DEV_RUNTIMES.md) |
 | `internal/testsupport` | Test-only helpers that open the SQLite and MySQL test databases | [DEV_TESTING_CI.md](DEV_TESTING_CI.md#testing) |
+
+### Outside `internal/`
+
+The rest of the repository, beside the packages above:
+
+```
+cmd/                  # The server (main.go: entry point and setupDependencies wiring; the background runtimes)
+├── create-admin/     # CLI that provisions an admin account
+└── migrate/          # Runner for the MySQL/MariaDB SQL migrations
+test/integration/     # Integration tests (in-memory SQLite)
+tests/                # Further integration tests
+migrations/           # MySQL/MariaDB SQL migrations, up/down pairs
+scripts/              # create_database.sql, anonymize_legacy_deleted_pii.sql, seed and smoke scripts,
+                      # ci/ (checks and planners), release/, deploy/, e2e/ (the make e2e driver), git-hooks/
+api/                  # Generated Swagger 2.0 spec and static HTML reference (make swagger)
+docs/                 # This documentation; index in README.md
+gocrm-ui/             # React TypeScript frontend
+├── src/
+│   ├── api/          # Axios client and per-entity endpoint modules
+│   ├── components/   # Reusable UI components
+│   ├── contexts/     # React contexts (auth, config, snackbar)
+│   ├── hooks/        # Custom React hooks
+│   ├── layouts/      # Shell layouts
+│   ├── pages/        # Pages per entity
+│   ├── routes/       # Route table
+│   ├── test/         # Vitest setup and helpers
+│   ├── theme/        # Material-UI theme
+│   ├── types/        # TypeScript type definitions
+│   └── utils/        # Helpers (dates, API errors)
+├── e2e/              # Playwright suites, page objects and global setup
+└── public/           # Static assets
+```
+
+## Tech stack
+
+Backend:
+
+- **Go 1.25+**.
+- **Gin 1.10**: HTTP framework.
+- **GORM 1.30**: ORM. **MySQL 8.0+** is the default database; **SQLite** is a supported alternative
+  through `DB_DRIVER` (pure-Go driver, no cgo) and is what the test suite runs on.
+- **JWT** (`golang-jwt/jwt/v5`): access tokens.
+- **Logrus**: structured logging.
+- **Testify**: unit and integration test suites.
+
+Frontend:
+
+- **React 19** with **TypeScript 5.8**.
+- **Material-UI (MUI) v7**: component library.
+- **React Router 7**: client-side routing.
+- **TanStack Query 5**: data fetching and caching.
+- **React Hook Form + Zod**: forms and validation.
+- **Axios**: HTTP client.
+- **Recharts**: dashboard charts.
+- **Vite 6**: build tool and dev server.
+- **Vitest 3 + Playwright**: unit and end-to-end tests.
 
 ## Topic pages
 
@@ -355,7 +415,8 @@ driver-specific decision — dialector, DSN shape, connection pool.
 Auto-migration runs on startup via `models.MigrateDatabase()` and is the **only** schema path on
 SQLite: the SQL files in `migrations/` are written for MySQL. The global DB handle is `models.DB`.
 The data model is documented in [datamodel.md](datamodel.md). Operational notes for the SQLite
-flavour — single-connection pool, WAL, backups — are in the README and [DOCKER.md](DOCKER.md).
+flavour — single-connection pool, WAL, backups — are in [SETUP.md](SETUP.md#sqlite) and
+[DOCKER.md](DOCKER.md).
 
 On MySQL and MariaDB both paths exist. `models.MigrateDatabaseWith` creates every table with
 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, the options the SQL migrations

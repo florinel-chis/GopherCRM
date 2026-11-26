@@ -20,6 +20,9 @@ answers. Start with one of the three paths below. If you already know your role,
 
 - [user-guide/README.md](user-guide/README.md): the user guide index, for people who use the web
   app day to day and for the administrators who set it up for them.
+- [user-guide/permissions-access/overview.md](user-guide/permissions-access/overview.md): the
+  administrator guide: roles and permissions, single sign-on, API keys, the sign-in audit, webhooks
+  and an FAQ.
 
 ## Running it: install and operate
 
@@ -92,6 +95,8 @@ answers. Start with one of the three paths below. If you already know your role,
 - [SCREENSHOTS.md](SCREENSHOTS.md): reference images of every user-facing screen.
 - [../CHANGELOG.md](../CHANGELOG.md): what changed in each release, and what is not released yet.
 - [ROADMAP.md](ROADMAP.md): ideas that are not implemented today.
+- [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md): what the shipped code does not do, or does only under
+  conditions: token lifetime, sessions, mail without SMTP, replicas, rate limits and retention.
 
 ## Historical material (not current)
 
