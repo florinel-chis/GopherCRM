@@ -1,5 +1,7 @@
 # GopherCRM Setup Guide
 
+> **For:** Developers setting up the backend and frontend locally. Part of the [documentation index](README.md).
+
 This guide sets up the backend and the frontend for local development. For a fork (first run, rebranding,
 configuration that matters in production, deployment), read [FORKING.md](FORKING.md), section 2 "First
 run", instead of repeating it here. Docker users read [DOCKER.md](DOCKER.md).

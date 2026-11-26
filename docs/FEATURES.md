@@ -1,5 +1,7 @@
 # GopherCRM Feature Documentation & Test Coverage
 
+> **For:** Anyone checking what is implemented and how it is tested. Part of the [documentation index](README.md).
+
 > **Last updated:** 2026-11-23: coverage and status of rows 1.4, 1.6, 1.12, 2.1 and 8.1–8.3, the seven webhook entities in the 10d introduction, gaps G11, G13, G15 and G35, and the count tables (E2E recounted, the others marked as not recounted). Before that, 2026-10-31 for task list and form frontend coverage (rows 6.1, 6.2) and resolved gaps G12, G33 and G36.
 > **Baseline audit:** 2026-08-05; historical suite totals below have not been recounted.
 > **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.

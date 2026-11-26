@@ -1,5 +1,7 @@
 # Running GopherCRM with Docker
 
+> **For:** Anyone running GopherCRM with Docker Compose. Part of the [documentation index](README.md).
+
 The stack is three containers wired by `docker-compose.yml` at the repo root:
 
 | Service   | Image                          | Purpose                                   | Host port |

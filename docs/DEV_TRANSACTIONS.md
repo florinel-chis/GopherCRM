@@ -1,5 +1,7 @@
 # Transactions and request context
 
+> **For:** Developers changing transactions or request-context handling. Part of the [documentation index](README.md).
+
 How the transaction manager behaves on every driver, the service transaction unit that
 binds repositories, webhook events and automation writes to one transaction, and which entry
 points run on the request context. The table that says which primitive to choose is under

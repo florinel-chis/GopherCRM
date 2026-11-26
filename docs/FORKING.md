@@ -1,5 +1,7 @@
 # Forking GopherCRM
 
+> **For:** Teams running GopherCRM under their own name. Part of the [documentation index](README.md).
+
 This guide is for someone who wants to run GopherCRM under their own name, change it, and keep
 taking upstream fixes. It covers what the code base gives you, the first run, rebranding,
 configuration, deployment, CI on a fork and staying in sync with upstream.

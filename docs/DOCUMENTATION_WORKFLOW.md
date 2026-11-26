@@ -1,5 +1,7 @@
 # Documentation maintenance through PR completion
 
+> **For:** Contributors who change behaviour or docs in a pull request. Part of the [documentation index](README.md).
+
 Documentation is assessed and updated in the same PR as the behavior it describes.
 The independent reviewer checks that assessment before merge. The local runner then
 verifies that the reviewed documentation landed before completing the item or advancing

@@ -1,5 +1,7 @@
 # Roles and permissions
 
+> **For:** Developers changing roles, permissions or the governed user writes. Part of the [documentation index](README.md).
+
 Role assignment, the storage of custom roles, the admin-only permissions, the role API with the
 governed user writes, and the guard that keeps at least one active admin. The permission each
 route requires is listed in [AUTHORIZATION.md](AUTHORIZATION.md). Part of the developer guide; the index is in [DEVELOPMENT.md](DEVELOPMENT.md).

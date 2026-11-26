@@ -1,5 +1,7 @@
 # GopherCRM Use Cases
 
+> **For:** Teams deciding whether GopherCRM fits. Part of the [documentation index](README.md).
+
 Starting points for teams deciding whether GopherCRM fits their business, and what they would have
 to configure or build first. Each recipe describes what the code does today, with the repository
 path that does it, and lists the gaps that stand in the way, with the issue that tracks each one.

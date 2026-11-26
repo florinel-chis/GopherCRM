@@ -1,5 +1,7 @@
 # Authorization
 
+> **For:** Administrators and developers who need to know who may do what. Part of the [documentation index](README.md).
+
 Who may do what in GopherCRM: the permission catalogue, the fixed matrices of the four system
 roles, custom roles, and the rules that govern role changes. It describes the code on `main`; the
 sign-in design at the end is a note for later work and says so.

@@ -1,5 +1,7 @@
 # Testing and CI
 
+> **For:** Developers changing tests, CI jobs or their gates. Part of the [documentation index](README.md).
+
 Where the tests live and how they run, the CI jobs and their gates, the documentation checks,
 the system-role route matrix, the sign-in and SCIM characterisation gate, the Vitest timeouts
 and the API docs gate. The validation profiles are in

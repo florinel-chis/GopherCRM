@@ -1,5 +1,7 @@
 # Authentication
 
+> **For:** Developers changing sign-in, sessions, API keys, single sign-on or SCIM. Part of the [documentation index](README.md).
+
 Password sign-in, sessions and refresh tokens, API keys, credential issuance and revocation,
 single sign-on with OpenID Connect, the SCIM provider and the web client session. Roles and
 permissions are in [DEV_RBAC.md](DEV_RBAC.md); the route-by-route permission reference is in

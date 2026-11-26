@@ -1,5 +1,7 @@
 # Roadmap
 
+> **For:** Anyone checking what is not implemented yet. Part of the [documentation index](README.md).
+
 Unprioritized ideas that are **not** implemented today. This list is the salvaged remainder of two
 pre-implementation build checklists (`tasks.md` and `uitasks.md`) that were removed once the
 features they planned had shipped; only items verified as still missing are kept here. Shipped
