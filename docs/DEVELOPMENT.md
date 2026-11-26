@@ -33,6 +33,7 @@ make deps           # Download and tidy Go modules
 make clean          # Remove bin/
 make build-tools    # Build CLI tools to bin/
 make create-admin   # Run admin creation tool (requires build-tools first)
+make sample-data    # Rebuild sample-data/halvenmark.db, a fictional demo business (docs/SAMPLE_DATA.md)
 
 # Run a single test
 go test -run TestFunctionName ./internal/service/
@@ -163,7 +164,8 @@ The rest of the repository, beside the packages above:
 ```
 cmd/                  # The server (main.go: entry point and setupDependencies wiring; the background runtimes)
 ├── create-admin/     # CLI that provisions an admin account
-└── migrate/          # Runner for the MySQL/MariaDB SQL migrations
+├── migrate/          # Runner for the MySQL/MariaDB SQL migrations
+└── sampledata/       # Sample data generator: a fresh database with a fictional business (SAMPLE_DATA.md)
 test/integration/     # Integration tests (in-memory SQLite)
 tests/                # Further integration tests
 migrations/           # MySQL/MariaDB SQL migrations, up/down pairs

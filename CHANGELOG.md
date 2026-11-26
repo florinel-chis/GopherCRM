@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A sample data generator, `cmd/sampledata`, and `make sample-data`. It builds a fresh SQLite or
+  MySQL/MariaDB database, runs the server's own auto-migration and configuration defaults, and
+  writes every record through the shipped services. The first profile, `halvenmark`, is a
+  fictional commerce agency: 14 users (admin, sales, support, a custom role and one customer
+  login), 600 leads, 250 customers, 120 companies, 180 deals, 15 products, 140 quotes, 400 tickets
+  with comments, 800 tasks with labels, 60 notifications, three automation rules, a form and two
+  inactive webhook endpoints, with dates spread over 18 months. Output is deterministic for a seed
+  and a day, `--scale` multiplies the volumes, and every email, website and phone number is in a
+  reserved range. `SERVER_MODE=production` is refused. See `docs/SAMPLE_DATA.md`. Development
+  tool only; it is not part of the release artifact.
 - A documentation index, `docs/README.md`, that groups every document by reader, opens with three
   start-here paths (try it locally, deploy to a server, start developing) and gives each document
   one line on what it answers. Each top-level page in `docs/` now opens with a line saying who it
