@@ -140,6 +140,11 @@ For scripted provisioning: `bin/create-admin -non-interactive -email ... -name .
 (at least 10 characters with upper case, lower case, a digit and a special character,
 `internal/utils/password.go`) when the password is changed later, so choose one that meets it.
 
+For a populated database instead of an empty one, `make sample-data` builds
+`sample-data/halvenmark.db` with a fictional business, its admin and its staff logins; start the
+backend on it with `DB_DRIVER=sqlite DB_PATH=sample-data/halvenmark.db`. See
+[SAMPLE_DATA.md](SAMPLE_DATA.md).
+
 ## Frontend Setup
 
 ### 1. Prerequisites

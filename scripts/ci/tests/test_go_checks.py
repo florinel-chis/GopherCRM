@@ -57,6 +57,7 @@ elif sys.argv[1] == 'test':
             for feature in ('Lead', 'Form', 'Deal', 'Company', 'AEO', 'Bulk'):
                 self.assertTrue(any(feature in name for name in selected[package]), (package, feature))
         self.assertIn('TestLeadConversionTransaction', selected['test/integration'])
+        self.assertIn('TestSampleDataMySQL', selected['cmd/sampledata'])
         for name in ('TestErasureCrossRootMySQL', 'TestErasureGraphChangedMySQL',
                      'TestErasureInvalidatesQuoteResponseTokensMySQL',
                      'TestErasureQuoteTokenWritesLeaveGapsFreeMySQL',

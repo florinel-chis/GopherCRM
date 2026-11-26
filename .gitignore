@@ -77,6 +77,7 @@ server.log
 *.sqlite3
 *.sql.gz
 *.dump
+/sample-data/
 
 # ---------------------------------------------------------------------------
 # Local editor and tooling workspace

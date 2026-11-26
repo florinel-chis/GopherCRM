@@ -54,6 +54,8 @@ answers. Start with one of the three paths below. If you already know your role,
 
 ## Developing
 
+- [SAMPLE_DATA.md](SAMPLE_DATA.md): generating a database filled with a fictional business for
+  demos, screenshots and local development (`make sample-data`).
 - [DEVELOPMENT.md](DEVELOPMENT.md): the developer guide: commands, layering, the package map and
   the conventions the code base enforces, with an index of the topic pages below.
 - [DEV_TRANSACTIONS.md](DEV_TRANSACTIONS.md): how the transaction manager behaves on every driver,

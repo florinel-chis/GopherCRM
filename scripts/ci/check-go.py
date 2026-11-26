@@ -48,6 +48,7 @@ TRANSACTION_SOURCES = {
                             'erasure_cancellation_test.go'),
     'test/integration': ('lead*_test.go', 'company*_test.go', 'deal*_test.go',
                          'bulk*_test.go', 'form*_test.go', 'erasure_atomicity_test.go'),
+    'cmd/sampledata': ('sampledata_mysql_test.go',),
 }
 AEO_SOURCES = {
     'cmd': ('*_test.go',),
