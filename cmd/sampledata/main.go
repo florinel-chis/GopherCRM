@@ -6,6 +6,7 @@
 // entered through the API.
 //
 //	go run ./cmd/sampledata --profile halvenmark --seed 1 --out sample-data/halvenmark.db
+//	go run ./cmd/sampledata --profile pelicroft --seed 1 --out sample-data/pelicroft.db
 //	go run ./cmd/sampledata --profile halvenmark --seed 1 --dsn 'user:pass@tcp(127.0.0.1:3306)/gophercrm_demo'
 //
 // It reads .env and the environment like the server (JWT_SECRET is required
@@ -153,7 +154,7 @@ func runAt(args []string, stdout io.Writer, anchor time.Time) (err error) {
 		return fmt.Errorf("failed to initialize default configurations: %w", err)
 	}
 
-	gen := newGenerator(db, buildServices(db, cfg), opts.profile, opts.seed, opts.scale, anchor)
+	gen := newGenerator(db, buildServices(db, cfg, opts.profile), opts.profile, opts.seed, opts.scale, anchor)
 	if err := gen.run(); err != nil {
 		return err
 	}
@@ -166,7 +167,7 @@ func runAt(args []string, stdout io.Writer, anchor time.Time) (err error) {
 	if err := models.CloseDatabase(); err != nil {
 		return fmt.Errorf("failed to close database: %w", err)
 	}
-	printSummary(stdout, opts, dbCfg, counts)
+	printSummary(stdout, opts, dbCfg, counts, gen.summaryLines())
 	return nil
 }
 
@@ -284,7 +285,7 @@ func countTables(db *gorm.DB) (map[string]int64, error) {
 	return counts, nil
 }
 
-func printSummary(w io.Writer, opts *options, dbCfg *config.DatabaseConfig, counts map[string]int64) {
+func printSummary(w io.Writer, opts *options, dbCfg *config.DatabaseConfig, counts map[string]int64, extra []string) {
 	target := dbCfg.Path
 	if dbCfg.Driver == config.DriverMySQL {
 		target = "MySQL database " + dbCfg.Name
@@ -292,6 +293,9 @@ func printSummary(w io.Writer, opts *options, dbCfg *config.DatabaseConfig, coun
 	fmt.Fprintf(w, "Generated profile %s (seed %d, scale %g) into %s\n\n", opts.profile.Name, opts.seed, opts.scale, target)
 	for _, table := range summaryTables {
 		fmt.Fprintf(w, "  %-20s %6d\n", table, counts[table])
+	}
+	for _, line := range extra {
+		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintf(w, "\nAdmin sign-in:  %s\n", opts.profile.AdminEmail())
 	fmt.Fprintf(w, "Demo password:  %s  (local-demo value shared by every generated account; never use it elsewhere)\n", opts.profile.DemoPassword)

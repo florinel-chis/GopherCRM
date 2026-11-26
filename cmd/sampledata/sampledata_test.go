@@ -51,9 +51,16 @@ func generate(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// generateSQLite generates the halvenmark profile at testScale.
 func generateSQLite(t *testing.T, path string, seed int, extra ...string) string {
 	t.Helper()
-	args := append([]string{"--profile", "halvenmark", "--seed", fmt.Sprint(seed), "--scale", testScale, "--out", path}, extra...)
+	return generateProfileSQLite(t, "halvenmark", path, seed, extra...)
+}
+
+// generateProfileSQLite generates the named profile at testScale.
+func generateProfileSQLite(t *testing.T, profile, path string, seed int, extra ...string) string {
+	t.Helper()
+	args := append([]string{"--profile", profile, "--seed", fmt.Sprint(seed), "--scale", testScale, "--out", path}, extra...)
 	out, err := generate(t, args...)
 	require.NoError(t, err)
 	return out
@@ -236,10 +243,13 @@ func signIn(t *testing.T, db *gorm.DB, email, password string) error {
 
 // ---- determinism ------------------------------------------------------------
 
-// digest hashes the selected fields of a generated database in id order.
+// digestQuery selects the hashed columns of one table.
+type digestQuery struct{ table, columns string }
+
+// digest hashes the selected fields of a halvenmark database in id order.
 func digest(t *testing.T, db *gorm.DB) string {
 	t.Helper()
-	queries := []struct{ table, columns string }{
+	return digestWith(t, db, []digestQuery{
 		{"users", "email, role, created_at"},
 		{"leads", "first_name, last_name, email, status, source, owner_id, created_at"},
 		{"companies", "name, domain, created_at"},
@@ -250,7 +260,12 @@ func digest(t *testing.T, db *gorm.DB) string {
 		{"tickets", "title, status, (SELECT COUNT(*) FROM ticket_comments WHERE ticket_comments.ticket_id = tickets.id), created_at"},
 		{"tasks", "title, status, due_date, created_at"},
 		{"labels", "name"},
-	}
+	})
+}
+
+// digestWith hashes the given fields of a generated database in id order.
+func digestWith(t *testing.T, db *gorm.DB, queries []digestQuery) string {
+	t.Helper()
 	h := sha256.New()
 	for _, q := range queries {
 		rows, err := db.Table(q.table).Select(q.columns).Order("id").Rows()

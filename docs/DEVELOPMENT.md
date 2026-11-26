@@ -33,7 +33,7 @@ make deps           # Download and tidy Go modules
 make clean          # Remove bin/
 make build-tools    # Build CLI tools to bin/
 make create-admin   # Run admin creation tool (requires build-tools first)
-make sample-data    # Rebuild sample-data/halvenmark.db, a fictional demo business (docs/SAMPLE_DATA.md)
+make sample-data    # Rebuild sample-data/halvenmark.db and sample-data/pelicroft.db, two fictional demo businesses (docs/SAMPLE_DATA.md)
 
 # Run a single test
 go test -run TestFunctionName ./internal/service/

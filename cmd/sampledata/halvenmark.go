@@ -148,7 +148,9 @@ func halvenmarkProfile() *Profile {
 			"Ticket waiting on your reply", "Quote accepted by the client", "Task due tomorrow",
 		},
 
-		Form: models.Form{
+		QuoteTitle: "Service proposal",
+
+		Forms: []models.Form{{
 			Name:            "Project enquiry",
 			Description:     "Enquiry form on the Halvenmark website.",
 			Status:          models.FormStatusPublished,
@@ -163,7 +165,7 @@ func halvenmarkProfile() *Profile {
 				{Name: "notes", Label: "What do you need?", Type: "textarea"},
 			},
 			AllowedDomains: []string{"www.halvenmark.example"},
-		},
+		}},
 		Webhooks: []WebhookDef{
 			{URL: "https://hooks.halvenmark.example/crm/leads", EventTypes: []string{"lead.created", "lead.updated"}},
 			{URL: "https://hooks.halvenmark.example/crm/deals", EventTypes: []string{"deal.created", "deal.updated"}},
@@ -186,7 +188,7 @@ func halvenmarkProfile() *Profile {
 
 // halvenmarkRules are the three automation rules. Only the first is enabled,
 // and it has no send_email step: a demo database never mails anyone.
-func halvenmarkRules() []models.AutomationRule {
+func halvenmarkRules(RuleRefs) []models.AutomationRule {
 	return []models.AutomationRule{
 		{
 			Name:        "Call back new leads",

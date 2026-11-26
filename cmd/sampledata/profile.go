@@ -64,12 +64,34 @@ type Profile struct {
 
 	NotificationTitles []string
 
-	Form     models.Form
+	// QuoteTitle prefixes the title of a quote written without a deal.
+	QuoteTitle string
+
+	// Forms are created in this order through the form service. halvenmark
+	// has exactly one, a lead form that receives no submission; a profile
+	// with a Storefront has its contact, wholesale and newsletter forms.
+	Forms    []models.Form
 	Webhooks []WebhookDef
-	// Rules returns the automation rules; exactly one may be enabled.
-	Rules func() []models.AutomationRule
+	// Rules returns the automation rules. It runs after the users and the
+	// forms exist, so a rule can name their ids through refs. No enabled rule
+	// may have a send_email or wait step: a demo database never mails anyone
+	// and leaves no run waiting.
+	Rules func(refs RuleRefs) []models.AutomationRule
+
+	// Storefront, when set, makes the profile an online shop whose
+	// shoppers, wholesale leads, newsletter sign-ups and support tickets
+	// arrive through its published forms (storefront.go). nil for
+	// halvenmark.
+	Storefront *Storefront
 
 	Volumes Volumes
+}
+
+// RuleRefs are the ids a Rules builder may use: the forms by name and the
+// users by email.
+type RuleRefs struct {
+	FormIDs map[string]uint
+	UserIDs map[string]uint
 }
 
 // StaffMember is one generated account.
@@ -105,8 +127,15 @@ type WebhookDef struct {
 }
 
 // Volumes are the record counts at scale 1. Every field is scaled by
-// --scale; the fixed sets (users, products, labels, rules, the form and the
-// webhooks) are the lengths of the profile's lists instead.
+// --scale; the fixed sets (users, products, labels, rules, the forms and the
+// webhooks) are the lengths of the profile's lists instead. A volume of 0
+// stays 0: the profile has no records of that kind.
+//
+// halvenmark writes Leads, Tickets and Notifications directly. A storefront
+// profile leaves them 0: its leads are the WholesaleEnquiries, its tickets
+// open from ContactSubmissions and its notifications come from automation.
+// ConvertedLeads are then the converted wholesale leads, and Customers counts
+// the shoppers plus those converted customers.
 type Volumes struct {
 	Leads          int
 	ConvertedLeads int
@@ -117,10 +146,17 @@ type Volumes struct {
 	Tickets        int
 	Tasks          int
 	Notifications  int
+
+	ContactSubmissions int
+	WholesaleEnquiries int
+	NewsletterSignups  int
 }
 
-// scaledCount is max(1, round(n*scale)).
+// scaledCount is 0 for n = 0 and max(1, round(n*scale)) otherwise.
 func scaledCount(n int, scale float64) int {
+	if n == 0 {
+		return 0
+	}
 	v := int(math.Round(float64(n) * scale))
 	if v < 1 {
 		return 1
@@ -140,6 +176,10 @@ func (v Volumes) Scaled(scale float64) Volumes {
 		Tickets:        scaledCount(v.Tickets, scale),
 		Tasks:          scaledCount(v.Tasks, scale),
 		Notifications:  scaledCount(v.Notifications, scale),
+
+		ContactSubmissions: scaledCount(v.ContactSubmissions, scale),
+		WholesaleEnquiries: scaledCount(v.WholesaleEnquiries, scale),
+		NewsletterSignups:  scaledCount(v.NewsletterSignups, scale),
 	}
 }
 
@@ -158,6 +198,7 @@ func (p *Profile) staffEmail(m StaffMember) string {
 // profiles is the registry of --profile values.
 var profiles = map[string]func() *Profile{
 	"halvenmark": halvenmarkProfile,
+	"pelicroft":  pelicroftProfile,
 }
 
 func profileNames() []string {

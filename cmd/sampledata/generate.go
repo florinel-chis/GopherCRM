@@ -22,10 +22,22 @@ const backdateMonths = 18
 
 // services are the shipped services the generator writes through, built
 // with the constructors and options setupDependencies in cmd/main.go uses.
-// Deliberately left out: the automation-event and webhook-emitter options
-// (a fresh database must hold no pending automation event and no webhook
-// delivery, or the server's workers would act on first boot), the AEO
-// runtime and the quote PDF renderer.
+//
+// halvenmark: every service is left without the automation-event and
+// webhook-emitter options (a fresh database must hold no pending automation
+// event and no webhook delivery, or the server's workers would act on first
+// boot), and every mail goes to a log-only mailer.
+//
+// A storefront profile (pelicroft) uses the same services with one
+// difference: its form service also gets WithFormAutomationEvents and a
+// capturing mailer (captureMailer, storefront.go), because its tickets and
+// leads arrive through the public submission path and the confirmation link
+// exists only in the mail body. The events that path records are drained
+// in-process with the automation engine before the generator finishes, so
+// the database still holds no unprocessed event and no unfinished run.
+// Neither profile wires a webhook emitter.
+//
+// Left out for both: the AEO runtime and the quote PDF renderer.
 type services struct {
 	bootstrap     service.UserService
 	users         service.UserService
@@ -44,9 +56,15 @@ type services struct {
 	config        service.ConfigurationService
 	webhooks      webhook.WebhookService
 	notifications repository.NotificationRepository
+	// engine is the automation engine the automation service validates and
+	// dry-runs with; a storefront profile drains the outbox with it.
+	engine *service.AutomationEngine
+	// capture holds the confirmation mail of the storefront form service;
+	// nil for halvenmark.
+	capture *captureMailer
 }
 
-func buildServices(db *gorm.DB, cfg *config.Config) *services {
+func buildServices(db *gorm.DB, cfg *config.Config, p *Profile) *services {
 	userRepo := repository.NewUserRepository(db)
 	leadRepo := repository.NewLeadRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
@@ -81,6 +99,17 @@ func buildServices(db *gorm.DB, cfg *config.Config) *services {
 	}
 	automationEngine := service.NewAutomationEngine(automationRepo, notificationRepo, taskRepo, userRepo, appMailer, txManager)
 
+	formOptions := []service.FormServiceOption{
+		service.WithFormTicketIntake(repository.NewFormTicketRepository(db), txManager),
+	}
+	var formMailer mailer.Mailer = appMailer
+	var capture *captureMailer
+	if p.Storefront != nil {
+		capture = newCaptureMailer()
+		formMailer = capture
+		formOptions = append(formOptions, service.WithFormAutomationEvents(automationRepo))
+	}
+
 	return &services{
 		// The first admin is registered the way cmd/create-admin does it.
 		bootstrap: service.NewUserService(userRepo),
@@ -103,15 +132,16 @@ func buildServices(db *gorm.DB, cfg *config.Config) *services {
 		tasks: service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo,
 			service.WithTaskRowLock(txManager)),
 		labels: service.NewLabelService(labelRepo),
-		forms: service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
-			txManager, cfg.Forms, cfg.API.Prefix,
-			service.WithFormTicketIntake(repository.NewFormTicketRepository(db), txManager)),
+		forms: service.NewFormService(formRepo, leadRepo, userRepo, formMailer,
+			txManager, cfg.Forms, cfg.API.Prefix, formOptions...),
 		automation: service.NewAutomationService(automationRepo, userRepo, automationEngine, txManager),
 		config:     configService,
 		// Endpoint secrets are sealed under the same SecretBox context the
 		// server reads them with, keyed by API_KEY_SECRET, else JWT_SECRET.
 		webhooks:      webhook.NewWebhookService(webhookRepo, txManager, utils.NewSecretBox(cfg.API.APIKeySecret, webhook.WebhookSecretContext)),
 		notifications: notificationRepo,
+		engine:        automationEngine,
+		capture:       capture,
 	}
 }
 
@@ -132,6 +162,8 @@ type genCustomer struct {
 	id        uint
 	companyID *uint
 	created   time.Time
+	// Set for storefront shoppers, who submit the contact form.
+	email, first, last string
 }
 
 type genDeal struct {
@@ -169,6 +201,13 @@ type generator struct {
 	staffIDs     []uint
 	roleByID     map[uint]models.UserRole
 	customerUser uint
+	// taskStaff are the users manual tasks go to: every staff user for
+	// halvenmark, every staff user but the custom-role ones for a storefront
+	// profile (only its triage rule gives them tasks).
+	taskStaff []uint
+	userIDs   map[string]uint
+	formIDs   map[string]uint
+	forms     map[string]*models.Form
 
 	labelIDs   []uint
 	productIDs []uint
@@ -179,6 +218,13 @@ type generator struct {
 	deals      []genDeal
 	tickets    []genTicket
 	emails     map[string]bool
+
+	// Storefront state (storefront.go).
+	shoppers    []genCustomer
+	ticketTimes map[uint]time.Time
+	leadTimes   map[uint]time.Time
+	// spamPlanned counts the contact submissions planned as spam.
+	spamPlanned int
 
 	plan backdatePlan
 }
@@ -196,14 +242,35 @@ func newGenerator(db *gorm.DB, s *services, p *Profile, seed int64, scale float6
 		start:    anchor.AddDate(0, -backdateMonths, 0),
 		roleByID: map[uint]models.UserRole{},
 		emails:   map[string]bool{},
+		userIDs:  map[string]uint{},
+		formIDs:  map[string]uint{},
+		forms:    map[string]*models.Form{},
+
+		ticketTimes: map[uint]time.Time{},
+		leadTimes:   map[uint]time.Time{},
 	}
 }
 
+type genStep struct {
+	name string
+	fn   func() error
+}
+
 func (g *generator) run() error {
-	steps := []struct {
-		name string
-		fn   func() error
-	}{
+	steps := g.halvenmarkSteps()
+	if g.p.Storefront != nil {
+		steps = g.storefrontSteps()
+	}
+	for _, step := range steps {
+		if err := step.fn(); err != nil {
+			return fmt.Errorf("generating %s: %w", step.name, err)
+		}
+	}
+	return nil
+}
+
+func (g *generator) halvenmarkSteps() []genStep {
+	return []genStep{
 		{"users", g.genUsers},
 		{"settings", g.genSettings},
 		{"labels", g.genLabels},
@@ -216,16 +283,10 @@ func (g *generator) run() error {
 		{"tasks", g.genTasks},
 		{"notifications", g.genNotifications},
 		{"automation rules", g.genRules},
-		{"form", g.genForm},
+		{"form", g.genForms},
 		{"webhook endpoints", g.genWebhooks},
 		{"backdating", func() error { return g.plan.apply(g.db) }},
 	}
-	for _, step := range steps {
-		if err := step.fn(); err != nil {
-			return fmt.Errorf("generating %s: %w", step.name, err)
-		}
-	}
-	return nil
 }
 
 // ---- randomness helpers ----------------------------------------------------
@@ -338,6 +399,7 @@ func (g *generator) genUsers() error {
 	g.admin = admin.ID
 	g.actor = service.Actor{UserID: admin.ID, AuthMethod: service.AuthMethodBearer}
 	g.addStaff(admin.ID, models.RoleAdmin)
+	g.userIDs[admin.Email] = admin.ID
 	g.plan.at(&models.User{}, admin.ID, g.start)
 
 	var customRoleID *uint
@@ -359,6 +421,7 @@ func (g *generator) genUsers() error {
 			return err
 		}
 		g.addStaff(user.ID, m.Role)
+		g.userIDs[user.Email] = user.ID
 		g.plan.at(&models.User{}, user.ID, g.start.Add(time.Duration(i+1)*time.Hour))
 	}
 	if len(g.sales) == 0 || len(g.support) == 0 {
@@ -369,6 +432,9 @@ func (g *generator) genUsers() error {
 
 func (g *generator) addStaff(id uint, role models.UserRole) {
 	g.staffIDs = append(g.staffIDs, id)
+	if g.p.Storefront == nil || role != models.RoleCustom {
+		g.taskStaff = append(g.taskStaff, id)
+	}
 	g.roleByID[id] = role
 	switch role {
 	case models.RoleSales:
@@ -720,7 +786,7 @@ func (g *generator) genQuotes() error {
 			customer := pickOne(g, g.customers)
 			quote.CustomerID = ptr(customer.id)
 			quote.OwnerID = pickOne(g, g.sales)
-			quote.Title = "Service proposal " + fmt.Sprint(i+1)
+			quote.Title = g.p.QuoteTitle + " " + fmt.Sprint(i+1)
 			if created.Before(customer.created) {
 				created = g.later(customer.created, 24, 10*24)
 			}
@@ -947,12 +1013,12 @@ func (g *generator) genTasks() error {
 			lead := pickOne(g, openLeads)
 			task.LeadID, task.AssignedToID = ptr(lead.id), lead.owner
 		case r < 70:
-			task.CustomerID, task.AssignedToID = ptr(pickOne(g, g.customers).id), pickOne(g, g.staffIDs)
+			task.CustomerID, task.AssignedToID = ptr(pickOne(g, g.customers).id), pickOne(g, g.taskStaff)
 		case r < 90:
 			deal := pickOne(g, g.deals)
 			task.DealID, task.AssignedToID = ptr(deal.id), deal.owner
 		default:
-			task.AssignedToID = pickOne(g, g.staffIDs)
+			task.AssignedToID = pickOne(g, g.taskStaff)
 		}
 		var labels []uint
 		if g.chance(60) {
@@ -1009,25 +1075,38 @@ func (g *generator) genNotifications() error {
 // ---- configuration records ---------------------------------------------------
 
 func (g *generator) genRules() error {
-	for i, rule := range g.p.Rules() {
+	refs := RuleRefs{FormIDs: g.formIDs, UserIDs: g.userIDs}
+	for i, rule := range g.p.Rules(refs) {
 		rule := rule
 		if err := g.s.automation.CreateRule(&rule, g.admin); err != nil {
 			return fmt.Errorf("rule %q: %w", rule.Name, err)
 		}
-		g.plan.at(&models.AutomationRule{}, rule.ID, g.start.Add(48*time.Hour+time.Duration(i)*time.Minute))
+		at := g.start.Add(48*time.Hour + time.Duration(i)*time.Minute)
+		g.plan.at(&models.AutomationRule{}, rule.ID, at)
+		if g.p.Storefront != nil {
+			// The steps are written with their rule; halvenmark leaves them
+			// at the run time, as it always has.
+			g.plan.children(&models.AutomationStep{}, "rule_id", rule.ID, "created_at", []time.Time{at})
+		}
 	}
 	return nil
 }
 
-func (g *generator) genForm() error {
-	form := g.p.Form
-	form.Fields = append([]models.FormFieldDef(nil), g.p.Form.Fields...)
-	form.AllowedDomains = append([]string(nil), g.p.Form.AllowedDomains...)
-	form.DefaultOwnerID = g.sales[0]
-	if err := g.s.forms.Create(&form, g.admin); err != nil {
-		return err
+// genForms creates the profile's forms in order; the first is stamped 50
+// hours into the history, each further one a minute later.
+func (g *generator) genForms() error {
+	for i, def := range g.p.Forms {
+		form := def
+		form.Fields = append([]models.FormFieldDef(nil), def.Fields...)
+		form.AllowedDomains = append([]string(nil), def.AllowedDomains...)
+		form.DefaultOwnerID = g.sales[0]
+		if err := g.s.forms.Create(&form, g.admin); err != nil {
+			return fmt.Errorf("form %q: %w", def.Name, err)
+		}
+		g.formIDs[form.Name] = form.ID
+		g.forms[form.Name] = &form
+		g.plan.at(&models.Form{}, form.ID, g.start.Add(50*time.Hour+time.Duration(i)*time.Minute))
 	}
-	g.plan.at(&models.Form{}, form.ID, g.start.Add(50*time.Hour))
 	return nil
 }
 

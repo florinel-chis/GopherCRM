@@ -141,9 +141,10 @@ For scripted provisioning: `bin/create-admin -non-interactive -email ... -name .
 `internal/utils/password.go`) when the password is changed later, so choose one that meets it.
 
 For a populated database instead of an empty one, `make sample-data` builds
-`sample-data/halvenmark.db` with a fictional business, its admin and its staff logins; start the
-backend on it with `DB_DRIVER=sqlite DB_PATH=sample-data/halvenmark.db`. See
-[SAMPLE_DATA.md](SAMPLE_DATA.md).
+`sample-data/halvenmark.db` (a commerce agency) and `sample-data/pelicroft.db` (an online
+home-goods shop whose forms feed tickets and leads), each a fictional business with its admin and
+its staff logins; start the backend on one with `DB_DRIVER=sqlite DB_PATH=sample-data/halvenmark.db`
+(or `pelicroft.db`). See [SAMPLE_DATA.md](SAMPLE_DATA.md).
 
 ## Frontend Setup
 
