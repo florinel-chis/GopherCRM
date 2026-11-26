@@ -270,21 +270,30 @@ The frontend will start on `http://localhost:5173`
 ## Usage
 
 ### Default Access
+
+This section now lives in the user guide: [Getting started](docs/user-guide/getting-started.md).
+
 1. **Open your browser** to `http://localhost:5173` (the dev server), or `http://localhost:3000` on
    the Docker stacks
 2. **Sign in** with the admin account you created with `create-admin`
 
-Public sign-up ships **disabled**: the login page offers no registration link until an admin turns
-on `security.allow_public_registration` under **Settings > Configuration** (Security tab). When it
-is on, self-service registration always creates a `customer` account.
+Public sign-up ships **disabled**: the login page offers no registration link until an admin (a
+user whose role holds `settings.update`) turns on `security.allow_public_registration` under
+**Settings > Configuration** (Security tab). When it is on, self-service registration always
+creates a `customer` account.
 
-Elevated roles (admin, sales, support) are assignable only by an admin through `POST /users`, or by
-the `create-admin` CLI. The registration endpoint ignores any role supplied by the client.
+Elevated roles (admin, sales, support) are never self-assigned. They are given by a user whose role
+holds `users.assign_role` (the admin system role does), when creating a user with `POST /users` or
+editing one; by the `create-admin` CLI; or by the single sign-on and SCIM role mapping an
+administrator configured. The registration endpoint ignores any role supplied by the client.
 
 Tokens are stored in `sessionStorage` and expire with the browser tab unless you tick **Remember
 me** at login, which moves them to `localStorage`.
 
 ### Administration and settings
+
+This section now lives in the user guide:
+[Settings and configuration](docs/user-guide/settings-and-configuration.md).
 
 Screens are shown by permission, not by role: a user sees a screen when their role holds the
 permission it needs, and the system Admin role holds all of them. The administrator guide is
@@ -313,12 +322,16 @@ permission it needs, and the system Admin role holds all of them. The administra
 
 ### Configuration Management
 
+This section now lives in the user guide:
+[Settings and configuration](docs/user-guide/settings-and-configuration.md).
+
 GopherCRM includes a powerful configuration management system that allows administrators to customize system behavior through a web interface.
 
 ![Configuration Management](docs/img/gophercrm-config.png)
 
 #### Accessing Configuration Settings
-1. Login as an admin user
+1. Sign in as a user whose role holds `settings.view` (the admin system role does); changing or
+   resetting a value needs `settings.update`
 2. Navigate to **Settings > Configuration**
 3. Browse settings by category tabs:
    - **General**: Company information and basic settings
@@ -333,13 +346,21 @@ GopherCRM includes a powerful configuration management system that allows admini
 
 #### Configuration Features
 - **Type-Safe Editing**: Different input types based on configuration type (boolean, string, array, etc.)
-- **Validation**: Built-in validation for configuration values
-- **System Protection**: System configurations are protected from deletion
-- **Read-Only Settings**: Some critical settings are read-only
+- **Validation**: the server checks every value against the setting's type, and against its list
+  of allowed values where the setting has one; a refused value is a 400 and nothing is saved
+- **No deletion**: settings are seeded by the server; neither the screen nor the API can create or
+  delete one
+- **Read-only settings**: an entry marked read-only cannot be edited or reset; no setting the
+  server seeds is read-only today
 - **Default Values**: Easy reset to default values
-- **Real-Time Updates**: Changes take effect immediately
+- **No restart needed**: a saved value applies to the next request that reads it; other open
+  browser sessions pick up UI settings when they reload
 
 #### Lead Conversion Settings
+
+This section now lives in the user guide:
+[Lead conversion settings](docs/user-guide/settings-and-configuration.md#lead-conversion-settings).
+
 The configuration system includes specific settings for lead conversion, enforced by the server on
 every `POST /leads/:id/convert` before anything is written (a refusal is 400 `VALIDATION_ERROR`):
 - `leads.conversion.allowed_statuses`: Which lead statuses allow conversion to customer
@@ -357,6 +378,8 @@ allowed statuses, the conversion dialog requires notes when they are required an
 lead's owner becomes the customer's assigned user.
 
 ### Answer Engine Optimization (AEO)
+
+This section now lives in the user guide: [Answer Engine Optimization](docs/user-guide/aeo.md).
 
 ![AEO dashboard](docs/img/gophercrm-aeo-dashboard.png)
 
@@ -475,6 +498,8 @@ receiving system verifies the signature are described in
 [docs/user-guide/permissions-access/webhooks.md](docs/user-guide/permissions-access/webhooks.md).
 
 ## Privacy: deleting a person erases their data
+
+This section now lives in the user guide: [Privacy and erasure](docs/user-guide/privacy-and-erasure.md).
 
 Deleting a **user, customer or lead** is an erasure under GDPR Art. 17, not a recoverable soft
 delete. Every personal field on the row is overwritten in place — the email address is replaced
@@ -1195,6 +1220,7 @@ gophercrm/
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |
 | [docs/datamodel.md](docs/datamodel.md) | Entity model and relationships |
 | [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) | Permission catalogue, system-role matrix, custom roles, role-change rules and the phase 2 sign-in design note |
+| [docs/user-guide/README.md](docs/user-guide/README.md) | User guide index: getting started, settings, AEO, privacy and erasure, and the administrator guide |
 | [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md) | Administrator guide: roles and permissions, single sign-on, a Microsoft Entra ID walk-through, API keys, the sign-in audit, webhooks and an FAQ |
 | [docs/AEO_SECURITY.md](docs/AEO_SECURITY.md) | AEO provider egress policy, operator migration steps and failure diagnostics |
 | [api/index.html](api/index.html) | Offline API reference, generated from the OpenAPI spec [api/swagger.yaml](api/swagger.yaml) |

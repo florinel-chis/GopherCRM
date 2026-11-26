@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A user guide index, `docs/user-guide/README.md`, for people who use the web app and the
+  administrators who set it up, and four user-guide pages that take over the usage content of
+  README (#782): `docs/user-guide/getting-started.md` (opening the app, the first sign-in, public
+  sign-up and sessions), `docs/user-guide/settings-and-configuration.md` (the administration
+  screens, the configuration tabs and the lead conversion settings),
+  `docs/user-guide/aeo.md` (Answer Engine Optimization, with access stated by permission) and
+  `docs/user-guide/privacy-and-erasure.md` (what deleting a person erases and keeps). README keeps
+  those sections for now, each with a link to its new page. Checking them against the code
+  corrected three statements in both places: the configuration screen needs `settings.view`
+  (changes `settings.update`) rather than the admin role; settings cannot be deleted at all, no
+  seeded setting is read-only, and a saved value applies without a restart rather than "immediately"
+  in every open browser session; and elevated roles also come from editing a user with
+  `users.assign_role` and from the single sign-on and SCIM role mapping. Docs only.
+
 ## [1.4.0] - 2026-11-24
 
 ### Added
