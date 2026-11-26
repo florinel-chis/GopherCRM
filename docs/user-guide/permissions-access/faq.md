@@ -12,10 +12,19 @@ the setting **Allow password sign-in and password reset for accounts linked to s
 
 ## Someone already has a password account. Can they switch to single sign-on?
 
-Not with the same account. GopherCRM never links accounts by email address, so a single sign-on
-sign-in with an address that an existing account uses is refused. The person keeps using the
-password account, or you delete that account and the person's next single sign-on sign-in creates
-a new one. A deleted account keeps no usable email address, so the new sign-in is not blocked by it.
+No. Switching an existing password account to single sign-on in place is not supported.
+GopherCRM never links accounts by email address, so a single sign-on sign-in with an address that
+another account uses is refused (`email_taken`). Recommended: the person keeps signing in with the
+password account, or uses single sign-on under a separate identity whose email address no
+GopherCRM account uses.
+
+Deleting the password account is not a migration; it erases the person: every personal field is
+overwritten (the email address becomes a random `.invalid` placeholder), the account's API keys,
+refresh tokens and password-reset tokens are purged, and it cannot be undone; see
+[Privacy: deleting a person erases their data](../privacy-and-erasure.md). Only after such a
+deletion does the person's next single sign-on sign-in create a new, separate account, which
+inherits nothing: the records the old account owned or was assigned (leads, tasks, tickets, deals)
+stay with the erased row.
 
 ## How do I remove someone who signs in with single sign-on?
 
