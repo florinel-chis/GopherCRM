@@ -653,7 +653,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a ticket
-// @Description Soft-delete a ticket. Needs tickets.delete (the admin system role holds it); the check runs before the id is parsed, so a caller without it always receives 403. Its comments are left in place but are no longer reachable through the API. The ticket's comment mail delivery records are hard-deleted in the same transaction.
+// @Description Soft-delete a ticket. Needs tickets.delete (the admin system role holds it); the check runs before the id is parsed, so a caller without it always receives 403. Its comments are left in place but are no longer reachable through the API. In the same transaction the ticket's comment mail delivery records and the notifications about the ticket are hard-deleted, and its pending, waiting and running automation runs are cancelled with cancel_reason record_deleted.
 // @Tags tickets
 // @Produce json
 // @Security BearerAuth

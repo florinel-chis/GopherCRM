@@ -4,9 +4,8 @@ A webhook tells another system that a record changed, so an integration no longe
 GopherCRM for new records. You register an HTTPS address (an endpoint) and pick the events it
 should hear about; GopherCRM then sends a small signed request to that address after each such
 change. This page describes the Settings → Webhooks screen and what the receiving system gets.
-The routes are listed in the
-[API overview](../../../README.md#webhooks-admin-only-sales-support-and-customer-get-403), and the
-full reference is in the [API reference](../../../api/index.html).
+The routes, with their roles, parameters and answers, are in the
+[API reference](../../../api/index.html).
 
 ## Who can manage webhooks
 

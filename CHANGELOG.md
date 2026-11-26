@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in every open browser session; and elevated roles also come from editing a user with
   `users.assign_role` and from the single sign-on and SCIM role mapping. Docs only.
 
+### Changed
+
+- README's per-endpoint API lists (23 route groups) are replaced by a short "API Documentation"
+  section that points to the generated reference in `api/` (`index.html`, `swagger.yaml`,
+  `swagger.json`), names the SCIM server and keeps the `GET /health` webhooks field. Every removed
+  note was checked against the reference; three that were missing from it were added to the
+  handler annotations (#785):
+  - `POST /tickets/bulk/status` no longer claims that no automation event is recorded: every
+    updated ticket records `ticket_updated`, plus `ticket_status_changed` when its status changed,
+    origin bulk, in the batch transaction (#242).
+  - `DELETE /tickets/{id}` now also names the notifications about the ticket that are hard-deleted
+    and the open automation runs cancelled with `record_deleted` in the same transaction.
+  - `POST /automation/rules` now says that a ticket rule's task is linked to the ticket's
+    customer, and that a task rendered from `deal.title` keeps that text after an erasure
+    (accepted limitation).
+
 ## [1.4.0] - 2026-11-24
 
 ### Added
