@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a day, `--scale` multiplies the volumes, and every email, website and phone number is in a
   reserved range. `SERVER_MODE=production` is refused. See `docs/SAMPLE_DATA.md`. Development
   tool only; it is not part of the release artifact.
+- A second sample data profile, `pelicroft`: "Pelicroft Home", a fictional online home-goods shop.
+  `make sample-data` now also writes `sample-data/pelicroft.db`. Its 3,000 customers, 1,500
+  "Contact us" submissions (with spam and unknown senders), 150 wholesale enquiries (40 converted
+  to customers of boutique companies, with deals and quotes) and 300 newsletter sign-ups all arrive
+  through three published forms and the real public submission path; confirmed contact submissions
+  open tickets through form ticket intake, and the automation engine runs a triage rule (one task
+  per ticket for the store manager) and a wholesale notification rule in-process. 8 users, 40
+  products, 8 labels and 400 manual tasks complete it, and every run-time stamp is moved into the
+  18-month history. See `docs/SAMPLE_DATA.md`.
 - A documentation index, `docs/README.md`, that groups every document by reader, opens with three
   start-here paths (try it locally, deploy to a server, start developing) and gives each document
   one line on what it answers. Each top-level page in `docs/` now opens with a line saying who it
