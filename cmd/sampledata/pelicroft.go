@@ -167,6 +167,9 @@ func pelicroftProfile() *Profile {
 				ThankYouMessage: "Thanks. Please confirm your email address from the message we just sent, and we will reply within one working day.",
 				CreateTicket:    true,
 				DoubleOptIn:     true,
+				// Every generated submission sets a topic, so every ticket
+				// reads "Contact us: <topic>" (#804).
+				TicketTitleField: "topic",
 				Fields: []models.FormFieldDef{
 					{Name: "name", Label: "Your name", Type: "text", Required: true},
 					{Name: "email", Label: "Email", Type: "email", Required: true},

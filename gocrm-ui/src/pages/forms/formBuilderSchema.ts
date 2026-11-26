@@ -97,6 +97,7 @@ export const formSchema = z
     captcha_enabled: z.boolean(),
     create_lead: z.boolean(),
     create_ticket: z.boolean(),
+    ticket_title_field: z.string(),
     default_owner_id: z.number(),
     allowed_domains: z.array(z.string()),
   })
@@ -161,6 +162,22 @@ export const formSchema = z
       });
     }
 
+    // The server's title rule: the ticket title field names a current text or
+    // select field. Only checked with the ticket action, which is the only one
+    // that sends it.
+    if (values.create_ticket && values.ticket_title_field) {
+      const titleField = values.fields.find(
+        (field) => field.name.trim() === values.ticket_title_field,
+      );
+      if (!titleField || (titleField.type !== 'text' && titleField.type !== 'select')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ticket_title_field'],
+          message: 'Choose a text or dropdown field of this form, or none',
+        });
+      }
+    }
+
     values.notify_emails.forEach((email) => {
       if (!emailPattern.test(email.trim())) {
         ctx.addIssue({
@@ -217,6 +234,7 @@ export const emptyForm = (): FormBuilderValues => ({
   captcha_enabled: false,
   create_lead: true,
   create_ticket: false,
+  ticket_title_field: '',
   default_owner_id: 0,
   allowed_domains: [],
 });
@@ -249,6 +267,7 @@ export const toFormValues = (form: Form): FormBuilderValues => ({
   captcha_enabled: Boolean(form.captcha_enabled),
   create_lead: form.create_lead ?? !form.create_ticket,
   create_ticket: Boolean(form.create_ticket),
+  ticket_title_field: form.ticket_title_field ?? '',
   default_owner_id: form.default_owner_id ?? 0,
   allowed_domains: form.allowed_domains ?? [],
 });
@@ -289,6 +308,9 @@ export const toPayload = (values: FormBuilderValues): CreateFormData => ({
   // Always sent: PUT replaces the whole definition and an omitted flag is
   // stored false, which would silently turn ticket intake off.
   create_ticket: values.create_ticket,
+  // Always sent for the same reason (#335): an omitted value is stored '',
+  // which would silently drop the setting. Only a ticket form keeps it.
+  ticket_title_field: values.create_ticket ? values.ticket_title_field : '',
   default_owner_id: values.create_lead ? values.default_owner_id : 0,
   allowed_domains: values.allowed_domains.map((domain) => domain.trim().toLowerCase()),
 });

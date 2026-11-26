@@ -169,7 +169,7 @@ automation engine, in-process, before the command finishes.
 
   | Form | Does | Fields | Allowed origins |
   | --- | --- | --- | --- |
-  | Contact us | `create_ticket`, `double_opt_in` | `name` (text, required), `email`, `order_number` (text), `topic` (select: Order status, Return or exchange, Damaged item, Product question, Other), `message` (textarea, required) | `www.pelicroft.example`, `localhost:8099` |
+  | Contact us | `create_ticket`, `double_opt_in`, `ticket_title_field` `topic` | `name` (text, required), `email`, `order_number` (text), `topic` (select: Order status, Return or exchange, Damaged item, Product question, Other), `message` (textarea, required) | `www.pelicroft.example`, `localhost:8099` |
   | Wholesale enquiry | `create_lead`, owner the wholesale sales user | `name`, `email`, `company`, `phone`, `message` | `www.pelicroft.example` |
   | Newsletter | stores the sign-up only | `email`, `first_name` (optional) | `www.pelicroft.example` |
 
@@ -237,9 +237,10 @@ task or notification never older than the ticket or lead it belongs to.
 - **A topic-based rule.** Ticket rules can test only a ticket's status, priority, assignee and
   customer; the topic and the order number stay on the submission. So the store manager triages
   every contact-form ticket, not only the damaged-item ones.
-- **The submitted text on the ticket.** A form ticket's text is fixed: the title is "Form: Contact
-  us" and the description names the form and submission ids only. Staff read the message on the
-  submission.
+- **The submitted text on the ticket.** Only the topic reaches the ticket: the form's
+  `ticket_title_field` is `topic`, so each ticket is titled "Contact us: <topic>" (for example
+  "Contact us: Damaged item"). The description names the form and submission ids only, and the
+  message, name and order number stay on the submission, where staff read them.
 - **Mail to shoppers.** The confirmation mail is captured in memory by the generator and never
   sent; staff comments are written without customer mail.
 
@@ -255,8 +256,9 @@ task or notification never older than the ticket or lead it belongs to.
    `python3 -m http.server 8099` in the page's folder. That origin is on the form's allowlist.
 4. Submit the form with the email of a generated shopper (Customers lists them). Wait at least
    three seconds after the page loads, or the time trap files it as spam.
-5. Open the confirmation link from the mail catcher. A "Form: Contact us" ticket opens for that
-   shopper, and the automation worker (`AUTOMATION_ENABLED`, on by default) gives the store
+5. Open the confirmation link from the mail catcher. A "Contact us: <topic>" ticket opens for that
+   shopper (the form's `ticket_title_field` is `topic`; with no topic chosen it is "Form: Contact
+   us"), and the automation worker (`AUTOMATION_ENABLED`, on by default) gives the store
    manager a triage task at its next poll. An address that
    belongs to no customer is confirmed too, with ticket outcome `no_customer`.
 

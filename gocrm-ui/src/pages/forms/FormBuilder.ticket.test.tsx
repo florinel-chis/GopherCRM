@@ -84,6 +84,7 @@ const storedForm = (overrides?: Partial<Form>): Form => ({
   captcha_enabled: false,
   create_lead: false,
   create_ticket: true,
+  ticket_title_field: '',
   default_owner_id: 0,
   allowed_domains: [],
   created_at: '2026-11-01T10:00:00Z',
@@ -92,6 +93,13 @@ const storedForm = (overrides?: Partial<Form>): Form => ({
 });
 
 const radio = (name: string) => screen.getByRole('radio', { name });
+
+// Adds a field of the given type through the "Add field" menu (named exactly,
+// since a dropdown's "Add Field N options" button matches a looser pattern).
+const addField = (type: string) => {
+  fireEvent.click(screen.getByRole('button', { name: 'Add field' }));
+  fireEvent.click(within(screen.getByRole('menu')).getByText(type));
+};
 const doubleOptInSwitch = () => screen.getByLabelText(DOUBLE_OPT_IN_LABEL);
 
 // Waits until the stored definition has replaced the empty defaults.
@@ -323,6 +331,127 @@ describe('FormBuilder ticket action', () => {
     const ownerControl = screen.getByLabelText(/^Lead owner/).closest('.MuiFormControl-root');
     expect(ownerControl).toBeTruthy();
     expect(ownerControl).toContainElement(message);
+    expect(formsApi.update).not.toHaveBeenCalled();
+  });
+
+  // #804: the ticket title field.
+  const titleFieldSelect = () => screen.getByLabelText(/^Ticket title field/);
+  const openTitleFieldOptions = async () => {
+    fireEvent.mouseDown(titleFieldSelect());
+    return within(await screen.findByRole('listbox'));
+  };
+  const titledForm = (overrides?: Partial<Form>) =>
+    storedForm({
+      fields: [
+        { name: 'email', label: 'Email', type: 'email', required: true, max_length: 1000 },
+        { name: 'topic', label: 'Topic', type: 'select', required: false, options: ['Damaged item'], max_length: 1000 },
+        { name: 'details', label: 'Details', type: 'textarea', required: false, max_length: 5000 },
+      ],
+      ticket_title_field: 'topic',
+      ...overrides,
+    });
+
+  it('shows the ticket title field only with the ticket action and lists text and dropdown fields', async () => {
+    render(<FormBuilder />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Complaints desk' } });
+    addField('Text');
+    fireEvent.change(screen.getByLabelText(/^Field 2 label/), { target: { value: 'Subject' } });
+    addField('Dropdown');
+    fireEvent.change(screen.getByLabelText(/^Field 3 label/), { target: { value: 'Topic' } });
+    addField('Long text');
+    fireEvent.change(screen.getByLabelText(/^Field 4 label/), { target: { value: 'Details' } });
+
+    // Hidden, not unmounted, with the lead action.
+    expect(screen.getByTestId('ticket-action-settings')).toHaveStyle({ display: 'none' });
+    expect(titleFieldSelect()).not.toBeVisible();
+
+    fireEvent.click(radio('Create a support ticket'));
+    expect(screen.getByTestId('ticket-action-settings')).toHaveStyle({ display: 'block' });
+    expect(titleFieldSelect()).toBeVisible();
+    expect(screen.getByText('The ticket title becomes "Complaints desk: <answer>" from the chosen field.')).toBeVisible();
+
+    const listbox = await openTitleFieldOptions();
+    const labels = listbox.getAllByRole('option').map((option) => option.textContent);
+    expect(labels).toEqual(['None (Form: Complaints desk)', 'Subject (subject)', 'Topic (topic)']);
+
+    fireEvent.click(listbox.getByRole('option', { name: 'Subject (subject)' }));
+    fireEvent.click(radio('Create nothing'));
+    expect(screen.getByTestId('ticket-action-settings')).toHaveStyle({ display: 'none' });
+  });
+
+  it('sends the chosen ticket title field on create', async () => {
+    render(<FormBuilder />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Complaints desk' } });
+    addField('Dropdown');
+    fireEvent.change(screen.getByLabelText(/^Field 2 label/), { target: { value: 'Topic' } });
+    fireEvent.change(screen.getByLabelText(/^Field 2 options/), { target: { value: 'Damaged item' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Field 2 options' }));
+    fireEvent.click(radio('Create a support ticket'));
+    const listbox = await openTitleFieldOptions();
+    fireEvent.click(listbox.getByRole('option', { name: 'Topic (topic)' }));
+    fireEvent.click(screen.getByRole('button', { name: /create form/i }));
+
+    await waitFor(() => {
+      expect(formsApi.create).toHaveBeenCalledTimes(1);
+    });
+    expect(formsApi.create).toHaveBeenCalledWith(
+      expect.objectContaining({ create_ticket: true, ticket_title_field: 'topic' })
+    );
+  });
+
+  it('keeps a stored ticket title field when an unchanged form is saved', async () => {
+    mockUseParams.mockReturnValue({ id: '5' });
+    vi.mocked(formsApi.get).mockResolvedValue(titledForm());
+
+    render(<FormBuilder />);
+    await waitForStoredForm('Support request');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
+
+    await waitFor(() => {
+      expect(formsApi.update).toHaveBeenCalledTimes(1);
+    });
+    expect(formsApi.update).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ create_ticket: true, ticket_title_field: 'topic' })
+    );
+  });
+
+  it('sends an empty ticket title field when the lead action is chosen', async () => {
+    mockUseParams.mockReturnValue({ id: '5' });
+    vi.mocked(formsApi.get).mockResolvedValue(titledForm({ default_owner_id: 1 }));
+
+    render(<FormBuilder />);
+    await waitForStoredForm('Support request');
+
+    fireEvent.click(radio('Create a lead'));
+    fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
+
+    await waitFor(() => {
+      expect(formsApi.update).toHaveBeenCalledTimes(1);
+    });
+    expect(formsApi.update).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ create_lead: true, create_ticket: false, ticket_title_field: '' })
+    );
+  });
+
+  it('blocks saving a ticket title field whose field was renamed', async () => {
+    mockUseParams.mockReturnValue({ id: '5' });
+    vi.mocked(formsApi.get).mockResolvedValue(titledForm());
+
+    render(<FormBuilder />);
+    await waitForStoredForm('Support request');
+
+    fireEvent.change(screen.getByLabelText(/^Field 2 name/), { target: { value: 'category' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
+
+    const message = await screen.findByText('Choose a text or dropdown field of this form, or none');
+    const control = titleFieldSelect().closest('.MuiFormControl-root');
+    expect(control).toBeTruthy();
+    expect(control).toContainElement(message);
     expect(formsApi.update).not.toHaveBeenCalled();
   });
 });

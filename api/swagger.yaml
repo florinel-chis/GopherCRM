@@ -2496,9 +2496,11 @@ definitions:
         description: |-
           Whether a confirmed submission opens a support ticket (#213) for the live
           customer whose email matches the confirmed address: open, medium
-          priority, unassigned, with fixed text that holds no submitted value.
-          Requires double_opt_in and excludes create_lead. A submitter that matches
-          no customer gets no ticket. Defaults to false.
+          priority, unassigned. The description is fixed text that holds no
+          submitted value; the title is "Form: <form name>", or holds the value of
+          the field ticket_title_field names when one is set. Requires
+          double_opt_in and excludes create_lead. A submitter that matches no
+          customer gets no ticket. Defaults to false.
         example: false
         type: boolean
       created_at:
@@ -2626,6 +2628,17 @@ definitions:
           empty a default text is shown (a "check your inbox" text for double
           opt-in forms).
         example: Thanks, we will be in touch within one business day.
+        type: string
+      ticket_title_field:
+        description: |-
+          Name of a text or select field whose submitted value becomes the ticket
+          title "<form name>: <value>" (cut to 255 runes, control characters
+          replaced by spaces, trimmed) (#804). Empty means the default title
+          "Form: <form name>", which is also used when the submitted value is blank
+          or the field is no longer a text or select field of the form. Only
+          allowed with create_ticket; at most 50 characters, trimmed.
+        example: topic
+        maxLength: 50
         type: string
       updated_at:
         description: When the record was last written (RFC 3339 date-time), set by
@@ -6237,6 +6250,18 @@ definitions:
           means a built-in text.
         example: Thanks, we will be in touch within one business day.
         type: string
+      ticket_title_field:
+        description: |-
+          Name of a text or select field whose submitted value becomes the title
+          of the ticket a confirmed submission opens: "<form name>: <value>", cut
+          to 255 runes (#804). Empty means the default title "Form: <form name>",
+          which is also used when the value is blank. Trimmed; a non-empty value
+          needs create_ticket true and must name a text or select field of the
+          form (else 400 VALIDATION_ERROR, nothing written). At most 50
+          characters. PUT replaces wholesale, so an absent value clears it.
+        example: topic
+        maxLength: 50
+        type: string
     required:
     - fields
     - name
@@ -6855,9 +6880,11 @@ definitions:
         description: |-
           Whether a confirmed submission opens a support ticket (#213) for the live
           customer whose email matches the confirmed address: open, medium
-          priority, unassigned, with fixed text that holds no submitted value.
-          Requires double_opt_in and excludes create_lead. A submitter that matches
-          no customer gets no ticket. Defaults to false.
+          priority, unassigned. The description is fixed text that holds no
+          submitted value; the title is "Form: <form name>", or holds the value of
+          the field ticket_title_field names when one is set. Requires
+          double_opt_in and excludes create_lead. A submitter that matches no
+          customer gets no ticket. Defaults to false.
         example: false
         type: boolean
       created_at:
@@ -6990,6 +7017,17 @@ definitions:
           empty a default text is shown (a "check your inbox" text for double
           opt-in forms).
         example: Thanks, we will be in touch within one business day.
+        type: string
+      ticket_title_field:
+        description: |-
+          Name of a text or select field whose submitted value becomes the ticket
+          title "<form name>: <value>" (cut to 255 runes, control characters
+          replaced by spaces, trimmed) (#804). Empty means the default title
+          "Form: <form name>", which is also used when the submitted value is blank
+          or the field is no longer a text or select field of the form. Only
+          allowed with create_ticket; at most 50 characters, trimmed.
+        example: topic
+        maxLength: 50
         type: string
       updated_at:
         description: When the record was last written (RFC 3339 date-time), set by
@@ -8555,6 +8593,18 @@ definitions:
           Message shown after submitting when submit_action is message; empty
           means a built-in text.
         example: Thanks, we will be in touch within one business day.
+        type: string
+      ticket_title_field:
+        description: |-
+          Name of a text or select field whose submitted value becomes the title
+          of the ticket a confirmed submission opens: "<form name>: <value>", cut
+          to 255 runes (#804). Empty means the default title "Form: <form name>",
+          which is also used when the value is blank. Trimmed; a non-empty value
+          needs create_ticket true and must name a text or select field of the
+          form (else 400 VALIDATION_ERROR, nothing written). At most 50
+          characters. PUT replaces wholesale, so an absent value clears it.
+        example: topic
+        maxLength: 50
         type: string
     required:
     - fields
@@ -17854,7 +17904,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named "email"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true (false when create_ticket is true), and then default_owner_id must name an active admin or sales user. create_ticket (absent means false) makes a confirmed submission open a ticket for the live customer whose email matches (#213); it requires double_opt_in true and create_lead not true, and needs no default owner. status defaults to draft, submit_action to message. The response is the stored form.
+        Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named "email"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true (false when create_ticket is true), and then default_owner_id must name an active admin or sales user. create_ticket (absent means false) makes a confirmed submission open a ticket for the live customer whose email matches (#213); it requires double_opt_in true and create_lead not true, and needs no default owner. ticket_title_field (#804, absent or empty means none) names a text or select field whose submitted value titles that ticket "<form name>: <value>" (cut to 255 runes) instead of "Form: <form name>"; a non-empty value needs create_ticket true and must be exactly the name of a text or select field of the form. status defaults to draft, submit_action to message. The response is the stored form.
         Needs forms.manage (the admin and sales system roles hold it).
         Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user.
       parameters:
@@ -18104,7 +18154,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_ticket to false, create_lead to true, or to false when create_ticket is true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.
+        Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_ticket to false, ticket_title_field to empty, create_lead to true, or to false when create_ticket is true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.
         Needs forms.manage (the admin and sales system roles hold it).
         Errors: 400 BAD_REQUEST for a path id that is not a positive integer ("Invalid form ID"); 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user; 404 NOT_FOUND for an unknown or deleted form.
       parameters:
@@ -18794,7 +18844,7 @@ paths:
       - application/json
       description: |-
         Spend a confirmation token. The token is read from the form-encoded field token (what the confirmation page posts) or, when that is empty, from a JSON body {"token": "..."}. On success the pending submission becomes confirmed (confirmed_at set) and, in the same transaction, the token is claimed and the lead is created or noted exactly as for a submission without double opt-in (automation event lead_created or lead_updated, origin form); after the commit the notification mails and the follow-up mail go out, and the response is the "Email confirmed" page. Tokens are single-use and expire 48 hours after the submission; a re-submission of the same form and address invalidates earlier tokens.
-        On a form with create_ticket (#213) the same transaction, after the claim, locks the live customer whose email matches the confirmed address and opens one open, medium-priority, unassigned ticket (title "Form: <form name>", description "Submitted through form <id>, submission <id>.", no submitted value) with a form_ticket_keys row for the stored idempotency key or submission-<submission id>, and records ticket_created (origin form). The submission records ticket_outcome created, duplicate (the key already opened a ticket for the same customer; ticket_id names it), key_conflict, no_customer or unavailable. The page is identical for every outcome.
+        On a form with create_ticket (#213) the same transaction, after the claim, locks the live customer whose email matches the confirmed address and opens one open, medium-priority, unassigned ticket (title "Form: <form name>", or "<form name>: <value>" when the form's ticket_title_field (#804) names a field the stored form still has as a text or select field and the submitted value is not blank, control characters replaced by spaces, cut to 255 runes; description "Submitted through form <id>, submission <id>.", which holds no submitted value) with a form_ticket_keys row for the stored idempotency key or submission-<submission id>, and records ticket_created (origin form). The submission records ticket_outcome created, duplicate (the key already opened a ticket for the same customer; ticket_id names it), key_conflict, no_customer or unavailable. The page is identical for every outcome.
         Every failure - missing, unknown, expired or already used token, a submission that is no longer pending, a deleted form or submission, a stored value too long for its lead column, or an internal error - renders the same "This link is no longer valid" page with the same 200 status, so token validity cannot be probed. A failure after the claim and before the commit rolls back, so the link stays usable for a retry; when the COMMIT itself fails the outcome is ambiguous (the lead may have been created and the link spent) although the page still says the link is no longer valid. The handler always answers 200 text/html, never the JSON envelope; only the rate limiter in front of it answers in JSON (429 TOO_MANY_REQUESTS).
         Unauthenticated.
       parameters:

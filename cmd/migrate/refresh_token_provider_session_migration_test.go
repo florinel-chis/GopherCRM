@@ -33,8 +33,8 @@ var refreshTokenProviderSessionColumns = []string{"provider_session_hash"}
 // TestRefreshTokenProviderSessionMigrationFiles needs no database: the pair
 // exists with its headers, the up half adds exactly the column and the index
 // behind INFORMATION_SCHEMA probes and fills nothing, the down half drops
-// only those, the model declares the column as the up half adds it, and it is
-// the newest migration of the directory, which latestMigrationVersion names.
+// only those, the model declares the column as the up half adds it, and a
+// newer migration follows it.
 func TestRefreshTokenProviderSessionMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, refreshTokenProviderSessionMigrationName+".up.sql"))
@@ -83,22 +83,12 @@ func TestRefreshTokenProviderSessionMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "type:varchar(64);not null;default:'';index:idx_refresh_tokens_provider_session_hash", tag)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from
-	// TestWebhookEventTypesWidthMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, refreshTokenProviderSessionMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// Older than the newest migration (the newest-migration assertions moved
+	// to TestFormTicketTitleFieldMigrationFiles, #804).
+	version, err := strconv.Atoi(strings.SplitN(refreshTokenProviderSessionMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, refreshTokenProviderSessionVersion, version)
-	assert.Equal(t, refreshTokenProviderSessionVersion, latestMigrationVersion)
+	assert.Less(t, refreshTokenProviderSessionVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, refreshTokenProviderSessionPreviousVersion+1, refreshTokenProviderSessionVersion)
 }
 

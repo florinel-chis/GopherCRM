@@ -67,6 +67,85 @@ func TestFormTicketTargetDefinition(t *testing.T) {
 	})
 }
 
+// ticketTitleFieldForm is a valid create_ticket form with one field of every
+// type, so each case varies only ticket_title_field (and create_ticket).
+func ticketTitleFieldForm(titleField string) *Form {
+	form := ticketFormDefinition()
+	form.Fields = []FormFieldDef{
+		{Name: "email", Label: "Email", Type: FormFieldEmail, Required: true},
+		{Name: "subject", Label: "Subject", Type: FormFieldText},
+		{Name: "topic", Label: "Topic", Type: FormFieldSelect, Options: []string{"Damaged item", "Late delivery"}},
+		{Name: "complaint", Label: "Complaint", Type: FormFieldTextarea},
+		{Name: "agree", Label: "Agree", Type: FormFieldCheckbox},
+		{Name: "phone", Label: "Phone", Type: FormFieldPhone},
+		{Name: "source", Label: "Source", Type: FormFieldHidden},
+	}
+	form.TicketTitleField = titleField
+	return form
+}
+
+func TestFormTicketTitleFieldDefinition(t *testing.T) {
+	for _, name := range []string{"subject", "topic"} {
+		t.Run("accepted on "+name, func(t *testing.T) {
+			form := ticketTitleFieldForm(name)
+			require.NoError(t, form.ValidateDefinition())
+			assert.Equal(t, name, form.TicketTitleField)
+		})
+	}
+
+	refused := map[string]string{
+		"unknown":   `ticket title field "unknown" is not a field of the form`,
+		"Topic":     `ticket title field "Topic" is not a field of the form`,
+		"email":     `ticket title field "email" must be a text or select field`,
+		"complaint": `ticket title field "complaint" must be a text or select field`,
+		"agree":     `ticket title field "agree" must be a text or select field`,
+		"phone":     `ticket title field "phone" must be a text or select field`,
+		"source":    `ticket title field "source" must be a text or select field`,
+	}
+	for name, message := range refused {
+		t.Run("refused for "+name, func(t *testing.T) {
+			form := ticketTitleFieldForm(name)
+			err := form.ValidateDefinition()
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, ErrInvalidFormDefinition))
+			assert.Contains(t, err.Error(), message)
+
+			form.TicketTitleField = ""
+			require.NoError(t, form.ValidateDefinition(), "the same form without the setting is valid")
+		})
+	}
+
+	t.Run("refused without create_ticket", func(t *testing.T) {
+		form := ticketTitleFieldForm("topic")
+		form.CreateTicket = false
+		err := form.ValidateDefinition()
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidFormDefinition))
+		assert.Contains(t, err.Error(), "a ticket title field needs create_ticket")
+	})
+
+	t.Run("empty is accepted on every form", func(t *testing.T) {
+		require.NoError(t, ticketTitleFieldForm("").ValidateDefinition())
+		form := ticketTitleFieldForm("")
+		form.CreateTicket = false
+		form.DoubleOptIn = false
+		require.NoError(t, form.ValidateDefinition())
+		form.CreateLead = true
+		form.DefaultOwnerID = 3
+		require.NoError(t, form.ValidateDefinition())
+		blank := ticketTitleFieldForm("   ")
+		blank.CreateTicket = false
+		require.NoError(t, blank.ValidateDefinition(), "a blank value counts as empty")
+		assert.Equal(t, "", blank.TicketTitleField)
+	})
+
+	t.Run("surrounding whitespace is trimmed", func(t *testing.T) {
+		form := ticketTitleFieldForm("  topic\t")
+		require.NoError(t, form.ValidateDefinition())
+		assert.Equal(t, "topic", form.TicketTitleField)
+	})
+}
+
 func openFormTicketIntakeDB(t *testing.T, name string) {
 	t.Helper()
 	origDB := DB
@@ -98,6 +177,12 @@ func assertFormTicketIntakeSchemaSQLite(t *testing.T) {
 	assert.Equal(t, 1, forms["create_ticket"].NotNull, "forms.create_ticket is NOT NULL")
 	require.NotNil(t, forms["create_ticket"].Dflt, "forms.create_ticket has a default")
 	assert.Contains(t, []string{"false", "0"}, strings.ToLower(*forms["create_ticket"].Dflt))
+	// #804: the ticket title field.
+	require.Contains(t, forms, "ticket_title_field")
+	assert.Equal(t, "varchar(50)", strings.ToLower(forms["ticket_title_field"].Type))
+	assert.Equal(t, 1, forms["ticket_title_field"].NotNull, "forms.ticket_title_field is NOT NULL")
+	require.NotNil(t, forms["ticket_title_field"].Dflt, "forms.ticket_title_field has a default")
+	assert.Contains(t, []string{"''", `""`}, *forms["ticket_title_field"].Dflt, "the default is the empty string")
 
 	submissions := columnsOf("form_submissions")
 	for name, typ := range map[string]string{"idempotency_key": "varchar(128)", "ticket_outcome": "varchar(20)"} {
@@ -183,12 +268,15 @@ func TestFormTicketIntakeSchemaSQLite(t *testing.T) {
 	// A raw insert that omits the new columns takes their defaults.
 	require.NoError(t, DB.Exec("INSERT INTO forms (name, public_id, status, submit_action, create_lead) VALUES ('Raw', 'raw-public-id', 'draft', 'message', 0)").Error)
 	var raw struct {
-		ID           uint
-		CreateTicket bool
+		ID               uint
+		CreateTicket     bool
+		TicketTitleField *string
 	}
-	require.NoError(t, DB.Raw("SELECT id, create_ticket FROM forms WHERE public_id = 'raw-public-id'").Scan(&raw).Error)
+	require.NoError(t, DB.Raw("SELECT id, create_ticket, ticket_title_field FROM forms WHERE public_id = 'raw-public-id'").Scan(&raw).Error)
 	require.NotZero(t, raw.ID)
 	assert.False(t, raw.CreateTicket)
+	require.NotNil(t, raw.TicketTitleField, "ticket_title_field takes its default, not NULL")
+	assert.Equal(t, "", *raw.TicketTitleField)
 	require.NoError(t, DB.Exec("INSERT INTO form_submissions (form_id, data, email, status) VALUES (?, '{}', 'raw@example.com', 'received')", raw.ID).Error)
 	var submission struct {
 		IdempotencyKey string
@@ -234,6 +322,7 @@ func TestFormTicketIntakeSQLiteUpgrade(t *testing.T) {
 	openFormTicketIntakeDB(t, "form-ticket-intake-upgrade.db")
 	require.NoError(t, DB.AutoMigrate(&legacyTicketlessForm{}, &legacyTicketlessSubmission{}))
 	require.False(t, DB.Migrator().HasColumn("forms", "create_ticket"), "the fixture predates create_ticket")
+	require.False(t, DB.Migrator().HasColumn("forms", "ticket_title_field"), "the fixture predates ticket_title_field")
 	require.False(t, DB.Migrator().HasColumn("form_submissions", "idempotency_key"))
 	require.False(t, DB.Migrator().HasTable("form_ticket_keys"))
 
@@ -248,6 +337,11 @@ func TestFormTicketIntakeSQLiteUpgrade(t *testing.T) {
 	var form Form
 	require.NoError(t, DB.First(&form, existing.ID).Error)
 	assert.False(t, form.CreateTicket, "an existing form reads create_ticket false")
+	assert.Equal(t, "", form.TicketTitleField, "an existing form reads ticket_title_field ''")
+	var storedTitleField *string
+	require.NoError(t, DB.Raw("SELECT ticket_title_field FROM forms WHERE id = ?", existing.ID).Scan(&storedTitleField).Error)
+	require.NotNil(t, storedTitleField, "the existing row holds '' rather than NULL")
+	assert.Equal(t, "", *storedTitleField)
 	assert.True(t, form.CreateLead, "the rest of the form is kept")
 	var submission FormSubmission
 	require.NoError(t, DB.First(&submission, oldSubmission.ID).Error)

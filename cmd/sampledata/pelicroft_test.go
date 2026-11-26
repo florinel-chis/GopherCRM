@@ -132,7 +132,18 @@ func assertPelicroftFormTickets(t *testing.T, db *gorm.DB) {
 		"form_id = ? AND EXISTS (SELECT 1 FROM form_submissions s WHERE s.id = form_ticket_keys.submission_id AND s.form_id = ? AND s.ticket_id = form_ticket_keys.ticket_id AND s.ticket_outcome = ?)",
 		contact, contact, models.FormTicketOutcomeCreated), "keys whose submission opened their ticket")
 	assert.Equal(t, tickets, count(t, db, "form_submissions", "form_id = ? AND ticket_outcome = ?", contact, models.FormTicketOutcomeCreated))
-	assert.Equal(t, tickets, count(t, db, "tickets", "title = ?", "Form: Contact us"))
+	// #804: the form titles its tickets with the submitted topic.
+	perTopic := int64(0)
+	distinct := 0
+	for _, topic := range pelicroftContactTopics {
+		n := count(t, db, "tickets", "title = ?", pelicroftContactForm+": "+topic)
+		perTopic += n
+		if n > 0 {
+			distinct++
+		}
+	}
+	assert.Equal(t, tickets, perTopic, "every ticket is titled Contact us: <topic>")
+	assert.GreaterOrEqual(t, distinct, 3, "at least three distinct ticket titles")
 
 	type pair struct{ Status, Outcome string }
 	var pairs []pair

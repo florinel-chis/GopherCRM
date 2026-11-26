@@ -63,6 +63,7 @@ const baseForm = (overrides?: Partial<Form>): Form => ({
   captcha_enabled: false,
   create_lead: true,
   create_ticket: false,
+  ticket_title_field: '',
   default_owner_id: 1,
   allowed_domains: [],
   created_at: '2026-08-01T10:00:00Z',

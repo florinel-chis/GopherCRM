@@ -1213,10 +1213,23 @@ logic lives in `internal/service/form_ticket_intake.go` and
   its lower-cased form); on MySQL/MariaDB the `utf8mb4_unicode_ci` collation of `customers.email`
   decides (case- and accent-insensitive, trailing spaces ignored). No match: no ticket, outcome
   `no_customer` (no customer is created).
-- **Ticket.** `open`, `medium`, unassigned, no `due_at`, `first_responded_at` not written; title
-  exactly `Form: <form name>` cut to 255 runes, description exactly `Submitted through form <form
-  id>, submission <submission id>.`. No submitted value is copied into the ticket. A
+- **Ticket.** `open`, `medium`, unassigned, no `due_at`, `first_responded_at` not written;
+  description exactly `Submitted through form <form id>, submission <submission id>.`, which holds
+  no submitted value. The title is exactly `Form: <form name>` cut to 255 runes, unless the form
+  sets `ticket_title_field` (#804, below). A
   `ticket_created` event (origin `form`, `actor_id` NULL) is recorded in the same transaction.
+- **Ticket title field (#804).** `forms.ticket_title_field` (`varchar(50) NOT NULL DEFAULT ''`)
+  names one text or select field of a `create_ticket` form. `Form.ValidateDefinition` trims it and,
+  when it is non-empty, refuses it (400 `VALIDATION_ERROR`, nothing written) without
+  `create_ticket`, when no field has exactly that name, or when that field is not text or select.
+  At confirmation `formTicketTitle` (`internal/service/form_ticket_intake.go`) reads the stored
+  form: if it still has a text or select field of that name, the submitted value has every control
+  rune replaced by a space and is trimmed, and a non-empty result gives `<form name>: <value>` cut
+  to 255 runes. No setting, a blank value, or a field removed or retyped since the submission gives
+  `Form: <form name>`. `PUT /forms/{id}` replaces wholesale, so an absent value clears it; the
+  builder always sends it (`''` unless the ticket action is chosen). The value is ticket text: it
+  reaches the `ticket.created` webhook delivery and the `ticket_created` event like any title and
+  is kept by erasure (see [DEV_ERASURE.md](DEV_ERASURE.md)). Log lines never carry the title.
 - **Duplicates.** `CreateTicketWithKey` inserts the ticket and then the key row in one savepoint,
   with no pre-read. The unique `idx_form_ticket_keys_identity (form_id, idempotency_key)` is the
   only unique index of the table, so a duplicate-key error is `repository.ErrFormTicketKeyTaken`;
@@ -1252,6 +1265,9 @@ logic lives in `internal/service/form_ticket_intake.go` and
   [datamodel.md](datamodel.md#form-ticket-keys)) come from `MigrateDatabase` on SQLite and from
   `20261115120000_add_form_ticket_intake` (each only when missing) on MySQL/MariaDB;
   `ensureFormTicketKeyCollation` gives an AutoMigrate-created key column `utf8mb4_bin`.
+  `forms.ticket_title_field` comes from `MigrateDatabase` on SQLite and from
+  `20261129120009_add_form_ticket_title_field` (only when missing) on MySQL/MariaDB; existing forms
+  read `''`.
 
 Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema (skipped without it) where
 named: `TestFormTicketTargetDefinition`, `TestFormTicketIntakeSchemaSQLite`,

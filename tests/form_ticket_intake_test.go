@@ -294,4 +294,45 @@ func TestFormTicketIntakeAPISQLite(t *testing.T) {
 		require.NoError(t, db.Model(&models.FormSubmission{}).Count(&after).Error)
 		assert.Equal(t, before, after, "nothing stored")
 	})
+
+	// #804: a form with a ticket title field titles the ticket with the
+	// submitted value.
+	t.Run("a ticket title field titles the ticket", func(t *testing.T) {
+		status, envelope := authed(t, http.MethodPost, "/forms", map[string]interface{}{
+			"name":   "Titled API",
+			"status": "published",
+			"fields": []map[string]interface{}{
+				{"name": "email", "label": "Email", "type": "email", "required": true},
+				{"name": "topic", "label": "Topic", "type": "select", "required": true, "options": []string{"Damaged item", "Late delivery"}},
+			},
+			"double_opt_in":      true,
+			"create_ticket":      true,
+			"ticket_title_field": "topic",
+		})
+		require.Equal(t, http.StatusCreated, status, "%v", envelope)
+		titled := envelope["data"].(map[string]interface{})
+		assert.Equal(t, "topic", titled["ticket_title_field"])
+
+		customer := &models.Customer{FirstName: "Titled", LastName: "Customer", Email: "titled@form-ticket-api.test"}
+		require.NoError(t, db.Create(customer).Error)
+		encoded, err := json.Marshal(map[string]interface{}{
+			"values":    map[string]string{"email": customer.Email, "topic": "Damaged item"},
+			"challenge": forms.NewChallenge([]byte(formTicketAPISecret), time.Now().Add(-30*time.Second)),
+		})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/forms/public/"+titled["public_id"].(string)+"/submissions", bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		page := confirm(t, mail.lastToken(t, customer.Email))
+		assert.NotContains(t, page, "no longer valid")
+
+		var tickets []models.Ticket
+		require.NoError(t, db.Where("customer_id = ?", customer.ID).Find(&tickets).Error)
+		require.Len(t, tickets, 1, "exactly one ticket")
+		status, envelope = authed(t, http.MethodGet, fmt.Sprintf("/tickets/%d", tickets[0].ID), nil)
+		require.Equal(t, http.StatusOK, status, "%v", envelope)
+		assert.Equal(t, "Titled API: Damaged item", envelope["data"].(map[string]interface{})["title"])
+	})
 }
