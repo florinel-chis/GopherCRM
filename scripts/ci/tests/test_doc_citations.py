@@ -344,10 +344,128 @@ class DocCitationCheckTest(unittest.TestCase):
         self.write('docs/x.md', '# X\n\n## A\n')
         self.assert_link_rule('See [it](x.md#b "t").\n', 'See [it](x.md#a "t").\n', 'x.md#b', 'missing anchor')
 
+    def test_link_to_a_missing_image_fails(self):
+        self.write('docs/img/present.png', 'png\n')
+        self.assert_link_rule('See ![x](img/absent.png).\n', 'See ![x](img/present.png).\n',
+                              'img/absent.png', 'missing link target')
+        self.write('docs/img/absent.png', 'png\n')
+        self.write_doc('See ![x](img/absent.png).\n')
+        code, out = run(self.root, 'docs/FORKING.md')
+        self.assertEqual(code, 0, out)
+
+    def test_link_to_a_missing_html_file_fails(self):
+        self.write('api/index.html', '<html></html>\n')
+        self.assert_link_rule('See [api](../api/absent.html).\n', 'See [api](../api/index.html).\n',
+                              '../api/absent.html', 'missing link target')
+        self.write('api/absent.html', '<html></html>\n')
+        self.write_doc('See [api](../api/absent.html).\n')
+        code, out = run(self.root, 'docs/FORKING.md')
+        self.assertEqual(code, 0, out)
+
+    def test_link_to_an_untracked_image_fails(self):
+        self.write('docs/img/local.png', 'png\n', track=False)
+        self.assertTrue((self.root / 'docs/img/local.png').is_file())
+        self.write('docs/img/present.png', 'png\n')
+        self.assert_link_rule('See ![x](img/local.png).\n', 'See ![x](img/present.png).\n',
+                              'img/local.png', 'missing link target')
+
+    def test_link_to_a_tracked_directory_passes(self):
+        self.assert_link_rule('See [pkg](../pkgs/).\n', 'See [pkg](../pkg/).\n', '../pkgs/', 'missing link target')
+
+    def test_anchor_on_a_non_md_target_is_not_checked(self):
+        self.write('docs/foo.html', '<html></html>\n')
+        self.assert_link_rule('See [it](bar.html#section).\n', 'See [it](foo.html#section).\n',
+                              'bar.html#section', 'missing link target')
+
+    # Rule e: a table header and its delimiter row have the same column count.
+
+    NINE = '|---|---|---|---|---|---|---|---|---|\n'
+
+    def assert_table_rule(self, broken, fixed, header, separator, tables=1):
+        self.write_doc(broken)
+        code, out = run(self.root, 'docs/FORKING.md')
+        self.assertEqual(code, 1, out)
+        line = VALID_DOC.count('\n') + 1 + broken.count('\n', 0, broken.index('| #'))
+        self.assertIn('docs/FORKING.md:%d: table header has %d columns, separator %d\n' % (line, header, separator), out)
+        self.write_doc(fixed)
+        code, out = run(self.root, 'docs/FORKING.md')
+        self.assertEqual(code, 0, out)
+        self.assertIn(', %d tables,' % tables, out)
+        return out
+
+    def test_a_three_column_header_over_nine_columns_fails(self):
+        row = '| 1 | a | b | c | d | e | f | g | h |\n'
+        self.assert_table_rule('\n| # | Gap | Suggested Action |\n' + self.NINE + row,
+                               '\n| # | A | B | C | D | E | F | G | H |\n' + self.NINE + row, 3, 9)
+
+    def test_a_three_column_header_over_four_columns_fails(self):
+        self.assert_table_rule('\n| # | Gap | Suggested Action |\n|---|-----|--------|------------|\n| 1 | a | b | c |\n',
+                               '\n| # | Gap | Impact | Resolution |\n|---|-----|--------|------------|\n| 1 | a | b | c |\n',
+                               3, 4)
+
+    def test_a_table_inside_a_fenced_block_is_not_judged(self):
+        broken = '\n| # | Gap |\n|---|---|---|\n'
+        self.assert_table_rule(broken, '\n```markdown' + broken + '```\n', 2, 3, tables=0)
+
+    def test_an_escaped_pipe_is_not_a_separator(self):
+        self.assert_table_rule('\n| # | a | b |\n|---|---|\n', '\n| # | a \\| b |\n|---|---|\n', 3, 2)
+
+    def test_a_pipe_inside_backticks_is_a_separator(self):
+        self.assert_table_rule('\n| # | `a | b` |\n|---|---|\n', '\n| # | `a | b` |\n|---|---|---|\n', 3, 2)
+
+    def test_a_broken_table_fails_the_default_run(self):
+        self.write('docs/X.md', '# X\n\n| # | Gap |\n|---|---|---|\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/X.md:3: table header has 2 columns, separator 3', out)
+        self.write('docs/X.md', '# X\n\n| # | Gap | More |\n|---|---|---|\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn(', 1 tables,', out)
+
+    # Rule f: a line over 1000 characters outside fences and tables warns
+    # without changing the exit code.
+
+    def warnings_for(self, extra):
+        self.write_doc(extra)
+        code, out = run(self.root, 'docs/FORKING.md')
+        return code, out, [line for line in out.splitlines() if 'warning:' in line]
+
+    def test_a_long_prose_line_warns(self):
+        line = VALID_DOC.count('\n') + 1
+        code, out, warnings = self.warnings_for('x' * 1001 + '\n')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith('OK:'), out)
+        self.assertEqual(warnings, ['docs/FORKING.md:%d: warning: line of 1001 characters (over 1000)' % line])
+        code, out, warnings = self.warnings_for('x' * 1000 + '\n')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(warnings, [])
+
+    def test_a_long_line_in_a_fenced_block_does_not_warn(self):
+        code, out, warnings = self.warnings_for('```\n' + 'x' * 1001 + '\n```\n')
+        self.assertEqual((code, warnings), (0, []), out)
+        code, out, warnings = self.warnings_for('x' * 1001 + '\n')
+        self.assertEqual(len(warnings), 1, out)
+
+    def test_a_long_row_in_a_valid_table_does_not_warn(self):
+        table = '\n| a | b |\n|---|---|\n| %s | c |\n' % ('x' * 1001)
+        code, out, warnings = self.warnings_for(table)
+        self.assertEqual((code, warnings), (0, []), out)
+        code, out, warnings = self.warnings_for(table.replace('|---|---|\n', ''))
+        self.assertEqual(len(warnings), 1, out)
+
+    def test_a_long_row_in_a_mismatched_table_gives_only_the_table_problem(self):
+        code, out, warnings = self.warnings_for('\n| a |\n|---|---|\n| %s | c |\n' % ('x' * 1001))
+        self.assertEqual(code, 1, out)
+        self.assertIn('table header has 1 columns, separator 2', out)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(out.splitlines()), 1, out)
+
     def test_real_tree_passes(self):
         code, out = run(ROOT)
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r'^OK: [1-9][0-9]* path citations, [1-9][0-9]* symbol citations, [1-9][0-9]* links')
+        self.assertRegex(out, r', [1-9][0-9]* tables,')
 
 
 if __name__ == '__main__':

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The documentation check `scripts/ci/check-doc-citations.py` has two new rules and a wider
+  link rule (#797). A Markdown table whose header row and delimiter row have different column
+  counts now fails (`table header has N columns, separator M`, columns counted the way GitHub
+  counts them). A relative link or image link to a missing or untracked local file of any type
+  (an image, `.html`, `.yml`, `LICENSE`), not only to a `.md` doc, now fails as a
+  `missing link target`. A line over 1,000 characters outside fenced blocks and tables prints a
+  warning without failing the check. The 19 `docs/FEATURES.md` table headers that #175 had
+  overwritten with a three-column header are restored: 18 feature tables get their nine-column
+  header back and the "Resolved by this work" table its four-column one.
+
 - Forms that open support tickets can title them from an answer (#804). The new form setting
   `ticket_title_field` names one text or dropdown field of a `create_ticket` form; a confirmed
   submission then opens a ticket titled `<form name>: <answer>` (control characters become
