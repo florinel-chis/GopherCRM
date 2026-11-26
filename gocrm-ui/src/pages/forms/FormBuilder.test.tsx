@@ -226,6 +226,8 @@ describe('FormBuilder', () => {
         create_lead: true,
         // Always sent, so an update never turns ticket intake off by omission.
         create_ticket: false,
+        // Always sent as well (#804); '' unless the form creates tickets.
+        ticket_title_field: '',
         // Filled in from the signed-in sales user, who cannot list users.
         default_owner_id: 7,
         allowed_domains: [],

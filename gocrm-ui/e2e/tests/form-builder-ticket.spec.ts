@@ -10,7 +10,9 @@ import { apiResponse } from '../helpers/api';
  * create_ticket and double_opt_in, FormDetail shows "Creates tickets: yes", and
  * reopening the editor and saving unchanged keeps create_ticket true (read back
  * through the API). Before #335 the builder sent no create_ticket, so a save
- * turned ticket intake off.
+ * turned ticket intake off. The form also gets a dropdown chosen as its ticket
+ * title field (#804); the POST answer, the PUT body and both API read-backs
+ * carry that field name.
  *
  * The form stays a draft, so it is never served publicly, and it is deleted
  * through the API afterwards.
@@ -44,22 +46,38 @@ test.describe('Admin - Form builder ticket action', () => {
     await new AdminAuthHelper(page).ensureAdminLoggedIn();
   });
 
-  test('admin creates a ticket form in the builder and an unchanged update keeps create_ticket', async ({
+  test('admin creates a ticket form in the builder and an unchanged update keeps create_ticket and the ticket title field', async ({
     page,
   }, testInfo) => {
+    test.setTimeout(120_000);
     // 1. Create: the ticket action switches double opt-in on and hides the owner.
     await page.goto('/forms/new');
-    await expect(page.getByRole('heading', { name: 'Create Form' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Create Form' })).toBeVisible({ timeout: 30_000 });
     await page.locator('input[name="name"]').fill(formName);
+
+    // A dropdown whose answer titles the ticket (#804).
+    await page.getByRole('button', { name: 'Add field', exact: true }).click();
+    await page.getByRole('menu').getByText('Dropdown', { exact: true }).click();
+    await page.getByLabel(/^Field 2 label/).fill('Topic');
+    await expect(page.getByLabel(/^Field 2 name/)).toHaveValue('topic');
+    await page.getByLabel(/^Field 2 options/).fill('Damaged item');
+    await page.getByRole('button', { name: 'Add Field 2 options' }).click();
 
     await expect(page.getByRole('heading', { name: 'Submission action' })).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Create a lead' })).toBeChecked();
+    // The ticket title select is offered only with the ticket action.
+    await expect(page.getByTestId('ticket-action-settings')).toBeHidden();
     await page.getByRole('radio', { name: 'Create a support ticket' }).check();
+    await expect(page.getByTestId('ticket-action-settings')).toBeVisible();
 
     const optIn = page.getByLabel('Require email confirmation before a lead or ticket is created');
     await expect(optIn).toBeChecked();
     await expect(page.getByTestId('lead-action-settings')).toBeHidden();
     await expect(page.getByText(/A confirmed submission opens a ticket/)).toBeVisible();
+    const titleField = page.getByRole('combobox', { name: /^Ticket title field/ });
+    await titleField.click();
+    await page.getByRole('option', { name: 'Topic (topic)' }).click();
+    await expect(titleField).toHaveText('Topic (topic)');
     await page.screenshot({ path: testInfo.outputPath('form-builder-ticket-create.png'), fullPage: true });
 
     const created = apiResponse(page, /\/forms$/, 'POST');
@@ -71,18 +89,24 @@ test.describe('Admin - Form builder ticket action', () => {
     expect(stored.create_ticket).toBe(true);
     expect(stored.create_lead).toBe(false);
     expect(stored.double_opt_in).toBe(true);
+    expect(stored.ticket_title_field).toBe('topic');
+
+    const createdReadBack = await api.get(`${API_BASE_URL}/forms/${formId}`, { headers });
+    expect(createdReadBack.status()).toBe(200);
+    expect((await createdReadBack.json()).data.ticket_title_field).toBe('topic');
 
     // 2. Detail shows the flag.
     await page.waitForURL(`**/forms/${formId}`);
-    await expect(page.getByText('Creates tickets: yes')).toBeVisible();
+    await expect(page.getByText('Creates tickets: yes')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Creates leads: no')).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('form-builder-ticket-detail.png'), fullPage: true });
 
     // 3. Edit without changes: the action loads and the update keeps the flag.
     await page.goto(`/forms/${formId}/edit`);
-    await expect(page.getByRole('heading', { name: 'Edit Form' })).toBeVisible();
-    await expect(page.locator('input[name="name"]')).toHaveValue(formName);
+    await expect(page.getByRole('heading', { name: 'Edit Form' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('input[name="name"]')).toHaveValue(formName, { timeout: 30_000 });
     await expect(page.getByRole('radio', { name: 'Create a support ticket' })).toBeChecked();
+    await expect(page.getByRole('combobox', { name: /^Ticket title field/ })).toHaveText('Topic (topic)');
     await page.screenshot({ path: testInfo.outputPath('form-builder-ticket-edit.png'), fullPage: true });
 
     const updated = apiResponse(page, new RegExp(`/forms/${formId}$`), 'PUT');
@@ -94,6 +118,7 @@ test.describe('Admin - Form builder ticket action', () => {
       create_lead: false,
       double_opt_in: true,
       default_owner_id: 0,
+      ticket_title_field: 'topic',
     });
 
     const readBack = await api.get(`${API_BASE_URL}/forms/${formId}`, { headers });
@@ -102,5 +127,6 @@ test.describe('Admin - Form builder ticket action', () => {
     expect(after.create_ticket).toBe(true);
     expect(after.create_lead).toBe(false);
     expect(after.double_opt_in).toBe(true);
+    expect(after.ticket_title_field).toBe('topic');
   });
 });

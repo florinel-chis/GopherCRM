@@ -275,3 +275,94 @@ func TestFormPublicSubmitIdempotencyKeyValidation(t *testing.T) {
 		assert.Equal(t, key, *stub.lastRequest.IdempotencyKey)
 	}
 }
+
+// titleFieldFormBody is a valid create_ticket form body with a select field
+// (topic) and a text field (subject) next to the email and a textarea.
+func titleFieldFormBody(overrides map[string]interface{}) map[string]interface{} {
+	body := ticketFormBody(map[string]interface{}{
+		"create_ticket": true,
+		"fields": []map[string]interface{}{
+			{"name": "email", "label": "Email", "type": "email", "required": true},
+			{"name": "complaint", "label": "Complaint", "type": "textarea", "required": true},
+			{"name": "topic", "label": "Topic", "type": "select", "options": []string{"Damaged item", "Late delivery"}},
+			{"name": "subject", "label": "Subject", "type": "text"},
+		},
+	})
+	for key, value := range overrides {
+		if value == nil {
+			delete(body, key)
+			continue
+		}
+		body[key] = value
+	}
+	return body
+}
+
+// #804: ticket_title_field on POST /forms, GET /forms/{id} and PUT
+// /forms/{id}.
+func TestFormTicketTitleFieldHandler(t *testing.T) {
+	env := newFormTicketFlagEnv(t)
+
+	// POST with a select field: 201, echoed and stored.
+	code, envelope := env.do(t, http.MethodPost, "/forms", titleFieldFormBody(map[string]interface{}{"ticket_title_field": "topic"}))
+	require.Equal(t, http.StatusCreated, code, "%v", envelope)
+	data := envelope["data"].(map[string]interface{})
+	assert.Equal(t, "topic", data["ticket_title_field"])
+	formID := uint(data["id"].(float64))
+	path := fmt.Sprintf("/forms/%d", formID)
+	var stored models.Form
+	require.NoError(t, env.db.First(&stored, formID).Error)
+	assert.Equal(t, "topic", stored.TicketTitleField)
+
+	// GET reads it back.
+	code, envelope = env.do(t, http.MethodGet, path, nil)
+	require.Equal(t, http.StatusOK, code, "%v", envelope)
+	assert.Equal(t, "topic", envelope["data"].(map[string]interface{})["ticket_title_field"])
+
+	// PUT with a text field stores and reads back the new value.
+	code, envelope = env.do(t, http.MethodPut, path, titleFieldFormBody(map[string]interface{}{"ticket_title_field": " subject "}))
+	require.Equal(t, http.StatusOK, code, "%v", envelope)
+	assert.Equal(t, "subject", envelope["data"].(map[string]interface{})["ticket_title_field"], "the value is trimmed")
+	code, envelope = env.do(t, http.MethodGet, path, nil)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "subject", envelope["data"].(map[string]interface{})["ticket_title_field"])
+	require.NoError(t, env.db.First(&stored, formID).Error)
+	assert.Equal(t, "subject", stored.TicketTitleField)
+
+	// Every refusal is otherwise a valid body: 400 VALIDATION_ERROR and
+	// nothing written.
+	refusals := map[string]map[string]interface{}{
+		"an unknown field":         {"ticket_title_field": "missing"},
+		"the email field":          {"ticket_title_field": "email"},
+		"a textarea field":         {"ticket_title_field": "complaint"},
+		"create_ticket false":      {"ticket_title_field": "topic", "create_ticket": false, "create_lead": false},
+		"more than 50 characters":  {"ticket_title_field": "a" + strings.Repeat("b", 50)},
+		"a case-folded field name": {"ticket_title_field": "Topic"},
+	}
+	for label, overrides := range refusals {
+		before := env.formCount(t)
+		code, envelope = env.do(t, http.MethodPost, "/forms", titleFieldFormBody(overrides))
+		assert.Equal(t, http.StatusBadRequest, code, "POST with %s", label)
+		assert.Equal(t, utils.ErrCodeValidation, envelope["error"].(map[string]interface{})["code"], "POST with %s", label)
+		assert.Equal(t, before, env.formCount(t), "POST with %s writes no row", label)
+
+		code, envelope = env.do(t, http.MethodPut, path, titleFieldFormBody(overrides))
+		assert.Equal(t, http.StatusBadRequest, code, "PUT with %s", label)
+		assert.Equal(t, utils.ErrCodeValidation, envelope["error"].(map[string]interface{})["code"], "PUT with %s", label)
+		require.NoError(t, env.db.First(&stored, formID).Error)
+		assert.Equal(t, "subject", stored.TicketTitleField, "PUT with %s leaves the stored form alone", label)
+		assert.True(t, stored.CreateTicket, "PUT with %s leaves the stored form alone", label)
+	}
+	// Exactly 50 characters passes the binding (and fails only the field rule).
+	code, envelope = env.do(t, http.MethodPost, "/forms", titleFieldFormBody(map[string]interface{}{"ticket_title_field": strings.Repeat("b", 50)}))
+	assert.Equal(t, http.StatusBadRequest, code)
+	assert.Contains(t, envelope["error"].(map[string]interface{})["message"], "is not a field of the form")
+
+	// PUT without the key clears it.
+	code, envelope = env.do(t, http.MethodPut, path, titleFieldFormBody(nil))
+	require.Equal(t, http.StatusOK, code, "%v", envelope)
+	assert.Equal(t, "", envelope["data"].(map[string]interface{})["ticket_title_field"])
+	require.NoError(t, env.db.First(&stored, formID).Error)
+	assert.Equal(t, "", stored.TicketTitleField, "an update without ticket_title_field stores ''")
+	assert.True(t, stored.CreateTicket)
+}

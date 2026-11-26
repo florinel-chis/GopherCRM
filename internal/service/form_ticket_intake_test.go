@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -873,14 +874,23 @@ func TestFormTicketIntakeLogsOmitPersonalData(t *testing.T) {
 		stranger  = "canary.stranger@ticket-intake.test"
 		key       = "Canary-Key-77"
 		complaint = "Canary-Complaint-Value-4242"
+		subject   = "Canary-Subject-Value-6161"
 	)
 	env.customer(email)
 	env.customer(other)
-	form := env.ticketForm(formName)
+	// #804: the form titles its tickets from the subject field.
+	form := env.ticketTitleForm(formName, "subject")
 
 	// created, duplicate, key_conflict, no_customer, a refused key and a
 	// rolled-back confirmation.
-	_, token := env.submit(env.svc, form, email, keyPtr(key), complaint)
+	createdRequest := ticketRequest(email, keyPtr(key), complaint)
+	createdRequest.Values["subject"] = subject
+	before := len(env.mailer.to(email))
+	_, err := env.svc.SubmitPublic(context.Background(), form.PublicID, createdRequest, submissionMeta())
+	require.NoError(t, err)
+	messages := env.mailer.to(email)
+	require.Len(t, messages, before+1)
+	token := tokenFromLink(t, messages[len(messages)-1].Body)
 	require.NoError(t, env.svc.ConfirmSubmission(context.Background(), token))
 	_, token = env.submit(env.svc, form, email, keyPtr(key), complaint)
 	require.NoError(t, env.svc.ConfirmSubmission(context.Background(), token))
@@ -888,7 +898,7 @@ func TestFormTicketIntakeLogsOmitPersonalData(t *testing.T) {
 	require.NoError(t, env.svc.ConfirmSubmission(context.Background(), token))
 	_, token = env.submit(env.svc, form, stranger, keyPtr(key+"-s"), complaint)
 	require.NoError(t, env.svc.ConfirmSubmission(context.Background(), token))
-	_, err := env.svc.SubmitPublic(context.Background(), form.PublicID, ticketRequest(email, keyPtr("submission-"+key), complaint), submissionMeta())
+	_, err = env.svc.SubmitPublic(context.Background(), form.PublicID, ticketRequest(email, keyPtr("submission-"+key), complaint), submissionMeta())
 	require.Error(t, err)
 	_, token = env.submit(env.svc, form, email, keyPtr(key+"-fault"), complaint)
 	setTicketSeam(env.svc, func(stage string) error {
@@ -902,6 +912,7 @@ func TestFormTicketIntakeLogsOmitPersonalData(t *testing.T) {
 
 	var ticket models.Ticket
 	require.NoError(t, db.Order("id").First(&ticket).Error)
+	require.Equal(t, formName+": "+subject, ticket.Title, "the canary value is the ticket title")
 
 	text := logs.String()
 	require.Contains(t, text, "ticket_outcome", "the intake logs its outcome")
@@ -909,10 +920,152 @@ func TestFormTicketIntakeLogsOmitPersonalData(t *testing.T) {
 	require.Contains(t, text, models.FormTicketOutcomeKeyConflict)
 	require.Contains(t, text, models.FormTicketOutcomeNoCustomer)
 	for _, forbidden := range []string{
-		key, email, other, stranger, complaint, formName,
-		strings.ToLower(key), strings.ToLower(formName),
+		key, email, other, stranger, complaint, formName, subject,
+		strings.ToLower(key), strings.ToLower(formName), strings.ToLower(subject),
 		ticket.Title, ticket.Description,
 	} {
 		assert.NotContains(t, text, forbidden, "a log line carries %q", forbidden)
 	}
+}
+
+// --------------------------------------------------------- #804 title ---
+
+// ticketTitleForm is a create_ticket form with a text field (subject) and a
+// select field (topic) next to the ticket form's own fields; titleField names
+// the ticket title field ("" for none).
+func (e *ticketIntakeEnv) ticketTitleForm(name, titleField string) *models.Form {
+	e.t.Helper()
+	form := &models.Form{
+		Name:   name,
+		Status: models.FormStatusPublished,
+		Fields: []models.FormFieldDef{
+			{Name: "email", Label: "Email", Type: models.FormFieldEmail, Required: true},
+			{Name: "complaint", Label: "Complaint", Type: models.FormFieldTextarea, Required: true},
+			{Name: "subject", Label: "Subject", Type: models.FormFieldText},
+			{Name: "topic", Label: "Topic", Type: models.FormFieldSelect, Options: []string{"Damaged item", "Late delivery"}},
+		},
+		NotifyEmails:     []string{"staff@ticket-intake.test"},
+		DoubleOptIn:      true,
+		CreateTicket:     true,
+		TicketTitleField: titleField,
+	}
+	require.NoError(e.t, e.svc.Create(form, e.owner.ID))
+	return form
+}
+
+// submitValues posts one submission with extra values next to the email and
+// complaint and returns the confirmation token.
+func (e *ticketIntakeEnv) submitValues(form *models.Form, email string, extra map[string]string) string {
+	e.t.Helper()
+	req := ticketRequest(email, nil, "A complaint")
+	for name, value := range extra {
+		req.Values[name] = value
+	}
+	before := len(e.mailer.to(email))
+	_, err := e.svc.SubmitPublic(context.Background(), form.PublicID, req, submissionMeta())
+	require.NoError(e.t, err)
+	messages := e.mailer.to(email)
+	require.Len(e.t, messages, before+1, "one confirmation mail")
+	return tokenFromLink(e.t, messages[len(messages)-1].Body)
+}
+
+// confirmedTicketTitle confirms token and returns the title of the one ticket
+// it opened for customer.
+func (e *ticketIntakeEnv) confirmedTicketTitle(customer *models.Customer, token string) string {
+	e.t.Helper()
+	require.NoError(e.t, e.svc.ConfirmSubmission(context.Background(), token))
+	tickets := e.ticketsOf(customer.ID)
+	require.Len(e.t, tickets, 1, "exactly one ticket")
+	return tickets[0].Title
+}
+
+func TestFormTicketTitleField(t *testing.T) {
+	const formName = "Complaints desk"
+	var seq atomic.Uint64
+	newCustomer := func(env *ticketIntakeEnv) (*models.Customer, string) {
+		email := fmt.Sprintf("title-%d@ticket-intake.test", seq.Add(1))
+		return env.customer(email), email
+	}
+
+	t.Run("a select field gives the title", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "topic")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"topic": "Damaged item", "subject": "Ignored subject"})
+		assert.Equal(t, "Complaints desk: Damaged item", env.confirmedTicketTitle(customer, token))
+	})
+
+	t.Run("a text field gives the title", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "subject")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": "Lid arrived cracked", "topic": "Late delivery"})
+		assert.Equal(t, "Complaints desk: Lid arrived cracked", env.confirmedTicketTitle(customer, token))
+	})
+
+	for label, value := range map[string]string{"an empty value": "", "a whitespace-only value": " \t  "} {
+		t.Run(label+" keeps the default title", func(t *testing.T) {
+			env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+			form := env.ticketTitleForm(formName, "subject")
+			customer, email := newCustomer(env)
+			token := env.submitValues(form, email, map[string]string{"subject": value})
+			assert.Equal(t, "Form: Complaints desk", env.confirmedTicketTitle(customer, token))
+		})
+	}
+
+	// The stored form changes between submit and confirm without going
+	// through validation, as an older definition or a direct edit would.
+	storeFields := func(t *testing.T, env *ticketIntakeEnv, form *models.Form, fields []models.FormFieldDef) {
+		t.Helper()
+		form.Fields = fields
+		encoded, err := json.Marshal(fields)
+		require.NoError(t, err)
+		require.NoError(t, env.db.Model(&models.Form{}).Where("id = ?", form.ID).UpdateColumn("fields", string(encoded)).Error)
+	}
+
+	t.Run("a field removed since submit keeps the default title", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "subject")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": "Lid arrived cracked"})
+		storeFields(t, env, form, form.Fields[:2])
+		assert.Equal(t, "Form: Complaints desk", env.confirmedTicketTitle(customer, token))
+	})
+
+	t.Run("a field retyped to textarea since submit keeps the default title", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "subject")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": "Lid arrived cracked"})
+		fields := append([]models.FormFieldDef(nil), form.Fields...)
+		fields[2].Type = models.FormFieldTextarea
+		storeFields(t, env, form, fields)
+		assert.Equal(t, "Form: Complaints desk", env.confirmedTicketTitle(customer, token))
+	})
+
+	t.Run("control characters become spaces and the result is trimmed", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "subject")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": "Lid\ncracked\tbadly\x07"})
+		assert.Equal(t, "Complaints desk: Lid cracked badly", env.confirmedTicketTitle(customer, token))
+	})
+
+	t.Run("a long value is cut to 255 runes", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "subject")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": strings.Repeat("é", 300)})
+		title := env.confirmedTicketTitle(customer, token)
+		assert.Equal(t, 255, len([]rune(title)))
+		assert.True(t, strings.HasPrefix(title, "Complaints desk: "), "title %q", title)
+	})
+
+	t.Run("a form without the setting keeps the default title", func(t *testing.T) {
+		env := newTicketIntakeEnv(t, openTicketIntakeDB(t, false), true)
+		form := env.ticketTitleForm(formName, "")
+		customer, email := newCustomer(env)
+		token := env.submitValues(form, email, map[string]string{"subject": "Lid arrived cracked", "topic": "Damaged item"})
+		assert.Equal(t, "Form: Complaints desk", env.confirmedTicketTitle(customer, token))
+	})
 }

@@ -56,6 +56,10 @@ export interface Form {
   // confirmed. The server requires double_opt_in with it and refuses it next to
   // create_lead; an omitted flag is stored false, so every update sends it.
   create_ticket: boolean;
+  // Name of a text or select field whose answer titles the ticket
+  // "<form name>: <answer>"; '' keeps "Form: <form name>". Only allowed with
+  // create_ticket. An omitted value is stored '', so every update sends it.
+  ticket_title_field: string;
   default_owner_id: number;
   allowed_domains: string[];
   created_at: string;

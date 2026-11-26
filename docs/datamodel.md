@@ -856,6 +856,7 @@ erDiagram
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
 | create_ticket | boolean | Yes | false | `tinyint(1) NOT NULL DEFAULT 0` on MySQL/MariaDB; requires `double_opt_in` true and `create_lead` false | A confirmed submission opens a ticket for the matching customer. Absent on `POST /forms` and `PUT /forms/{id}` means false; forms stored before the change read false |
+| ticket_title_field | string | Yes | `''` | `varchar(50) NOT NULL DEFAULT ''`; trimmed; non-empty only with `create_ticket`, and then exactly the name of a text or select field of the form | The field whose submitted value titles the ticket `<form name>: <value>` (#804); `''` keeps `Form: <form name>`. Absent on `PUT /forms/{id}` clears it; forms stored before the change read `''`. MySQL/MariaDB get it from `20261129120009_add_form_ticket_title_field` |
 
 ### Form submission columns
 
@@ -888,8 +889,9 @@ transaction that soft-deletes the ticket, so the key can be used again), by ever
 reaches the customer (rows whose `customer_id` is the customer or whose `ticket_id` names one of its
 tickets, soft-deleted tickets included), and by the lead and unlinked-submission erasure scrubs (the
 rows of the scrubbed submissions). Keys do not expire otherwise. A ticket opened by a form carries
-fixed text, `Form: <form name>` (cut to 255 runes) and `Submitted through form <form id>, submission
-<submission id>.`, and no submitted value. MySQL and MariaDB get the columns, the index and the
+the fixed description `Submitted through form <form id>, submission <submission id>.`, which holds
+no submitted value, and the title `Form: <form name>`, or `<form name>: <value>` with the submitted
+value of the form's `ticket_title_field` when it is set (#804); either title is cut to 255 runes. MySQL and MariaDB get the columns, the index and the
 table from `20261115120000_add_form_ticket_intake` (each only when missing); SQLite from
 `MigrateDatabase`, whose collation guard also converts a key column AutoMigrate created on
 MySQL/MariaDB to `utf8mb4_bin`.

@@ -25,9 +25,13 @@ package service
 // refusal would change the public page, roll the token claim back and leave
 // the link failing on every retry.
 //
-// The ticket text is fixed and holds no submitted value: the title is
-// "Form: <form name>" (cut to 255 runes), the description names the form and
-// submission ids. Log lines carry ids, the outcome and error codes only.
+// The description is fixed and holds no submitted value: it names the form
+// and submission ids. The title is "Form: <form name>" unless the form's
+// ticket_title_field (#804) names a field that the stored form still has as a
+// text or select field and the submission holds a non-blank value for it; the
+// title is then "<form name>: <value>", control characters replaced by spaces
+// and trimmed. Either title is cut to 255 runes. Log lines carry ids, the
+// outcome and error codes only, never the title.
 
 import (
 	"context"
@@ -35,6 +39,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -110,9 +115,42 @@ func formTicketKey(submission *models.FormSubmission) string {
 	return fmt.Sprintf("%s%d", models.FormServerKeyPrefix, submission.ID)
 }
 
-// formTicketTitle is the fixed title of a form ticket.
-func formTicketTitle(form *models.Form) string {
+// formTicketTitle is the title of a form ticket: "<form name>: <value>" when
+// the form's ticket_title_field names a current text or select field and the
+// submission holds a non-blank value for it, else "Form: <form name>". Either
+// is cut to 255 runes.
+func formTicketTitle(form *models.Form, submission *models.FormSubmission) string {
+	if value := formTicketTitleValue(form, submission); value != "" {
+		return truncate(form.Name+": "+value, formTicketTitleMaxLength)
+	}
 	return truncate("Form: "+form.Name, formTicketTitleMaxLength)
+}
+
+// formTicketTitleValue is the cleaned submitted value of the configured title
+// field, or "" when there is none to use: no setting, a field the stored form
+// no longer has as a text or select field, or a blank value.
+func formTicketTitleValue(form *models.Form, submission *models.FormSubmission) string {
+	name := form.TicketTitleField
+	if name == "" {
+		return ""
+	}
+	usable := false
+	for _, field := range form.Fields {
+		if field.Name == name {
+			usable = field.Type == models.FormFieldText || field.Type == models.FormFieldSelect
+			break
+		}
+	}
+	if !usable {
+		return ""
+	}
+	value := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, submission.Data[name])
+	return strings.TrimSpace(value)
 }
 
 // formTicketDescription is the fixed description of a form ticket: ids only.
@@ -144,7 +182,7 @@ func (s *formService) applySubmissionTicket(ctx context.Context, ticketRepo repo
 
 	key := formTicketKey(submission)
 	ticket := &models.Ticket{
-		Title:       formTicketTitle(form),
+		Title:       formTicketTitle(form, submission),
 		Description: formTicketDescription(form, submission),
 		Status:      models.TicketStatusOpen,
 		Priority:    models.TicketPriorityMedium,

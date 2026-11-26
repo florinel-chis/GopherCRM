@@ -4,10 +4,12 @@ import {
   Box,
   FormControlLabel,
   FormHelperText,
+  MenuItem,
   Paper,
   Radio,
   RadioGroup,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material';
 import { FormSelect } from '@/components/form';
@@ -48,13 +50,38 @@ export const SubmissionActionSection: React.FC<SubmissionActionSectionProps> = (
     // After a failed save, re-check the rules the choice affects so stale
     // errors clear (or new ones show) without another click.
     if (formState.isSubmitted) {
-      void trigger(['create_ticket', 'double_opt_in', 'default_owner_id']);
+      void trigger(['create_ticket', 'double_opt_in', 'default_owner_id', 'ticket_title_field']);
     }
   };
 
   const createLead = watch('create_lead');
   const createTicket = watch('create_ticket');
   const submissionAction = toSubmissionAction(createLead, createTicket);
+  const formName = watch('name');
+  const fields = watch('fields');
+  const ticketTitleField = watch('ticket_title_field');
+
+  // The fields whose answer may title a ticket: text and dropdown fields with
+  // a name. A stored value that no longer names one stays selectable, so the
+  // save shows the field error instead of the select silently dropping it.
+  const titleFieldOptions = (() => {
+    const options = (fields || [])
+      .filter((field) => (field.type === 'text' || field.type === 'select') && field.name.trim())
+      .map((field) => ({
+        value: field.name.trim(),
+        label: field.label.trim()
+          ? `${field.label.trim()} (${field.name.trim()})`
+          : field.name.trim(),
+      }));
+    if (ticketTitleField && !options.some((option) => option.value === ticketTitleField)) {
+      options.push({
+        value: ticketTitleField,
+        label: `${ticketTitleField} (not a text or dropdown field)`,
+      });
+    }
+    return options;
+  })();
+  const shownName = formName?.trim() || 'form name';
 
   const ownerOptions = (() => {
     const users = (userList || []).filter(
@@ -142,6 +169,42 @@ export const SubmissionActionSection: React.FC<SubmissionActionSectionProps> = (
               instead of creating a second one.
             </Typography>
           </Stack>
+        </Box>
+        {/* Hidden rather than unmounted, like the lead owner. */}
+        <Box
+          data-testid="ticket-action-settings"
+          style={{ display: createTicket ? 'block' : 'none' }}
+        >
+          <Controller
+            name="ticket_title_field"
+            control={control}
+            render={({ field, fieldState }) => (
+              <TextField
+                {...field}
+                select
+                fullWidth
+                id="ticket_title_field"
+                label="Ticket title field"
+                disabled={readOnly}
+                error={!!fieldState.error}
+                helperText={
+                  fieldState.error?.message ??
+                  `The ticket title becomes "${shownName}: <answer>" from the chosen field.`
+                }
+                slotProps={{
+                  inputLabel: { shrink: true },
+                  select: { displayEmpty: true },
+                }}
+              >
+                <MenuItem value="">{`None (Form: ${shownName})`}</MenuItem>
+                {titleFieldOptions.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+          />
         </Box>
         {createTicket && (
           <Typography variant="body2" color="text.secondary">

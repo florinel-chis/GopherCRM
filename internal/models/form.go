@@ -263,10 +263,19 @@ type Form struct {
 
 	// Whether a confirmed submission opens a support ticket (#213) for the live
 	// customer whose email matches the confirmed address: open, medium
-	// priority, unassigned, with fixed text that holds no submitted value.
-	// Requires double_opt_in and excludes create_lead. A submitter that matches
-	// no customer gets no ticket. Defaults to false.
+	// priority, unassigned. The description is fixed text that holds no
+	// submitted value; the title is "Form: <form name>", or holds the value of
+	// the field ticket_title_field names when one is set. Requires
+	// double_opt_in and excludes create_lead. A submitter that matches no
+	// customer gets no ticket. Defaults to false.
 	CreateTicket bool `gorm:"not null;default:false" json:"create_ticket" example:"false"`
+	// Name of a text or select field whose submitted value becomes the ticket
+	// title "<form name>: <value>" (cut to 255 runes, control characters
+	// replaced by spaces, trimmed) (#804). Empty means the default title
+	// "Form: <form name>", which is also used when the submitted value is blank
+	// or the field is no longer a text or select field of the form. Only
+	// allowed with create_ticket; at most 50 characters, trimmed.
+	TicketTitleField string `gorm:"type:varchar(50);not null;default:''" json:"ticket_title_field" example:"topic" maxLength:"50"`
 
 	// Origin allowlist: bare host names with an optional port, lower-cased,
 	// matched exactly (subdomains must be listed one by one). Empty allows
@@ -372,10 +381,36 @@ func (f *Form) ValidateDefinition() error {
 	if f.CreateLead && f.DefaultOwnerID == 0 {
 		return formDefinitionError("a form that creates leads needs a default owner")
 	}
+	if err := f.validateTicketTitleField(); err != nil {
+		return err
+	}
 	if err := f.validateNotifyEmails(); err != nil {
 		return err
 	}
 	return f.validateAllowedDomains()
+}
+
+// validateTicketTitleField trims ticket_title_field and, when it is set,
+// checks that the form creates tickets and that the name is exactly that of a
+// text or select field of the form (#804).
+func (f *Form) validateTicketTitleField() error {
+	f.TicketTitleField = strings.TrimSpace(f.TicketTitleField)
+	if f.TicketTitleField == "" {
+		return nil
+	}
+	if !f.CreateTicket {
+		return formDefinitionError("a ticket title field needs create_ticket")
+	}
+	for _, field := range f.Fields {
+		if field.Name != f.TicketTitleField {
+			continue
+		}
+		if field.Type != FormFieldText && field.Type != FormFieldSelect {
+			return formDefinitionError("ticket title field %q must be a text or select field", f.TicketTitleField)
+		}
+		return nil
+	}
+	return formDefinitionError("ticket title field %q is not a field of the form", f.TicketTitleField)
 }
 
 func validateFieldType(field *FormFieldDef) error {

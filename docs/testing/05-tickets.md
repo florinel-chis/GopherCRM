@@ -1346,8 +1346,8 @@ works the same. These cases cover the ticket side.
 ### TC-TICK-076 — A form-created ticket carries fixed text and starts unassigned
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** A published `create_ticket` form named "Complaints desk"; a customer whose
-  email is the address that submits.
+- **Preconditions:** A published `create_ticket` form named "Complaints desk" with no
+  `ticket_title_field`; a customer whose email is the address that submits.
 - **Steps:**
   1. Submit the form with a distinctive textarea value and confirm the mailed link.
   2. `GET /tickets/<id>` as admin for the ticket named by the submission's `ticket_id`.
@@ -1356,8 +1356,12 @@ works the same. These cases cover the ticket side.
   id>.`, status `open`, priority `medium`, no assignee, `due_at` and `first_responded_at` null,
   `customer_id` the matched customer. No submitted value (address, answers, key) appears in the
   title or description. One `ticket_created` event, origin `form`, `actor_id` null.
-- **Automation:** automated — `TestFormTicketIntakeConfirmed{SQLite,MySQL}` (`internal/service`),
-  `TestFormTicketIntakeAPISQLite` (`tests`), `TestFormTicketIntakeProductionWiring` (`cmd`)
+  With `ticket_title_field` naming a text or select field (#804), the title is instead
+  `Complaints desk: <value>` (control characters become spaces, trimmed, cut to 255 runes); a blank
+  value, or a field removed or retyped since the submission, keeps `Form: Complaints desk`. The
+  description stays fixed.
+- **Automation:** automated — `TestFormTicketIntakeConfirmed{SQLite,MySQL}`, `TestFormTicketTitleField`
+  (`internal/service`), `TestFormTicketIntakeAPISQLite` (`tests`), `TestFormTicketIntakeProductionWiring` (`cmd`)
 
 ### TC-TICK-077 — Deleting a form-created ticket purges its key rows
 - **Priority:** P1

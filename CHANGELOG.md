@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Forms that open support tickets can title them from an answer (#804). The new form setting
+  `ticket_title_field` names one text or dropdown field of a `create_ticket` form; a confirmed
+  submission then opens a ticket titled `<form name>: <answer>` (control characters become
+  spaces, trimmed, cut to 255 characters) instead of `Form: <form name>`. A blank answer, no
+  setting, or a field removed or retyped since the submission keeps the old title, and the
+  description stays fixed. `POST /forms` and `PUT /forms/{id}` refuse a value without
+  `create_ticket` or one that is not exactly the name of a text or select field of the form (400
+  `VALIDATION_ERROR`); PUT replaces wholesale, so an absent value clears it. The form builder
+  offers it as **Ticket title field** under "Create a support ticket" and always sends it. MySQL
+  and MariaDB need migration `20261129120009_add_form_ticket_title_field` (adds
+  `forms.ticket_title_field varchar(50) NOT NULL DEFAULT ''`); SQLite gets the column from
+  auto-migration, and existing forms read `''`. The pelicroft sample data titles its Contact us
+  tickets with the topic. A configured title holds a submitted value and, like every ticket title,
+  is kept by erasure (`docs/DEV_ERASURE.md`).
+
 - A sample data generator, `cmd/sampledata`, and `make sample-data`. It builds a fresh SQLite or
   MySQL/MariaDB database, runs the server's own auto-migration and configuration defaults, and
   writes every record through the shipped services. The first profile, `halvenmark`, is a

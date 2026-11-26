@@ -15,6 +15,11 @@ set it up for them. Installation, development and the API are described elsewher
 - [Settings and configuration](settings-and-configuration.md): the administration screens and the
   permission each needs, the configuration tabs, and the lead conversion settings.
 
+## Forms
+
+- [Forms](forms.md): what a form submission creates, and how a form that opens support tickets
+  titles them with an answer (`ticket_title_field`).
+
 ## Answer engine visibility
 
 - [Answer Engine Optimization (AEO)](aeo.md): tracking how answer engines mention your brand,
