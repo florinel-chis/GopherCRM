@@ -168,6 +168,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Docker quick start in `docs/operations/docker.md` now writes `JWT_SECRET` and
+  `API_KEY_SECRET` to `.env` with the README's one-line step instead of exporting `JWT_SECRET`
+  for one shell, which signed everyone out on a later `docker compose up` from another shell
+  (#809). It also says to keep that file across restarts and upgrades. Docs only.
 - `docs/development/extending.md` now lists the same responses that are not the envelope as the
   "Unified API response" paragraph of the developer guide (#808): the envelope rule row adds the
   AEO answer export, the quote PDF, the CORS preflight and refused-origin answers, and `/scim/v2`

@@ -348,3 +348,66 @@ func TestOperationsProcedureOrder(t *testing.T) {
 		assert.NotContains(t, text, "```", "the requirements come before any command")
 	})
 }
+
+// TestDockerQuickStartWritesSecretsToEnv pins #809: the Docker quick start
+// writes JWT_SECRET and API_KEY_SECRET to .env with the README's command,
+// instead of exporting JWT_SECRET for one shell, and says to keep the file.
+func TestDockerQuickStartWritesSecretsToEnv(t *testing.T) {
+	const prefix = "[ -f .env ] || printf 'JWT_SECRET=%s"
+	readme := readRepositoryFile(t, "README.md")
+	envLines := map[string]bool{}
+	for _, line := range docLines(readme) {
+		if strings.HasPrefix(line, prefix) {
+			envLines[line] = true
+		}
+	}
+	require.Len(t, envLines, 1, "README.md has exactly one distinct .env command line")
+	var envLine string
+	for line := range envLines {
+		envLine = line
+	}
+
+	doc := readRepositoryFile(t, "docs/operations/docker.md")
+	assert.NotContains(t, doc, "export JWT_SECRET")
+	assert.NotContains(t, doc, "export API_KEY_SECRET")
+
+	lines := docLines(doc)
+	start := -1
+	for i, line := range lines {
+		if line == "## Quick start" {
+			start = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, start, "docs/operations/docker.md has a ## Quick start section")
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "## ") {
+			end = i
+			break
+		}
+	}
+	section := lines[start:end]
+
+	envAt, upAt := -1, -1
+	for i, line := range section {
+		if line == envLine && envAt == -1 {
+			envAt = i
+		}
+		if line == "docker compose up -d --build" && upAt == -1 {
+			upAt = i
+		}
+	}
+	require.NotEqual(t, -1, envAt, "the quick start carries the README's .env line verbatim")
+	require.NotEqual(t, -1, upAt, "the quick start starts the stack")
+	assert.Less(t, envAt, upAt, "the .env line comes before docker compose up")
+
+	text := normalizeDocText(strings.Join(section, "\n"))
+	for _, phrase := range []string{
+		"Keep it across restarts and upgrades",
+		"JWT_SECRET signs everyone out",
+		"API_KEY_SECRET invalidates the API keys, the stored AI provider keys and the webhook signing secrets",
+	} {
+		assert.Contains(t, text, phrase, "the quick start says why the .env file must be kept")
+	}
+}

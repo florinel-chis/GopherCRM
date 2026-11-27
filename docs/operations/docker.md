@@ -35,15 +35,22 @@ two-container variant of the same stack backed by a SQLite file — see
 ## Quick start
 
 `JWT_SECRET` is required and must be at least 32 characters; the `.env.example` placeholder is
-refused, so a repo-root `.env` copied unedited stops the API container at startup. Compose reads
-it from your shell or from the repo-root `.env` file (the same one `.env.example` documents):
+refused, so a repo-root `.env` copied unedited stops the API container at startup. The first line
+below leaves an existing `.env` untouched, so a file copied unedited from `.env.example` has to be
+edited by hand:
 
 ```bash
-# only needed if you don't already have a .env with JWT_SECRET
-export JWT_SECRET="$(openssl rand -base64 32)"
+[ -f .env ] || printf 'JWT_SECRET=%s\nAPI_KEY_SECRET=%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" > .env
 
 docker compose up -d --build
 ```
+
+The first line writes two random secrets, `JWT_SECRET` and `API_KEY_SECRET`, to the repo-root
+`.env` (the file `.env.example` documents), and only when no `.env` exists yet. Compose reads that
+file; it is gitignored and never copied into an image.
+Keep it across restarts and upgrades: a new `JWT_SECRET` signs everyone out, and a new
+`API_KEY_SECRET` invalidates the API keys, the stored AI provider keys and the webhook signing
+secrets (see [Secrets and rotation](../reference/configuration.md#secrets-and-rotation)).
 
 Schema is created automatically by the backend's auto-migration on startup;
 the MySQL image creates the `gocrm` database itself, so no SQL seed script is
