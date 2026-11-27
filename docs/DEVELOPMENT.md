@@ -228,8 +228,24 @@ Frontend:
 
 ## Conventions
 
-**Unified API response** — all endpoints return `utils.APIResponse{Success, Data, Error, Meta}`. Use
-`utils.RespondSuccess()`, `utils.RespondError()`, `utils.RespondNotFound()`, etc.
+**Unified API response** — every JSON response under the API prefix uses the `{success, data, error, meta}`
+envelope (`APIResponse` in `internal/utils/response.go`), sent through `utils.RespondSuccess()`,
+`utils.RespondError()`, `utils.RespondNotFound()` and the other `utils.Respond*` helpers: `data` holds the
+result, `error` the code and message of a refusal, and `meta` the pagination of a list plus the
+`request_id`. `GET /health`, although mounted outside the prefix, answers in the same envelope
+(`RespondSuccess` in `setupRouter` (`cmd/main.go`)); its payload is described under
+[Health check](SERVER_PROVISIONING.md#health-check). The responses that are not the envelope are: the
+customer and lead CSV exports (`CustomerHandler.Export` (`internal/handler/customer_handler.go`),
+`LeadHandler.Export` (`internal/handler/lead_handler.go`)); the AEO answer export, a CSV or JSON
+attachment sent with `c.Data` (`AEOHandler.Export` (`internal/handler/aeo_export.go`)); the quote PDF,
+sent as `application/pdf` (`QuoteHandler.PDF` (`internal/handler/quote_handler.go`)); the public form
+embed script and the hosted and confirmation pages (`FormPublicHandler.EmbedScript`,
+`FormPublicHandler.ViewPage`, `FormPublicHandler.ConfirmPage` and `FormPublicHandler.Confirm`
+(`internal/handler/form_public_handler.go`));
+deletes that answer an empty 204; a CORS preflight (an empty 204) and a refused cross-origin request (a
+bare 403); and, outside the prefix, `/scim/v2`, which answers in SCIM JSON (`application/scim+json`,
+`ContentType` in `internal/idkit/scim/scim.go`). New handlers keep the envelope, as
+[EXTENDING.md](EXTENDING.md) states.
 
 **Error types** — sentinel errors live in `internal/errors/errors.go` (for example
 `ErrDuplicateEmail`, `ErrNotFound`, `ErrLeadConverted`). Handlers classify errors with `errors.Is()`

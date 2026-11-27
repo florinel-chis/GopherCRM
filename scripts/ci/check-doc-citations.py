@@ -92,8 +92,10 @@ EXTRA_DEFAULT_FILES = (
 
 # The guides whose line-number citations were converted to symbol citations:
 # the fork and extension guides (#487), then the use-case, provisioning and
-# smaller guides and the README (#488), then docs/CONCURRENCY.md (#743). Each must keep at least one checked
-# path and one symbol pair, so a broken extractor cannot pass them empty.
+# smaller guides (#488), then docs/CONCURRENCY.md (#743). Each must keep at least one checked
+# path and one symbol pair, so a broken extractor cannot pass them empty. README.md was
+# converted in #488 and left the list in #792: it is a landing page that need not cite code,
+# and it still goes through every other rule as a default file.
 # docs/DOCKER.md keeps its Compose line citations (docker-compose*.yml:N),
 # which a Go test recomputes; they are not .go/.ts/.tsx/.py/.sh/.sql
 # citations, so rule c does not apply to them.
@@ -102,7 +104,6 @@ CONVERTED_FILES = (
     'docs/EXTENDING.md',
     'docs/USE_CASES.md',
     'docs/SERVER_PROVISIONING.md',
-    'README.md',
     'docs/FEATURES.md',
     'docs/DOCKER.md',
     'docs/datamodel.md',
