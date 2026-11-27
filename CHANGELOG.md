@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Three everyday walkthroughs in the user guide (#794), each with numbered steps, the result on
+  screen and the existing screenshots: `docs/user-guide/sales-walkthrough.md` (lead, conversion,
+  company, deal and quote with Print or Download PDF, and why a customer record is not a customer
+  login), `docs/user-guide/support-walkthrough.md` (ticket, comments and internal notes, status
+  through to Closed) and `docs/user-guide/tasks-and-labels.md`. `getting-started.md` is rewritten
+  for someone given an account on an existing installation; creating the first admin is left to
+  `docs/SETUP.md` and `docs/DOCKER.md`, and session storage to `docs/DEV_AUTH.md`. The user-guide
+  index lists the four pages first. In `aeo.md` the cost of a run comes before the screens, and
+  `webhooks.md` gathers what a delivery carries, retries, signature checking and allowed addresses
+  under a "For the receiving system" heading after the screen instructions. Who can give an
+  elevated role (the CLI and the single sign-on and SCIM mapping) moved to
+  `roles-and-permissions.md`.
+
 - A plain-language capabilities page, `docs/CAPABILITIES.md` (#793), that says area by area what
   GopherCRM can do, from sign-in and roles to forms, automation, privacy and running it. The
   README Features section and the documentation index link it for "what can it do", and

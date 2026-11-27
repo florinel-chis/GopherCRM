@@ -5,10 +5,16 @@ set it up for them. Installation, development and the API are described elsewher
 [setup walkthrough](../SETUP.md), the [developer guide](../DEVELOPMENT.md) and the
 [documentation index](../README.md), which lists the API reference.
 
-## Getting started
+## Everyday work
 
-- [Getting started](getting-started.md): opening the web app, the first sign-in, public sign-up
-  and how long a session lasts.
+- [Getting started](getting-started.md): signing in to an existing installation, the main screens
+  and what to do first in each role.
+- [Everyday sales work](sales-walkthrough.md): from a new lead through conversion, a company and a
+  deal to a quote you print or download as a PDF.
+- [Everyday support work](support-walkthrough.md): opening a ticket, comments and internal notes,
+  and moving it through to its resolution.
+- [Tasks and labels](tasks-and-labels.md): creating and working on tasks, and grouping and
+  filtering them with labels.
 
 ## Settings
 

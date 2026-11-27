@@ -101,6 +101,13 @@ customer login cannot be given a custom role." (409 `CUSTOMER_LOGIN_ROLE`). User
 with single sign-on get their role from the provider at every sign-in; see
 [Single sign-on](single-sign-on.md).
 
+Nobody gives themselves an elevated role (Admin, Sales, Support or a custom role). Apart from the
+**Role** field above, a role comes only from the `create-admin` command-line tool, which creates an
+admin account on the server, or from the single sign-on role mapping an administrator configured,
+which also sets the role of the accounts [SCIM provisioning](scim-provisioning.md) creates and
+updates. Public sign-up always
+creates a Customer login and ignores any role the client sends.
+
 ## Assign a role to an API key
 
 An API key has no role and no permissions of its own. It acts with the permissions its owner holds
