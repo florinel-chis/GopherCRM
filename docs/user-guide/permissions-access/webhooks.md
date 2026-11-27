@@ -3,7 +3,8 @@
 A webhook tells another system that a record changed, so an integration no longer needs to poll
 GopherCRM for new records. You register an HTTPS address (an endpoint) and pick the events it
 should hear about; GopherCRM then sends a small signed request to that address after each such
-change. This page describes the Settings → Webhooks screen and what the receiving system gets.
+change. This page describes the Settings → Webhooks screen first, then, under
+[For the receiving system](#for-the-receiving-system), what the receiving system gets.
 The routes, with their roles, parameters and answers, are in the
 [API reference](../../../api/index.html).
 
@@ -91,10 +92,10 @@ that had already been deleted.
 endpoint at once, active or not, and answers with the outcome: `{"event_id":"evt_…","outcome":"succeeded",
 "http_status":200,"error_code":null}`, or `outcome` `failed` with the error code of a delivery
 (`http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`) or
-`secret_unavailable`, and `http_status` null when no answer arrived. Its body is
-`{"id":"evt_<32 hex>","type":"webhook.ping","occurred_at":"…"}`, without `record_id`, signed like a
-delivery. It follows the same address rules, 10-second timeout and no-redirect rule, is never
-retried, and is not written to the delivery log. It also ignores a pause (see
+`secret_unavailable`, and `http_status` null when no answer arrived. What the request carries is
+described under [What a delivery carries](#what-a-delivery-carries). It follows the same address
+rules, 10-second timeout and no-redirect rule, is never retried, and is not written to the
+delivery log. It also ignores a pause (see
 [Pausing](#pausing)). `webhook.ping` is not an event type an endpoint can subscribe to.
 
 ## Rotate the signing secret
@@ -103,10 +104,10 @@ retried, and is not written to the delivery log. It also ignores a pause (see
 `POST /api/v1/webhooks/endpoints/:id/rotate-secret`. It generates a new secret and answers with the
 endpoint, the new `secret` (shown this once) and `previous_secret_expires_at`, 24 hours from now.
 Until then the replaced secret keeps signing next to the new one: every delivery, retry,
-redelivery and test ping carries two signatures, `webhook-signature: v1,<new> v1,<previous>`, so
-the receiving system can switch to the new secret at any moment in that window without refusing
-a request. From `previous_secret_expires_at` on only the new signature is sent, and the next
-delivery clears the replaced secret. A second rotation inside the window replaces the previous
+redelivery and test ping carries two signatures (see
+[Verifying the signature](#verifying-the-signature)), so the receiving system can switch to the new
+secret at any moment in that window without refusing a request. From `previous_secret_expires_at`
+on only the new signature is sent, and the next delivery clears the replaced secret. A second rotation inside the window replaces the previous
 secret: at most two secrets ever sign. Rotation works on an inactive endpoint and never reads the
 stored secrets, so it also repairs an endpoint whose secret became unreadable (see
 [Allowed addresses](#allowed-addresses-and-the-signing-secret)).
@@ -125,7 +126,24 @@ Each `succeeded` or `failed` row has a **Redeliver** button, which calls
 system that deduplicates sees a repeat. A `pending` or `sending` delivery, or one whose endpoint is
 deleted or inactive, is refused with 409; the screen shows the refusal's message.
 
-## What a delivery carries
+## Pausing
+
+An endpoint whose sent requests fail 3 times in a row is paused: the sender skips all its events
+for 1 minute, then 2, 4, … up to 1 hour after each further failure, and the first 2xx answer ends
+the pause. Neither a redelivery nor a change to the endpoint ends a pause early, and the test ping
+ignores it.
+
+The Webhooks screen does not show whether an endpoint is paused. Read it from
+`GET /api/v1/webhooks/endpoints/{id}`, which returns `consecutive_failures` (the failures in a row)
+and `paused_until` (the end of the current pause).
+
+## For the receiving system
+
+This part is for whoever builds or runs the system that receives the requests: what each request
+carries, how it is delivered and retried, how to check its signature, and which addresses can
+receive it.
+
+### What a delivery carries
 
 The body is exactly
 `{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
@@ -133,7 +151,10 @@ no name, address or other personal data. The receiving system fetches the record
 with its own credentials; visibility and erasure apply at that moment, so nothing personal leaves
 after a person is erased.
 
-## Delivery and retries
+A test ping's body is `{"id":"evt_<32 hex>","type":"webhook.ping","occurred_at":"…"}`, without
+`record_id`, signed like a delivery.
+
+### Delivery and retries
 
 The event row is written in the same transaction as the record, so a create, an update or a
 delete that rolls back sends nothing. A background sender delivers committed events about every
@@ -146,18 +167,7 @@ time but sends one endpoint's events one at a time, oldest first, so a slow endp
 up the others. A retry or a second replica can still deliver an endpoint's events out of order:
 deduplicate on `webhook-id` and do not rely on order.
 
-## Pausing
-
-An endpoint whose sent requests fail 3 times in a row is paused: the sender skips all its events
-for 1 minute, then 2, 4, … up to 1 hour after each further failure, and the first 2xx answer ends
-the pause. Neither a redelivery nor a change to the endpoint ends a pause early, and the test ping
-ignores it.
-
-The Webhooks screen does not show whether an endpoint is paused. Read it from
-`GET /api/v1/webhooks/endpoints/{id}`, which returns `consecutive_failures` (the failures in a row)
-and `paused_until` (the end of the current pause).
-
-## Verifying the signature
+### Verifying the signature
 
 Signatures follow the Standard Webhooks scheme. Each request carries `webhook-id` (the event id),
 `webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`:
@@ -179,7 +189,7 @@ def verify(secret, headers, body: bytes, tolerance=300):
                for s in headers["webhook-signature"].split() if s.startswith("v1,"))
 ```
 
-## Allowed addresses and the signing secret
+### Allowed addresses and the signing secret
 
 The URL must be `https`, at most 2048 characters, without credentials, query string or fragment.
 Every connection resolves the host again and refuses private, loopback, CGNAT, unique-local,

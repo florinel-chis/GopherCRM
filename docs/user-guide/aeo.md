@@ -23,6 +23,12 @@ configuration entries, written through the configuration API, so they need `sett
 reading them needs `settings.view`); only the admin system role holds those, so in practice they
 are admin-only. Without `settings.update` the Settings page does not show the key card.
 
+## Cost
+
+**Cost.** One run is *active prompts × configured engines* API calls — 25 prompts across 5 engines
+is 125 calls a day. The 100-prompt cap exists for this reason. Only one run may be in flight at a
+time; a second request is refused with 409.
+
 ## Screens
 
 1. **Settings** (`/aeo/settings`) — brand name, aliases, owned domains and competitors, the provider
@@ -124,12 +130,6 @@ whatever happens to be configured, so its output keeps a consistent shape. Anthr
 the `Settings` page selects any of Anthropic, OpenAI, Gemini, Kimi or Perplexity instead. If the
 selected engine has no key, generation answers 503 naming that engine rather than silently falling
 back to another one.
-
-## Cost
-
-**Cost.** One run is *active prompts × configured engines* API calls — 25 prompts across 5 engines
-is 125 calls a day. The 100-prompt cap exists for this reason. Only one run may be in flight at a
-time; a second request is refused with 409.
 
 ## Live verification
 
