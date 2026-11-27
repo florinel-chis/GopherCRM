@@ -35,8 +35,9 @@ creates nothing.
 
 ![A lead's detail page](../screenshots/leads/03-detail.png)
 
-**Result:** the lead's page shows the Qualified status chip. With the default settings, a
-Qualified or Contacted lead now offers **Convert to Customer**.
+**Result:** the leads list opens and shows the lead with the status Qualified. Open the lead again
+and its page shows the Qualified status chip and, with the default settings, the **Convert to
+Customer** button (a Qualified or Contacted lead offers it).
 
 ## Convert the lead to a customer
 
@@ -46,7 +47,7 @@ conversion notes (see
 [Lead conversion settings](settings-and-configuration.md#lead-conversion-settings)). A lead that
 was already converted no longer offers the button.
 
-1. On the lead's page, click **Convert to Customer**.
+1. In the leads list, click the lead to open its page again, then click **Convert to Customer**.
 2. The **Convert Lead to Customer** dialog shows the lead's contact, email, phone and company. It
    asks for optional **Company Name** (empty keeps the lead's company), **Website**, **Address**
    and **Conversion Notes**. When the installation requires notes, the notes field is marked
