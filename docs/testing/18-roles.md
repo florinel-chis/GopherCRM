@@ -42,7 +42,7 @@ Priorities: 11 P0, 10 P1, 2 P2.
   `internal/integration/permission_next_request_integration_test.go`,
   `internal/service/role_governance_test.go`, `internal/permissions/catalogue_test.go`,
   `cmd/system_role_route_matrix_test.go`
-- `docs/user-guide/permissions-access/roles-and-permissions.md`
+- `docs/administration/roles-and-permissions.md`
 
 ## Constraints
 

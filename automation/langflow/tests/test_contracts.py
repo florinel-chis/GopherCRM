@@ -130,7 +130,7 @@ class FrontendContractTests(fixtures.EngineTests):
                       scope_paths=['gocrm-ui/src/**', 'docs/**', 'README.md', 'CHANGELOG.md',
                                    'internal/**', 'internal/handler/assets/*', '*'])
         check_scope(frozen, ['gocrm-ui/src/pages/deals/DealList.tsx', 'gocrm-ui/src/pages/deals/DealList.test.tsx',
-                             'docs/FEATURES.md', 'README.md', 'CHANGELOG.md'])
+                             'docs/reference/features.md', 'README.md', 'CHANGELOG.md'])
         for path in ['internal/handler/deal_handler.go', 'internal/handler/assets/form_embed.js',
                      'cmd/main.go', 'go.mod', 'Makefile', 'AGENTS.md', 'gocrm-ui/../internal/x.go']:
             with self.subTest(path=path), self.assertRaises(GateError):

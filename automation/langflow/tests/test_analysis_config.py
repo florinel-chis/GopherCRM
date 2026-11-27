@@ -32,7 +32,7 @@ class AnalysisConfigTests(unittest.TestCase):
         config = Config.load(policy(self.root))
         self.assertEqual(config.analysis_output_dir, 'docs/specs')
         self.assertEqual(config.analysis_max_calls, 8)
-        self.assertEqual(config.analysis_context_refs, ('AGENTS.md', 'docs/DEVELOPMENT.md'))
+        self.assertEqual(config.analysis_context_refs, ('AGENTS.md', 'docs/development/README.md'))
         self.assertEqual(config.analysis_rules_dir, '')
         loaded = Config.load(policy(self.root, analysis_context_refs=['AGENTS.md', 'README.md'],
                                     analysis_max_calls=3, analysis_output_dir='docs/plans',
@@ -52,7 +52,7 @@ class AnalysisConfigTests(unittest.TestCase):
         plain = Config.load(policy(self.root))
         for field, value in [('analysis_output_dir', '/abs/specs'), ('analysis_output_dir', 'docs/../x'),
                              ('analysis_output_dir', ''), ('analysis_max_calls', 0),
-                             ('analysis_context_refs', ('docs/DEVELOPMENT.md',)),
+                             ('analysis_context_refs', ('docs/development/README.md',)),
                              ('analysis_context_refs', ('AGENTS.md', 'notes.txt')),
                              ('analysis_context_refs', ()), ('analysis_rules_dir', 'relative/rules')]:
             with self.subTest(field=field, value=value):

@@ -89,33 +89,37 @@ func TestDeploymentDecisionTables(t *testing.T) {
 			}
 			guides = append(guides, row.cells[3])
 		}
-		assert.Contains(t, guides[0], "DOCKER.md#sqlite-flavor-no-database-server", rel)
-		assert.Contains(t, guides[0], "SETUP.md", rel)
-		assert.Contains(t, guides[1], "DOCKER.md#production-override-example", rel)
-		assert.True(t, strings.Contains(guides[2], "SERVER_PROVISIONING.md") || strings.Contains(guides[2], "](#scope)"),
-			"%s: the systemd row links SERVER_PROVISIONING.md", rel)
-		assert.Contains(t, guides[3], "FORKING.md#52-release-tarball-and-systemd-through-the-shipped-workflows", rel)
+		assert.Contains(t, guides[0], "docker.md#sqlite-flavor-no-database-server", rel)
+		assert.Contains(t, guides[0], "local-setup.md", rel)
+		assert.Contains(t, guides[1], "docker.md#production-override-example", rel)
+		assert.True(t, strings.Contains(guides[2], "systemd.md") || strings.Contains(guides[2], "](#scope)"),
+			"%s: the systemd row links operations/systemd.md", rel)
+		assert.Contains(t, guides[3], "forking.md#52-release-tarball-and-systemd-through-the-shipped-workflows", rel)
 	}
 }
 
-// operationsOwnerPages are the three owner pages of #795.
-var operationsOwnerPages = []string{"CONFIGURATION", "BACKUP_RESTORE", "UPGRADING"}
+// operationsOwnerPages are the three owner pages of #795, as repository paths.
+var operationsOwnerPages = []string{
+	"docs/reference/configuration.md",
+	"docs/operations/backup-and-restore.md",
+	"docs/operations/upgrades.md",
+}
 
 // operationsDocFiles are the pages among which each topic has one owner.
 var operationsDocFiles = []string{
 	"README.md",
 	"docs/README.md",
-	"docs/SETUP.md",
-	"docs/DOCKER.md",
-	"docs/FORKING.md",
-	"docs/SERVER_PROVISIONING.md",
-	"docs/DEVELOPMENT.md",
-	"docs/CONFIGURATION.md",
-	"docs/BACKUP_RESTORE.md",
-	"docs/UPGRADING.md",
+	"docs/development/local-setup.md",
+	"docs/operations/docker.md",
+	"docs/development/forking.md",
+	"docs/operations/systemd.md",
+	"docs/development/README.md",
+	"docs/reference/configuration.md",
+	"docs/operations/backup-and-restore.md",
+	"docs/operations/upgrades.md",
 }
 
-// configurationVariables are the variables docs/CONFIGURATION.md must name.
+// configurationVariables are the variables docs/reference/configuration.md must name.
 var configurationVariables = strings.Fields(`
 AEO_EGRESS_ALLOWED_ORIGINS AEO_EGRESS_LOCAL_ORIGINS AEO_SCHEDULE_ENABLED AEO_SCHEDULE_HOUR
 API_KEY_SECRET API_PREFIX APP_BASE_URL AUTH_AUDIT_RETENTION_DAYS AUTOMATION_ENABLED
@@ -131,47 +135,44 @@ VITE_API_BASE_URL VITE_APP_NAME`)
 // operationsTopicMarkers maps a phrase to the one page that may hold it; an
 // empty owner means no page of operationsDocFiles may.
 var operationsTopicMarkers = map[string]string{
-	"VACUUM INTO":                 "docs/BACKUP_RESTORE.md",
-	"chown 10001":                 "docs/BACKUP_RESTORE.md",
-	"gunzip -c":                   "docs/BACKUP_RESTORE.md",
-	"secrets it was written with": "docs/BACKUP_RESTORE.md",
-	"invalidates every API key":   "docs/CONFIGURATION.md",
-	"| `TRUSTED_PROXIES` |":       "docs/CONFIGURATION.md",
-	"clamped to 1..3600":          "docs/CONFIGURATION.md",
-	"-command force":              "docs/UPGRADING.md",
-	"fk_tasks_deal":               "docs/UPGRADING.md",
+	"VACUUM INTO":                 "docs/operations/backup-and-restore.md",
+	"chown 10001":                 "docs/operations/backup-and-restore.md",
+	"gunzip -c":                   "docs/operations/backup-and-restore.md",
+	"secrets it was written with": "docs/operations/backup-and-restore.md",
+	"invalidates every API key":   "docs/reference/configuration.md",
+	"| `TRUSTED_PROXIES` |":       "docs/reference/configuration.md",
+	"clamped to 1..3600":          "docs/reference/configuration.md",
+	"-command force":              "docs/operations/upgrades.md",
+	"fk_tasks_deal":               "docs/operations/upgrades.md",
 	"section 4.2":                 "",
 }
 
 // TestOperationsOwnerPages pins #795 AC-2 and AC-3.
 func TestOperationsOwnerPages(t *testing.T) {
 	index := docLines(readRepositoryFile(t, "docs/README.md"))
-	for _, name := range operationsOwnerPages {
-		rel := "docs/" + name + ".md"
+	for _, rel := range operationsOwnerPages {
 		text := readRepositoryFile(t, rel)
 		forLines := 0
 		for _, line := range docLines(text) {
 			if strings.HasPrefix(line, "> **For:**") {
 				forLines++
-				assert.Contains(t, line, "Part of the [documentation index](README.md).", rel)
+				assert.Contains(t, line, "Part of the [documentation index](../README.md).", rel)
 			}
 		}
 		assert.Equal(t, 1, forLines, "%s has one > **For:** header line", rel)
 
-		assertOneLabelledIndexBullet(t, index, name+".md")
+		assertOneLabelledIndexBullet(t, index, strings.TrimPrefix(rel, "docs/"))
 	}
 
-	configuration := readRepositoryFile(t, "docs/CONFIGURATION.md")
+	configuration := readRepositoryFile(t, "docs/reference/configuration.md")
 	for _, name := range configurationVariables {
-		assert.Contains(t, configuration, "`"+name+"`", "docs/CONFIGURATION.md names %s in backticks", name)
+		assert.Contains(t, configuration, "`"+name+"`", "docs/reference/configuration.md names %s in backticks", name)
 	}
 
 	texts := map[string]string{}
 	for _, rel := range operationsDocFiles {
+		// A missing page fails: a stale entry must not silently drop a page from the check.
 		data, err := os.ReadFile(filepath.Join(repositoryRoot(t), rel))
-		if os.IsNotExist(err) {
-			continue
-		}
 		require.NoError(t, err, rel)
 		texts[rel] = string(data)
 	}
@@ -208,19 +209,25 @@ func assertOneLabelledIndexBullet(t *testing.T, index []string, page string) {
 	assert.Equal(t, 1, bullets, "docs/README.md has exactly one bullet whose first link is (%s)", page)
 }
 
-// docsIndexRoutes are the four task routes of docs/README.md, in order.
+// docsIndexRoutes are the sections of docs/README.md, in order: the user
+// guide first, then one section per audience folder (#798).
 var docsIndexRoutes = []string{
 	"## Use GopherCRM",
-	"## Install and operate",
-	"## Integrate",
-	"## Contribute",
+	"## Administration",
+	"## Operations",
+	"## Integrations",
+	"## Development",
+	"## Maintainers",
+	"## Reference",
+	"## Testing",
 }
 
 // bareFileLabelBullet matches an index bullet whose label is a file name.
 var bareFileLabelBullet = regexp.MustCompile(`^- \[[^\]]*\.(md|html|yaml|json)\]\(`)
 
-// TestDocsIndexTaskRoutes pins the docs index of #796: four task routes, no
-// pointer to local working papers or history, and descriptive bullet labels.
+// TestDocsIndexTaskRoutes pins the docs index of #796 and #798: the sections in
+// docsIndexRoutes, no pointer to local working papers or history, and
+// descriptive bullet labels.
 func TestDocsIndexTaskRoutes(t *testing.T) {
 	text := readRepositoryFile(t, "docs/README.md")
 	var headings []string
@@ -230,7 +237,7 @@ func TestDocsIndexTaskRoutes(t *testing.T) {
 		}
 		assert.False(t, bareFileLabelBullet.MatchString(line), "docs/README.md: bullet label is a bare file name: %q", line)
 	}
-	assert.Equal(t, docsIndexRoutes, headings, "docs/README.md: the ## headings are the four task routes, in order")
+	assert.Equal(t, docsIndexRoutes, headings, "docs/README.md: the ## headings are the sections of docsIndexRoutes, in order")
 	for _, word := range []string{"docs/plans", "docs/specs", "Historical"} {
 		assert.NotContains(t, text, word, "docs/README.md")
 	}
@@ -238,8 +245,8 @@ func TestDocsIndexTaskRoutes(t *testing.T) {
 
 // TestOperationsProcedureOrder pins #795 AC-4.
 func TestOperationsProcedureOrder(t *testing.T) {
-	t.Run("SETUP runs in execution order with labelled terminals", func(t *testing.T) {
-		lines := docLines(readRepositoryFile(t, "docs/SETUP.md"))
+	t.Run("local-setup runs in execution order with labelled terminals", func(t *testing.T) {
+		lines := docLines(readRepositoryFile(t, "docs/development/local-setup.md"))
 		last := -1
 		for _, heading := range []string{
 			"## Prerequisites", "## Configuration", "## Start",
@@ -248,12 +255,12 @@ func TestOperationsProcedureOrder(t *testing.T) {
 			at := -1
 			for i, line := range lines {
 				if line == heading {
-					require.Equal(t, -1, at, "docs/SETUP.md has %q twice", heading)
+					require.Equal(t, -1, at, "docs/development/local-setup.md has %q twice", heading)
 					at = i
 				}
 			}
-			require.NotEqual(t, -1, at, "docs/SETUP.md lacks %q", heading)
-			assert.Greater(t, at, last, "docs/SETUP.md: %q is out of order", heading)
+			require.NotEqual(t, -1, at, "docs/development/local-setup.md lacks %q", heading)
+			assert.Greater(t, at, last, "docs/development/local-setup.md: %q is out of order", heading)
 			last = at
 		}
 
@@ -268,7 +275,7 @@ func TestOperationsProcedureOrder(t *testing.T) {
 			for end < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[end]), "```") {
 				end++
 			}
-			require.Less(t, end, len(lines), "docs/SETUP.md: unterminated fence at line %d", open+1)
+			require.Less(t, end, len(lines), "docs/development/local-setup.md: unterminated fence at line %d", open+1)
 			body := strings.Join(lines[open+1:end], "\n")
 			runs := false
 			for _, s := range starters {
@@ -284,17 +291,17 @@ func TestOperationsProcedureOrder(t *testing.T) {
 						break
 					}
 				}
-				assert.Contains(t, above, "Terminal", "docs/SETUP.md: the fence at line %d needs a terminal label", open+1)
+				assert.Contains(t, above, "Terminal", "docs/development/local-setup.md: the fence at line %d needs a terminal label", open+1)
 				labelled++
 			}
 			i = end
 		}
-		assert.GreaterOrEqual(t, labelled, 3, "docs/SETUP.md: backend, frontend and create-admin blocks")
+		assert.GreaterOrEqual(t, labelled, 3, "docs/development/local-setup.md: backend, frontend and create-admin blocks")
 	})
 
-	docker := readRepositoryFile(t, "docs/DOCKER.md")
+	docker := readRepositoryFile(t, "docs/operations/docker.md")
 
-	t.Run("DOCKER quick start creates the admin, opens the UI, then checks health", func(t *testing.T) {
+	t.Run("docker quick start creates the admin, opens the UI, then checks health", func(t *testing.T) {
 		lines := docLines(guideSection(t, strings.ReplaceAll(docker, "\r\n", "\n"), "## Quick start"))
 		first := func(needle string) int {
 			for i, line := range lines {
@@ -325,7 +332,7 @@ func TestOperationsProcedureOrder(t *testing.T) {
 				start = i
 			}
 		}
-		require.NotEqual(t, -1, start, "docs/DOCKER.md lacks the production override heading")
+		require.NotEqual(t, -1, start, "docs/operations/docker.md lacks the production override heading")
 		i := start + 1
 		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
 			i++

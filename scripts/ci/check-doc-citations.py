@@ -76,7 +76,7 @@ import sys
 from pathlib import Path
 
 # Docs that are not checked by default, each with the test that pins it. No
-# doc is exempt: docs/CONCURRENCY.md, the last one, was converted to symbol
+# doc is exempt: docs/development/concurrency.md, the last one, was converted to symbol
 # citations (#743). An exemption would apply to discovered files only.
 EXEMPT_FILES = {}
 
@@ -92,27 +92,27 @@ EXTRA_DEFAULT_FILES = (
 
 # The guides whose line-number citations were converted to symbol citations:
 # the fork and extension guides (#487), then the use-case, provisioning and
-# smaller guides (#488), then docs/CONCURRENCY.md (#743). Each must keep at least one checked
+# smaller guides (#488), then docs/development/concurrency.md (#743). Each must keep at least one checked
 # path and one symbol pair, so a broken extractor cannot pass them empty. README.md was
 # converted in #488 and left the list in #792: it is a landing page that need not cite code,
 # and it still goes through every other rule as a default file.
-# docs/DOCKER.md keeps its Compose line citations (docker-compose*.yml:N),
+# docs/operations/docker.md keeps its Compose line citations (docker-compose*.yml:N),
 # which a Go test recomputes; they are not .go/.ts/.tsx/.py/.sh/.sql
 # citations, so rule c does not apply to them.
 CONVERTED_FILES = (
-    'docs/FORKING.md',
-    'docs/EXTENDING.md',
-    'docs/USE_CASES.md',
-    'docs/SERVER_PROVISIONING.md',
-    'docs/FEATURES.md',
-    'docs/DOCKER.md',
-    'docs/datamodel.md',
-    'docs/SETUP.md',
-    'docs/CONCURRENCY.md',
-    'docs/KNOWN_LIMITATIONS.md',
-    # #795: the variable table and the secrets list moved here from FORKING.md
+    'docs/development/forking.md',
+    'docs/development/extending.md',
+    'docs/reference/use-cases.md',
+    'docs/operations/systemd.md',
+    'docs/reference/features.md',
+    'docs/operations/docker.md',
+    'docs/reference/data-model.md',
+    'docs/development/local-setup.md',
+    'docs/development/concurrency.md',
+    'docs/reference/limitations.md',
+    # #795: the variable table and the secrets list moved here from docs/development/forking.md
     # with their symbol citations.
-    'docs/CONFIGURATION.md',
+    'docs/reference/configuration.md',
 )
 
 # Gitignored build outputs and local configuration the guides legitimately

@@ -8,7 +8,7 @@ import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
 
 /**
- * Documentation capture of the public quote response page (FEATURES.md 4d):
+ * Documentation capture of the public quote response page (docs/reference/features.md 4d):
  * what a client sees on opening the link of a quote email, before answering.
  *
  * A customer, a product and a sent quote are seeded through the API with fixed

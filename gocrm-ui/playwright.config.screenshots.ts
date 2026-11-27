@@ -9,7 +9,7 @@ const uiBaseURL = `http://localhost:${e2eUiPort ?? '5173'}`;
  * Documentation screenshot suite.
  *
  * Walks every user-facing screen and saves retina captures to
- * ../docs/screenshots/<area>/. Not part of the regular E2E run:
+ * ../docs/assets/<area>/. Not part of the regular E2E run:
  * invoke with `npm run screenshots` (backend must be up, same as E2E), or
  * against a fresh e2e database and free ports with
  * `scripts/e2e/run.sh --config=playwright.config.screenshots.ts [specs]`.

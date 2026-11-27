@@ -23,8 +23,8 @@ def make_checkout(root):
     checkout = root / 'checkout'
     checkout.mkdir()
     git(checkout, 'init', '-q', '-b', 'main')
-    (checkout / 'docs').mkdir()
-    (checkout / 'docs' / 'DEVELOPMENT.md').write_text('# Guide\n\nCommitted guidance.\n')
+    (checkout / 'docs' / 'development').mkdir(parents=True)
+    (checkout / 'docs' / 'development' / 'README.md').write_text('# Guide\n\nCommitted guidance.\n')
     (checkout / 'internal').mkdir()
     (checkout / 'internal' / 'service.go').write_text('package service\n\nfunc Lead() {}\n')
     (checkout / '.gitignore').write_text('docs/specs/\nAGENTS.md\n')
@@ -197,9 +197,9 @@ class RunModelTests(unittest.IsolatedAsyncioTestCase):
         await analysis.remove_worktree(self.commands, run)
 
     async def test_guidance_at_base_ignores_working_tree_edit(self):
-        (self.checkout / 'docs' / 'DEVELOPMENT.md').write_text('# Guide\n\nUncommitted edit.\n')
+        (self.checkout / 'docs' / 'development' / 'README.md').write_text('# Guide\n\nUncommitted edit.\n')
         documents = await analysis.guidance_at_base(self.commands, self.config, self.base)
-        self.assertEqual([d['path'] for d in documents], ['AGENTS.md', 'docs/DEVELOPMENT.md'])
+        self.assertEqual([d['path'] for d in documents], ['AGENTS.md', 'docs/development/README.md'])
         self.assertEqual(documents[0], {'path': 'AGENTS.md', 'origin': 'operator-local', 'content': 'Operator guidance.\n'})
         self.assertEqual(documents[1]['origin'], 'git')
         self.assertIn('Committed guidance.', documents[1]['content'])

@@ -34,7 +34,7 @@ asserts the core outcome, the rest is pinned in Vitest).
 - `gocrm-ui/src/api/endpoints/products.ts`, `quotes.ts`; `gocrm-ui/src/pages/products/`,
   `gocrm-ui/src/pages/quotes/`, `gocrm-ui/src/pages/deals/DealDetail.tsx`,
   `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/layouts/MainLayout.tsx`
-- `docs/FEATURES.md` section 4d, `docs/datamodel.md` (Product, Quote, Quote Line, Quote Status Change)
+- `docs/reference/features.md` section 4d, `docs/reference/data-model.md` (Product, Quote, Quote Line, Quote Status Change)
 
 **Constraints**
 
@@ -1313,7 +1313,7 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
 ### TC-PQ-058 — Real chain: the browser prints the web application's render page
 - **Priority:** P1
 - **Type:** end-to-end, manual
-- **Preconditions:** A checkout of the build under test with `gocrm-ui/node_modules`; a full Chrome or Chromium on the machine; Docker with Compose v2 (for step 2, and for `pdftotext`/`pdffonts` when poppler-utils is not installed). `scripts/e2e/quote-pdf-chain.sh` starts and stops everything else. Recipe in `docs/DEV_ENTITIES.md`.
+- **Preconditions:** A checkout of the build under test with `gocrm-ui/node_modules`; a full Chrome or Chromium on the machine; Docker with Compose v2 (for step 2, and for `pdftotext`/`pdffonts` when poppler-utils is not installed). `scripts/e2e/quote-pdf-chain.sh` starts and stops everything else. Recipe in `docs/development/quotes.md`.
 - **Steps:**
   1. `QUOTE_PDF_CHROME_PATH=<full Chrome or Chromium> bash scripts/e2e/quote-pdf-chain.sh local`.
   2. `bash scripts/e2e/quote-pdf-chain.sh image` (the image built from the checkout, its own default `chrome-headless-shell`, uid 10001, read-only root file system, only `/tmp` and `/data` writable, ten renders).
@@ -1362,8 +1362,8 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
   the answer's `used_at`) or refused with the generic rejection (quote `sent`, token stamped,
   `decision` NULL); the erasure always succeeds and neither side sees a deadlock or a lock wait
   timeout. A link minted by a quote email that is in flight while the erasure runs is not
-  stamped, but both public routes refuse it once the erasure commits (`docs/DEV_ERASURE.md`,
-  "Deleting personal data", bullet "Response links (#395)"; `docs/CONCURRENCY.md`, "Global lock
+  stamped, but both public routes refuse it once the erasure commits (`docs/development/erasure.md`,
+  "Deleting personal data", bullet "Response links (#395)"; `docs/development/concurrency.md`, "Global lock
   order").
 - **Automation:** automated — `internal/service/quote_response_erasure_test.go`
   `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`;

@@ -11,7 +11,7 @@ With `documentation_mode: "reviewed"`, every child also records documentation im
 explicit independent review decisions. Relevant document contents must match the approved
 candidate at the merge commit before the next admission. Include required doc paths in each
 manifest's scope; suggestions do not widen it. The existing calls and budgets own this work.
-See [documentation maintenance](../../docs/DOCUMENTATION_WORKFLOW.md).
+See [documentation maintenance](../../docs/development/documentation.md).
 
 ## Prepare and preview
 

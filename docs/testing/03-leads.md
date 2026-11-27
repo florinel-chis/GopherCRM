@@ -10,7 +10,7 @@ the frontend gating.
 
 **Sources**
 
-- `docs/FEATURES.md` section 3 (rows 3.1–3.14) and section 10 (bulk status intro), Gap Summary
+- `docs/reference/features.md` section 3 (rows 3.1–3.14) and section 10 (bulk status intro), Gap Summary
   G16, G17, G21, G34.
 - Frontend: `gocrm-ui/src/pages/leads/LeadList.tsx`, `LeadForm.tsx`, `LeadDetail.tsx`;
   `gocrm-ui/src/components/DataTable.tsx`, `ConvertLeadDialog.tsx`, `ConfirmDialog.tsx`,
@@ -30,8 +30,8 @@ the frontend gating.
   `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts`,
   `gocrm-ui/e2e/tests/admin-entity-suite.spec.ts`, `gocrm-ui/e2e/screenshots/03-leads.spec.ts`,
   `gocrm-ui/e2e/pages/leads.page.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`.
-- Visual reference: `docs/screenshots/leads/01-list.png` … `06-search.png`
-  (indexed by `docs/SCREENSHOTS.md`).
+- Visual reference: `docs/assets/leads/01-list.png` … `06-search.png`
+  (indexed by `docs/reference/screenshots.md`).
 
 **Constraints**
 
@@ -336,7 +336,7 @@ the frontend gating.
   without an email (the form does not, it requires one of the two).
 - **Known issue (fixed, #398):** The handler applied each text field only `if req.X != ""`, so an
   emptied field answered 200 with the success snackbar and came back on reload. Still open: no
-  re-check of the email-or-phone rule on update (`docs/ROADMAP.md`).
+  re-check of the email-or-phone rule on update (`docs/reference/roadmap.md`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin clears the phone and notes of a lead and they stay empty after a reload".
   API: `tests/lead_clear_fields_integration_test.go` (`TestLeadUpdateClearsOptionalTextFields`,
   `TestLeadUpdateOmittedOrNullFieldsUnchanged`, `TestLeadUpdateEmptyRequiredFieldsUnchanged`:
@@ -663,7 +663,7 @@ the frontend gating.
   `classification`, `source` respectively (the Contact column maps to `first_name`,
   `fieldMap` in `gocrm-ui/src/pages/leads/LeadList.tsx`), each returns 200, and the visible order changes accordingly. All six are in
   the handler's `allowedSortColumns` allowlist (`internal/handler/lead_handler.go` `LeadHandler.List`).
-- **Known issue:** Gap **G21** in `docs/FEATURES.md` — only `created_at` has E2E coverage today.
+- **Known issue:** Gap **G21** in `docs/reference/features.md` — only `created_at` has E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended; closes
   G21)
 
@@ -742,7 +742,7 @@ the frontend gating.
   (`leadRepository.ListByFilter` and `leadRepository.CountByFilter`
   (`internal/repository/lead_repository.go`)). With no spam leads present the table is empty and
   the total is 0 — verified live.
-- **Known issue:** Gap **G17** in `docs/FEATURES.md` — this dropdown has no E2E coverage today.
+- **Known issue:** Gap **G17** in `docs/reference/features.md` — this dropdown has no E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; closes G17)
 
 ### TC-LEAD-041 — Sorting applies while a classification filter is active
@@ -796,7 +796,7 @@ the frontend gating.
   Go roots: `TestLeadCompanyLockOrderOutcomesSQLite`, `TestLeadCompanyRestartBoundSQLite`,
   `TestLeadConversionVsCompanyDeleteMySQL`, `TestLeadUpdateVsCompanyDeleteMySQL`
   (`internal/service`), `TestLeadCompanyContendedHandlerMapping` (`internal/handler`).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new). `docs/FEATURES.md`
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new). `docs/reference/features.md`
   row 3.10 credits `admin-entity-suite.spec.ts` "admin can create complete CRM workflow:
   Lead -> Customer -> Task", but that test creates a lead and a customer independently and never
   clicks Convert — conversion has no E2E coverage today.
@@ -923,7 +923,7 @@ the frontend gating.
   incremented in `handlePageChange`, `gocrm-ui/src/pages/leads/LeadList.tsx`), returns 200 with a disjoint set of rows,
   and `meta.page` is 2. Step 3 returns to the original rows. Verified live:
   `?limit=10&page=3` returned `meta {page: 3, per_page: 10, total: 71, total_pages: 8}`.
-- **Known issue:** Row 3.11 in `docs/FEATURES.md` — pagination is unit-tested only; there is no E2E
+- **Known issue:** Row 3.11 in `docs/reference/features.md` — pagination is unit-tested only; there is no E2E
   test.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (new)
 

@@ -134,4 +134,4 @@ gh variable delete PRODUCTION_SSH_USER --env production --repo "$repo" 2>/dev/nu
 
 echo "bootstrap: checking the configured production workflow"
 gh workflow run Deploy --repo "$repo" -f action=status
-echo "bootstrap: done. Publish a validated stable release to deploy; see docs/VALIDATION_RELEASE.md."
+echo "bootstrap: done. Publish a validated stable release to deploy; see docs/maintainers/validation-and-releases.md."

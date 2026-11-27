@@ -23,7 +23,7 @@ def brief():
 def research():
     return dict(summary='Leads exist; no rules engine.',
                 repository_findings=[dict(claim='Lead service exists', file='internal/service.go', line=3)],
-                conventions=[dict(constraint='Unified responses', file='docs/DEVELOPMENT.md', line=1)],
+                conventions=[dict(constraint='Unified responses', file='docs/development/README.md', line=1)],
                 external_findings=[dict(claim='Frappe offers follow-up rules', url='https://frappe.io/crm/follow-ups-automation',
                                         title='Follow-ups & Automation')],
                 prior_art=[dict(name='Frappe CRM', url='https://frappe.io/crm', summary='Rules', relevance='Direct')],
@@ -42,7 +42,7 @@ def analysis_output(words=None):
 def manifest():
     return dict(schema_version=1, repository='example/repo', issue=0, objective='Automate follow-ups.',
                 non_goals=['billing'], scope_paths=['internal/service/*', 'internal/repository/*', 'migrations/*', 'cmd/migrate/*_test.go'],
-                dependencies=[], validation_profile='backend', context_refs=['AGENTS.md', 'docs/DEVELOPMENT.md'],
+                dependencies=[], validation_profile='backend', context_refs=['AGENTS.md', 'docs/development/README.md'],
                 acceptance=[dict(id='AC-1', requirement='A rule fires on lead creation.',
                                  verification=dict(kind='automated', check_id='followup-rules')),
                             dict(id='AC-2', requirement='A rule never fires twice for one event.',
@@ -83,7 +83,7 @@ def specification():
                            dict(level='go', name='TestMigrationFresh_FullUpAndDown', proves='fresh up and down'),
                            dict(level='go', name='TestMigrationUpgrade_FromMainAutoMigratedSchema', proves='upgrade'),
                            dict(level='e2e', name='rules.spec.ts', proves='page renders')],
-                docs_to_update=[dict(path='docs/DEVELOPMENT.md', change='describe rules'),
+                docs_to_update=[dict(path='docs/development/README.md', change='describe rules'),
                                 dict(path='docs/testing/15-rules.md', change='new catalog')],
                 open_questions=['Which mail template?'], comment_dispositions=[])
 
@@ -126,8 +126,8 @@ class CheckTests(unittest.TestCase):
         self.worktree = Path(self.temp.name)
         (self.worktree / 'internal').mkdir()
         (self.worktree / 'internal' / 'service.go').write_text('package service\n\nfunc Lead() {}\n')
-        (self.worktree / 'docs').mkdir()
-        (self.worktree / 'docs' / 'DEVELOPMENT.md').write_text('# Guide\n')
+        (self.worktree / 'docs' / 'development').mkdir(parents=True)
+        (self.worktree / 'docs' / 'development' / 'README.md').write_text('# Guide\n')
         self.config = SimpleNamespace(repository='example/repo', database_test_commands=())
 
     def tearDown(self):
@@ -146,7 +146,7 @@ class CheckTests(unittest.TestCase):
     def test_check_research_resolves_citations(self):
         value = research()
         value['repository_findings'].append(dict(claim='Ghost', file='internal/missing.go', line=1))
-        value['conventions'].append(dict(claim_or='x', constraint='Nope', file='docs/DEVELOPMENT.md', line=40))
+        value['conventions'].append(dict(claim_or='x', constraint='Nope', file='docs/development/README.md', line=40))
         value['conventions'][-1].pop('claim_or')
         notes = analysis.check_research(value, self.worktree)
         self.assertEqual(value['repository_findings'][0]['text'], 'func Lead() {}')
@@ -213,17 +213,18 @@ class CheckTests(unittest.TestCase):
         # AGENTS.md is untracked: read from the checkout, not the base worktree.
         self.assertEqual(self.spec_notes(specification(), base_checkout=self.worktree), [])
         value = specification()
-        value['manifest']['context_refs'] += ['docs/datamodel.md', 'docs/testing/14-deals.md']
-        self.assertIn("context_refs missing at the base commit: ['docs/datamodel.md', 'docs/testing/14-deals.md']",
+        value['manifest']['context_refs'] += ['docs/reference/data-model.md', 'docs/testing/14-deals.md']
+        self.assertIn("context_refs missing at the base commit: ['docs/reference/data-model.md', 'docs/testing/14-deals.md']",
                       self.spec_notes(value, base_checkout=self.worktree))
-        (self.worktree / 'docs' / 'FEATURES.md').write_text('x' * (130 * 1024))
+        (self.worktree / 'docs' / 'reference').mkdir()
+        (self.worktree / 'docs' / 'reference' / 'features.md').write_text('x' * (130 * 1024))
         value = specification()
-        value['manifest']['context_refs'].append('docs/FEATURES.md')
+        value['manifest']['context_refs'].append('docs/reference/features.md')
         notes = self.spec_notes(value, base_checkout=self.worktree)
         size = [n for n in notes if n.startswith('context_refs total')]
         self.assertEqual(len(size), 1, notes)
         self.assertIn('cap 131072 bytes (128 KiB)', size[0])
-        self.assertIn('docs/FEATURES.md 133120', size[0])
+        self.assertIn('docs/reference/features.md 133120', size[0])
         # Without the base checkout the existence and size checks are skipped.
         self.assertEqual(self.spec_notes(value), [])
 

@@ -67,11 +67,11 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 	t.Run("every page names the strict tier and the SCIM limits", func(t *testing.T) {
 		lifts := regexp.MustCompile(`\b(lifts?|bypass(es)?)\b`)
 		for _, page := range []string{
-			"docs/KNOWN_LIMITATIONS.md",
-			"docs/FEATURES.md",
-			"docs/AUTHORIZATION.md",
-			"docs/DEVELOPMENT.md",
-			"docs/CONFIGURATION.md",
+			"docs/reference/limitations.md",
+			"docs/reference/features.md",
+			"docs/development/authorization.md",
+			"docs/development/README.md",
+			"docs/reference/configuration.md",
 			"docs/testing/01-authentication.md",
 			"docs/testing/09-cross-cutting.md",
 			"docs/testing/11-aeo.md",
@@ -98,11 +98,11 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 
 	t.Run("the production refusal is kept", func(t *testing.T) {
 		for _, page := range []string{
-			"docs/KNOWN_LIMITATIONS.md",
-			"docs/FEATURES.md",
-			"docs/AUTHORIZATION.md",
-			"docs/DEVELOPMENT.md",
-			"docs/CONFIGURATION.md",
+			"docs/reference/limitations.md",
+			"docs/reference/features.md",
+			"docs/development/authorization.md",
+			"docs/development/README.md",
+			"docs/reference/configuration.md",
 		} {
 			found := false
 			for _, sentence := range docSentences(readRepositoryFile(t, page)) {

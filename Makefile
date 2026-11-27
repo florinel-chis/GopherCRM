@@ -20,7 +20,7 @@ help:
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make create-admin - Create an admin user"
-	@echo "  make sample-data  - Rebuild sample-data/halvenmark.db and sample-data/pelicroft.db, the fictional demo businesses (docs/SAMPLE_DATA.md)"
+	@echo "  make sample-data  - Rebuild sample-data/halvenmark.db and sample-data/pelicroft.db, the fictional demo businesses (docs/development/sample-data.md)"
 	@echo "  make swagger      - Regenerate api/swagger.json, api/swagger.yaml and the HTML reference api/index.html"
 	@echo "  make verify-api-docs - Check that api/ is current and every route is documented (part of make verify)"
 

@@ -13,11 +13,11 @@ What each role may do with tickets, in short:
 - A **Customer-role login** sees only the tickets of the customer record linked to it, and only
   the comments that are not internal notes.
 
-The full table is in [Roles and permissions](permissions-access/roles-and-permissions.md).
+The full table is in [Roles and permissions](../administration/roles-and-permissions.md).
 
 ## Open a ticket
 
-![The tickets list](../screenshots/tickets/01-list.png)
+![The tickets list](../assets/tickets/01-list.png)
 
 1. Open **Tickets** in the sidebar and click **Create Ticket**.
 2. Enter a **Subject** and a **Description** of the request.
@@ -27,7 +27,7 @@ The full table is in [Roles and permissions](permissions-access/roles-and-permis
    **Assign to Support Agent (Optional)**, the agent who will handle it.
 5. Click **Create Ticket**.
 
-![Creating a ticket](../screenshots/tickets/02-create.png)
+![Creating a ticket](../assets/tickets/02-create.png)
 
 **Result:** the tickets list opens and shows the new ticket. A support agent sees it in the list
 only when it is assigned to them, so assign it to yourself if you will handle it.
@@ -37,7 +37,7 @@ its title, is described in [Forms](forms.md).
 
 ## Comments and internal notes
 
-![A ticket's detail page](../screenshots/tickets/03-detail.png)
+![A ticket's detail page](../assets/tickets/03-detail.png)
 
 1. Click the ticket in the list to open it. The page shows the customer, the assignee, the
    dates, the description and the comments.

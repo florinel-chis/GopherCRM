@@ -2,7 +2,7 @@
 
 This guide is for people who use the GopherCRM web app day to day, and for the administrators who
 set it up for them. Installation, development and the API are described elsewhere: the
-[setup walkthrough](../SETUP.md), the [developer guide](../DEVELOPMENT.md) and the
+[setup walkthrough](../development/local-setup.md), the [developer guide](../development/README.md) and the
 [documentation index](../README.md), which lists the API reference.
 
 ## Everyday work
@@ -18,7 +18,7 @@ set it up for them. Installation, development and the API are described elsewher
 
 ## Settings
 
-- [Settings and configuration](settings-and-configuration.md): the administration screens and the
+- [Settings and configuration](../administration/settings-and-configuration.md): the administration screens and the
   permission each needs, the configuration tabs, and the lead conversion settings.
 
 ## Forms
@@ -33,20 +33,20 @@ set it up for them. Installation, development and the API are described elsewher
 
 ## Integrations
 
-- [Webhooks](permissions-access/webhooks.md): signed requests to another system when a record is
+- [Webhooks](../integrations/webhooks.md): signed requests to another system when a record is
   created, updated or deleted.
-- [API keys](permissions-access/api-keys.md): creating, using and revoking your own API keys.
+- [API keys](../integrations/api-keys.md): creating, using and revoking your own API keys.
 
 ## Permissions and access
 
-- [Overview](permissions-access/overview.md): the administrator guide to who may do what.
-- [Roles and permissions](permissions-access/roles-and-permissions.md): the system roles, custom
+- [Overview](../administration/overview.md): the administrator guide to who may do what.
+- [Roles and permissions](../administration/roles-and-permissions.md): the system roles, custom
   roles and the role audit.
-- [Single sign-on](permissions-access/single-sign-on.md): signing in through an OpenID Connect
+- [Single sign-on](../administration/single-sign-on.md): signing in through an OpenID Connect
   identity provider.
-- [SCIM provisioning](permissions-access/scim-provisioning.md): letting an identity provider
+- [SCIM provisioning](../administration/scim-provisioning.md): letting an identity provider
   create, update and deactivate accounts.
-- [Sign-in audit](permissions-access/sign-in-audit.md): the record of sign-in outcomes.
+- [Sign-in audit](../administration/sign-in-audit.md): the record of sign-in outcomes.
 
 ## Privacy
 

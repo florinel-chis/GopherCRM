@@ -1,6 +1,6 @@
 # Answer Engine Optimization (AEO)
 
-![AEO dashboard](../img/gophercrm-aeo-dashboard.png)
+![AEO dashboard](../assets/gophercrm-aeo-dashboard.png)
 
 AEO tracks how visible your brand is in the answers large language models give to buyer questions.
 You describe the brand and its competitors once, track a list of prompts, and a daily run asks every
@@ -10,7 +10,7 @@ how early, which competitors appeared alongside it, and which sources were cited
 ## Who can use it
 
 AEO is under **AEO** in the sidebar. Access follows permissions; the defaults of the system roles
-are those of the matrix in [docs/AUTHORIZATION.md](../AUTHORIZATION.md):
+are those of the matrix in [docs/development/authorization.md](../development/authorization.md):
 
 - `aeo.view` opens the screens, the reports and the export: admin, sales and support. The
   `customer` role holds no AEO permission and cannot reach it.
@@ -50,11 +50,11 @@ time; a second request is refused with 409.
    row per citation, formula-guarded cells) or JSON (with the full answer text), for client
    reporting. Admin, sales and support; at most 10,000 answers per file.
 
-![AEO answer drawer](../img/gophercrm-aeo-answers.png)
+![AEO answer drawer](../assets/gophercrm-aeo-answers.png)
 
 Every recorded answer is kept verbatim — the drawer above shows one engine's answer with the brand
 mentions highlighted and a selector to walk earlier runs. The full screen-by-screen tour lives in
-[docs/SCREENSHOTS.md](../SCREENSHOTS.md#aeo).
+[docs/reference/screenshots.md](../reference/screenshots.md#aeo).
 
 ## Provider keys, models and endpoints
 
@@ -100,7 +100,7 @@ example `AEO_EGRESS_LOCAL_ORIGINS=custom=http://10.0.1.21:1234`. An untrusted en
 `endpoint_not_permitted` before any request. Destinations are checked again at connection time;
 redirects are never followed and `HTTP(S)_PROXY` is ignored. Failed answers record only a bounded
 category and the numeric HTTP status, never the provider's response text. See
-[docs/AEO_SECURITY.md](../AEO_SECURITY.md) for the syntax and the migration checklist.
+[docs/operations/aeo-egress.md](../operations/aeo-egress.md) for the syntax and the migration checklist.
 
 ## Daily schedule
 
@@ -121,7 +121,7 @@ answers. A failed finalizing write leaves its row for recovery even if the
 work drains successfully. The AEO drain waits at most 15 seconds. If a provider call or database write still has not
 released by then, the process exits without closing the database and the run row left in
 `running` is failed once its heartbeat is older than 3 minutes, by the next boot or start on any
-replica, exactly as after a crash (see [Known limitations](../KNOWN_LIMITATIONS.md)).
+replica, exactly as after a crash (see [Known limitations](../reference/limitations.md)).
 
 ## Prompt generation
 

@@ -264,25 +264,27 @@ class DocCitationCheckTest(unittest.TestCase):
         self.assertIn('`docs/specsfoo.md`: missing path', out)
 
     def test_a_converted_file_without_citations_fails(self):
-        self.write('docs/FORKING.md', '# Nothing cited\n')
-        code, out = run(self.root, 'docs/FORKING.md')
+        self.write('docs/development/forking.md', '# Nothing cited\n')
+        code, out = run(self.root, 'docs/development/forking.md')
         self.assertEqual(code, 1, out)
         self.assertIn('no path citation found', out)
         self.assertIn('no symbol citation found', out)
 
     def test_converted_files_cover_every_converted_guide(self):
         # #487 converted the fork and extension guides, #488 the rest of the
-        # guides that cited code by line and #743 docs/CONCURRENCY.md; #786
-        # moved a README symbol citation to docs/KNOWN_LIMITATIONS.md. Each
+        # guides that cited code by line and #743 the concurrency guide; #786
+        # moved a README symbol citation to the limitations page; #798 moved
+        # them all into audience folders. Each
         # must stay under rule c. README.md left the list in #792: it is a
         # landing page and need not cite code.
         expected = {
-            'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
-            'docs/SERVER_PROVISIONING.md',
-            'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
-            'docs/CONCURRENCY.md', 'docs/KNOWN_LIMITATIONS.md',
+            'docs/development/forking.md', 'docs/development/extending.md', 'docs/reference/use-cases.md',
+            'docs/operations/systemd.md',
+            'docs/reference/features.md', 'docs/operations/docker.md', 'docs/reference/data-model.md',
+            'docs/development/local-setup.md',
+            'docs/development/concurrency.md', 'docs/reference/limitations.md',
             # #795: the configuration reference took over the variable table.
-            'docs/CONFIGURATION.md',
+            'docs/reference/configuration.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
         self.assertNotIn('README.md', gate.CONVERTED_FILES)

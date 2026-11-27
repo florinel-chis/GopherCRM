@@ -9,8 +9,8 @@ regression anchors, not endorsements.
 
 **Sources**
 
-- `docs/FEATURES.md` section 6 (rows 6.1–6.9) and the Gap Summary (G18, G33, G34)
-- `docs/ROADMAP.md`
+- `docs/reference/features.md` section 6 (rows 6.1–6.9) and the Gap Summary (G18, G33, G34)
+- `docs/reference/roadmap.md`
 - `gocrm-ui/src/pages/tasks/TaskList.tsx`, `TaskForm.tsx`, `TaskDetail.tsx`
 - `gocrm-ui/src/api/endpoints/tasks.ts`, `gocrm-ui/src/api/client.ts`, `gocrm-ui/src/types/index.ts`
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/layouts/MainLayout.tsx`,
@@ -63,7 +63,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Read the "Assigned To" cell of the row for the task just created.
 - **Expected:** The cell reads `Unassigned`, even though the API response for that row carries a populated `assigned_to` user object and a non-zero `assigned_to_id`.
-- **Known issue:** The backend serialises the assignee as `assigned_to`, from `Task.AssignedTo` (`internal/models/task.go`), while `transformTaskFromBackend` (`gocrm-ui/src/api/endpoints/tasks.ts`) overwrites `assigned_to` with the numeric id and never populates the `assignee` key the column reads (the `id: 'assignee'` column in `gocrm-ui/src/pages/tasks/TaskList.tsx`). Verified against the live API and against the committed capture `docs/screenshots/tasks/01-list.png`, where every row shows "Unassigned". Not recorded in FEATURES.md row 6.1.
+- **Known issue:** The backend serialises the assignee as `assigned_to`, from `Task.AssignedTo` (`internal/models/task.go`), while `transformTaskFromBackend` (`gocrm-ui/src/api/endpoints/tasks.ts`) overwrites `assigned_to` with the numeric id and never populates the `assignee` key the column reads (the `id: 'assignee'` column in `gocrm-ui/src/pages/tasks/TaskList.tsx`). Verified against the live API and against the committed capture `docs/assets/tasks/01-list.png`, where every row shows "Unassigned". Not recorded in reference/features.md row 6.1.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-003 — Page through the task list and change the page size
@@ -86,7 +86,7 @@ regression anchors, not endorsements.
   2. Click the calendar toggle button (second button of the `ToggleButtonGroup`).
   3. Click the task chip inside the day cell matching its due date.
 - **Expected:** A month grid headed `MMMM yyyy` with Previous / Today / Next buttons replaces the table. Only the tasks already fetched for the current page are placed on the grid — the calendar issues no separate request, so a task due this month but sitting on page 2 does not appear. Clicking the chip navigates to `/tasks/{id}`.
-- **Known issue:** The calendar renders the current page of results rather than the month's tasks (`renderCalendarView` in `gocrm-ui/src/pages/tasks/TaskList.tsx`), which makes it silently incomplete. Not listed in FEATURES.md.
+- **Known issue:** The calendar renders the current page of results rather than the month's tasks (`renderCalendarView` in `gocrm-ui/src/pages/tasks/TaskList.tsx`), which makes it silently incomplete. Not listed in reference/features.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-005 — Support user sees only tasks assigned to them
@@ -205,7 +205,7 @@ regression anchors, not endorsements.
   2. Open the "Assign To (Optional)" autocomplete.
   3. Fill Title and Due Date and click "Create Task".
 - **Expected:** `TaskForm` unconditionally issues `GET /api/v1/users?is_active=true` (`usersApi.getUsers({ is_active: true })` in `gocrm-ui/src/pages/tasks/TaskForm.tsx`), which is admin-only (`SetupUserRoutes` (`internal/handler/routes.go`)), so the request returns **403** and the autocomplete shows "No options". The submitted body has no `assigned_to_id`, so `POST /tasks` returns **400** with "Failed to create task". A sales or support user therefore cannot create a task through the UI at all, even though `TaskHandler.Create` (`internal/handler/task_handler.go`) explicitly permits both roles.
-- **Known issue:** Not recorded in FEATURES.md row 6.2. The backend intends non-admins to self-assign; the form has no "assign to me" affordance.
+- **Known issue:** Not recorded in reference/features.md row 6.2. The backend intends non-admins to self-assign; the form has no "assign to me" affordance.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-TASK-015 — Customer role is refused task creation by the API
@@ -226,8 +226,8 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks/new` and inspect every field.
   2. Open an existing task's edit form and inspect every field.
-- **Expected:** The form exposes Title, Description, Status, Priority, Due Date and Assign To only. There is no lead or customer picker, even though `CreateTaskRequest`/`UpdateTaskRequest` accept `lead_id` and `customer_id` and the service validates them and rejects setting both (`taskService.CreateWithLabels` (`internal/service/task_service.go`), `apperrors.ErrTaskLeadCustomerConflict` → 400). FEATURES.md row 6.2 describes the form as having a "related lead/customer" field; it does not.
-- **Known issue:** FEATURES.md row 6.2 overstates the form. The lead/customer conflict rule can only be exercised through the API.
+- **Expected:** The form exposes Title, Description, Status, Priority, Due Date and Assign To only. There is no lead or customer picker, even though `CreateTaskRequest`/`UpdateTaskRequest` accept `lead_id` and `customer_id` and the service validates them and rejects setting both (`taskService.CreateWithLabels` (`internal/service/task_service.go`), `apperrors.ErrTaskLeadCustomerConflict` → 400). reference/features.md row 6.2 describes the form as having a "related lead/customer" field; it does not.
+- **Known issue:** reference/features.md row 6.2 overstates the form. The lead/customer conflict rule can only be exercised through the API.
 - **Automation:** blocked — UI does not expose the relation; API-level coverage lives in `internal/integration/task_integration_test.go`
 
 ---
@@ -267,7 +267,7 @@ regression anchors, not endorsements.
   2. Change the Description only.
   3. Click "Update Task".
 - **Expected:** `PUT /api/v1/tasks/{id}` returns **200**, not 403, even when the body repeats the current `assigned_to_id`. `TaskHandler.Update` (`internal/handler/task_handler.go`) only treats an assignee change as a reassignment.
-- **Known issue:** This was G30 in the FEATURES.md Gap Summary — non-admins used to be 403'd for editing their own task. The Go regression test is `TestUpdateTask_NonAdminSameAssignee_Success`; there is no E2E equivalent.
+- **Known issue:** This was G30 in the reference/features.md Gap Summary — non-admins used to be 403'd for editing their own task. The Go regression test is `TestUpdateTask_NonAdminSameAssignee_Success`; there is no E2E equivalent.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; a non-admin account from `APIClient.createUser`)
 
 ### TC-TASK-020 — Non-admin reassigning a task to another user is forbidden
@@ -370,7 +370,7 @@ regression anchors, not endorsements.
 - **Preconditions:** Admin logged in; a task created and then deleted by this test (TC-TASK-025), with its id captured from the create response.
 - **Steps:**
   1. Navigate directly to `/tasks/{deleted id}`.
-- **Expected:** `GET /api/v1/tasks/{id}` returns **404** ("Task not found"). The page renders the `Loading` spinner indefinitely, because `TaskDetail` returns `<Loading/>` whenever `task` is falsy and never handles the error branch (`if (isLoading || !task)` in `gocrm-ui/src/pages/tasks/TaskDetail.tsx`). No error message and no redirect. Unlike users, customers and leads, no personal data is overwritten — the row keeps its title and description behind `deleted_at` (FEATURES.md row 6.4; `test/integration/erasure_test.go` `TestTaskAndTicketDeletesRemainPlainSoftDeletes`).
+- **Expected:** `GET /api/v1/tasks/{id}` returns **404** ("Task not found"). The page renders the `Loading` spinner indefinitely, because `TaskDetail` returns `<Loading/>` whenever `task` is falsy and never handles the error branch (`if (isLoading || !task)` in `gocrm-ui/src/pages/tasks/TaskDetail.tsx`). No error message and no redirect. Unlike users, customers and leads, no personal data is overwritten — the row keeps its title and description behind `deleted_at` (reference/features.md row 6.4; `test/integration/erasure_test.go` `TestTaskAndTicketDeletesRemainPlainSoftDeletes`).
 - **Known issue:** A 404 on the detail route is indistinguishable from a slow load.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
@@ -442,7 +442,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Search for a fragment matching exactly one of the two tasks.
 - **Expected:** The request carries `search`, returns 200, but **both** tasks remain listed: the non-admin branch calls `GetByAssignee` before the search branch is ever reached (`internal/handler/task_handler.go` `TaskHandler.List`), so `search`, `sort_by` and `sort_order` are all discarded for non-admins. The search box gives no indication that it did nothing.
-- **Known issue:** Documented in the swagger description for `GET /tasks` but not in FEATURES.md row 6.6.
+- **Known issue:** Documented in the swagger description for `GET /tasks` but not in reference/features.md row 6.6.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
@@ -458,7 +458,7 @@ regression anchors, not endorsements.
   2. Click the "Title" column header, then click it again.
   3. Click the "Due Date" header.
 - **Expected:** Each click issues `GET /api/v1/tasks?…&sort_by=title&sort_order=asc|desc` (then `sort_by=due_date`) and resets `page` to 1. The rows reorder accordingly. Allowed columns are `created_at`, `updated_at`, `title`, `status`, `priority`, `due_date` (the `allowedSortColumns` map of `TaskHandler.List` (`internal/handler/task_handler.go`)).
-- **Known issue:** FEATURES.md row 6.7 is *partial* — there is no E2E sort coverage for tasks (compare gap **G21** for leads).
+- **Known issue:** reference/features.md row 6.7 is *partial* — there is no E2E sort coverage for tasks (compare gap **G21** for leads).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-036 — Sorting by "Assigned To" is accepted by the UI and ignored by the API
@@ -486,7 +486,7 @@ regression anchors, not endorsements.
   3. Open `/tasks/{id}`.
   4. Open `/tasks/{id}/edit`.
 - **Expected:** The form posts `due_date` as a full ISO-8601 timestamp (`data.due_date.toISOString()` in `gocrm-ui/src/pages/tasks/TaskForm.tsx`, midnight local time). The list renders `MMM dd, yyyy`; the detail page renders `MMM dd, yyyy (in N months)`; the edit form's date input is repopulated as `yyyy-MM-dd` with the same calendar day.
-- **Known issue:** FEATURES.md row 6.8 notes there is no dedicated E2E due-date test; the previously claimed "manage due dates" / "date validation" spec titles do not exist.
+- **Known issue:** reference/features.md row 6.8 notes there is no dedicated E2E due-date test; the previously claimed "manage due dates" / "date validation" spec titles do not exist.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-038 — A task with no due date breaks list rendering
@@ -496,7 +496,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
 - **Expected:** `due_date` is `omitempty` on the model (`Task.DueDate` (`internal/models/task.go`)) so the field is absent from the response. The Due Date column formatter calls `format(new Date(undefined), …)` (the `id: 'due_date'` column in `gocrm-ui/src/pages/tasks/TaskList.tsx`), which throws `RangeError: Invalid time value`; the ErrorBoundary catches it and the table does not render. The calendar view fails the same way through `parseISO` (`renderCalendarView` in `gocrm-ui/src/pages/tasks/TaskList.tsx`).
-- **Known issue:** The frontend `Task` type declares `due_date: string` as non-optional while the API treats it as nullable. Not recorded in FEATURES.md.
+- **Known issue:** The frontend `Task` type declares `due_date: string` as non-optional while the API treats it as nullable. Not recorded in reference/features.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; the fixture task must be deleted in an `afterAll` so the page is left usable)
 
 ---
@@ -511,7 +511,7 @@ regression anchors, not endorsements.
   1. Navigate through the sidebar and the Tasks page looking for a "My Tasks" view.
   2. Record every task-related request the SPA makes.
 - **Expected:** No "My Tasks" navigation entry, route or filter exists, and `GET /api/v1/tasks/my` is never requested — the endpoint has no caller anywhere in `gocrm-ui/src`. For non-admins, `/tasks` is already implicitly "my tasks" (TC-TASK-005), which is why the dedicated view was never built.
-- **Known issue:** Gap **G18** ("No E2E test for 'My Tasks' / 'My Tickets' views") cannot be closed at the UI level, because there is no view to test. FEATURES.md row 6.9 describes it as a feature; only the endpoint exists.
+- **Known issue:** Gap **G18** ("No E2E test for 'My Tasks' / 'My Tickets' views") cannot be closed at the UI level, because there is no view to test. reference/features.md row 6.9 describes it as a feature; only the endpoint exists.
 - **Automation:** blocked — no UI surface; the endpoint is covered by `internal/handler/task_handler_test.go` `TaskHandlerTestSuite.TestGetMyTasks_NonAdminCanAccess` and `internal/integration/task_integration_test.go` `TaskIntegrationTestSuite.TestMyTasks`
 
 ### TC-TASK-040 — GET /tasks/my returns only the caller's tasks, admins included
@@ -544,7 +544,7 @@ regression anchors, not endorsements.
   1. Navigate to `/users/{id}` for one of them.
   2. Open the tasks tab.
 - **Expected:** `GET /api/v1/tasks?assigned_to={id}` returns 200 with **every** task in the system, because `assigned_to` is not a parameter the handler reads. The tab therefore lists other users' tasks as if they belonged to this user.
-- **Known issue:** `gocrm-ui/src/pages/users/UserDetail.tsx` (`tasksApi.getTasks({ assigned_to: Number(id) })`) sends a filter the API ignores: `GET /tasks` reads `status` and `priority` since #427 (TC-TASK-029), but not `assigned_to`. Not recorded in FEATURES.md.
+- **Known issue:** `gocrm-ui/src/pages/users/UserDetail.tsx` (`tasksApi.getTasks({ assigned_to: Number(id) })`) sends a filter the API ignores: `GET /tasks` reads `status` and `priority` since #427 (TC-TASK-029), but not `assigned_to`. Not recorded in reference/features.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -592,7 +592,7 @@ regression anchors, not endorsements.
   1. POST `{"task_ids":[<own task id>],"status":"in_progress"}` as the support user.
   2. POST `{"task_ids":[<own task id>, <other user's task id>],"status":"in_progress"}` as the support user.
 - **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:None-None`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
-- **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in FEATURES.md.
+- **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in reference/features.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended); the account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`); the support token comes from `APIClient.login`
 
 ---

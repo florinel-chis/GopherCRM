@@ -81,7 +81,7 @@ anything. The specification is the contract the implementation is checked agains
    configured repository, issue 0 (the owner sets it), an objective, non-goals, the narrowest
    scope globs the backend change needs, no dependencies, the validation profile (`backend`,
    or `backend-database` when the change touches models, repositories, migrations or the
-   transaction helper), context references that include AGENTS.md and docs/DEVELOPMENT.md,
+   transaction helper), context references that include AGENTS.md and docs/development/README.md,
    and the acceptance criteria. Frontend paths (`gocrm-ui/`) never appear in the manifest
    scope: the frontend slice is written as UI criteria (UI-1 upwards) with their own
    verification (vitest, browser or manual with exact steps). A UI criterion verified by

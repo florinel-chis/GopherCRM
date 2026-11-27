@@ -4,7 +4,7 @@ The README's Documents table counts each catalog file's `### TC-` cases by
 priority and by the first word of their Automation bullet. These checks
 recompute those numbers from the case headings and compare them with the
 table, the Total row, the note about the 12-forms catalog and the total that
-docs/FORKING.md quotes. They also reject wording that says an end-to-end
+docs/development/forking.md quotes. They also reject wording that says an end-to-end
 helper for signing in as a non-admin role is missing:
 `APIClient.createUser` and `APIClient.login` in gocrm-ui/e2e/helpers/sso.ts
 provide it.
@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[3]
 README = 'docs/testing/README.md'
 FORMS = 'docs/testing/12-forms.md'
 SETTINGS = 'docs/testing/08-settings.md'
-FORKING = 'docs/FORKING.md'
+FORKING = 'docs/development/forking.md'
 CATALOG_FILE = re.compile(r'^docs/testing/\d\d-[^/]+\.md$')
 
 COLUMNS = ('cases', 'p0', 'p1', 'p2', 'automated', 'planned', 'blocked')
@@ -258,7 +258,7 @@ def check_settings_blocked_on_page(root):
 
 
 def check_forking_total(root):
-    """(f) docs/FORKING.md quotes the catalog's Total cases."""
+    """(f) docs/development/forking.md quotes the catalog's Total cases."""
     _, total = index_rows(root)
     match = FORKING_TOTAL.search(collapse(read(root, FORKING)))
     if match is None:
@@ -358,7 +358,7 @@ class CatalogFixtureTest(unittest.TestCase):
         self.write('docs/testing/01-one.md', ONE)
         self.write('docs/testing/08-settings.md', SETTINGS_DOC)
         self.write('docs/testing/12-forms.md', FORMS_DOC)
-        self.write('docs/FORKING.md', FORKING_DOC)
+        self.write(FORKING, FORKING_DOC)
 
     def write(self, path, text):
         target = self.root / path

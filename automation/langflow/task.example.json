@@ -9,7 +9,7 @@
     {"issue": 95, "pr": 124, "merge_commit": "52dd572542531188fb80ea9fc87506d94f5241de"}
   ],
   "validation_profile": "backend-database",
-  "context_refs": ["AGENTS.md", "docs/DEVELOPMENT.md"],
+  "context_refs": ["AGENTS.md", "docs/development/README.md"],
   "acceptance": [
     {
       "id": "AC-1",

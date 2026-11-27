@@ -156,7 +156,7 @@ func TestAEOOperatorEgressConfig(t *testing.T) {
 
 	// Hard-coded, not derived from AEOMetadataAddresses, so an omission from
 	// that list fails here. Sources: Google Cloud metadata overview and AWS EKS
-	// Pod Identity agent setup (see docs/AEO_SECURITY.md).
+	// Pod Identity agent setup (see docs/operations/aeo-egress.md).
 	t.Run("IPv6 credential endpoints inside ULA space stay refused", func(t *testing.T) {
 		for _, entry := range []string{
 			"custom=http://[fd20:ce::254]",

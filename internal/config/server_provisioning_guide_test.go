@@ -13,13 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The tests in this file pin docs/SERVER_PROVISIONING.md (#231) to the deploy
+// The tests in this file pin docs/operations/systemd.md (#231) to the deploy
 // scripts it describes (scripts/deploy/receive-release.sh, bootstrap.sh,
 // scripts/release/build.sh), to .env.example and to config.Load. Every value
 // the guide must repeat is parsed from those files at test time, so a change
 // to a script default fails here until the guide follows.
 
-const serverProvisioningGuideFile = "docs/SERVER_PROVISIONING.md"
+const serverProvisioningGuideFile = "docs/operations/systemd.md"
+
+// serverProvisioningChangelogName is the guide's file name in the CHANGELOG
+// entries of #231 and #305. CHANGELOG entries are history, so they keep the
+// name the guide had when they were written (#798 moved it).
+const serverProvisioningChangelogName = "SERVER_PROVISIONING.md"
 
 // deployDefaults are the receive-release.sh defaults the guide is built on.
 type deployDefaults struct {
@@ -947,15 +952,16 @@ func githubAnchor(heading string) string {
 	return b.String()
 }
 
-// TestServerProvisioningGuideReverseProxyLinks pins #749 AC-5: README, SETUP
-// and DOCKER link the guide's reverse-proxy section and name both servers.
+// TestServerProvisioningGuideReverseProxyLinks pins #749 AC-5: README,
+// development/local-setup.md and operations/docker.md link the guide's
+// reverse-proxy section and name both servers.
 func TestServerProvisioningGuideReverseProxyLinks(t *testing.T) {
 	const heading = "## Reverse proxy and TLS"
 	guideSection(t, readProvisioningGuide(t), heading)
 	anchor := githubAnchor(heading)
 	require.Equal(t, "reverse-proxy-and-tls", anchor)
-	link := regexp.MustCompile(`\]\([^)\s]*SERVER_PROVISIONING\.md#` + regexp.QuoteMeta(anchor) + `\)`)
-	for _, rel := range []string{"README.md", "docs/SETUP.md", "docs/DOCKER.md"} {
+	link := regexp.MustCompile(`\]\([^)\s]*systemd\.md#` + regexp.QuoteMeta(anchor) + `\)`)
+	for _, rel := range []string{"README.md", "docs/development/local-setup.md", "docs/operations/docker.md"} {
 		text := strings.ReplaceAll(readRepositoryFile(t, rel), "\r\n", "\n")
 		ok := false
 		for _, para := range regexp.MustCompile(`\n[ \t]*\n`).Split(text, -1) {
@@ -964,7 +970,7 @@ func TestServerProvisioningGuideReverseProxyLinks(t *testing.T) {
 				break
 			}
 		}
-		assert.True(t, ok, "%s has a paragraph that links SERVER_PROVISIONING.md#%s and names nginx and Apache", rel, anchor)
+		assert.True(t, ok, "%s has a paragraph that links operations/systemd.md#%s and names nginx and Apache", rel, anchor)
 	}
 }
 
@@ -1179,7 +1185,7 @@ func assertGuideSchemaSection(t *testing.T) {
 	} {
 		assert.Contains(t, schema, phrase, "Schema migrations")
 	}
-	assert.Regexp(t, regexp.MustCompile(`\]\(UPGRADING\.md[)#]`), raw, "links UPGRADING.md (#795)")
+	assert.Regexp(t, regexp.MustCompile(`\]\(upgrades\.md[)#]`), raw, "links upgrades.md (#795)")
 
 	for _, wrong := range []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(tarball|release)[^.\n]*(does not|doesn't|do not|no longer)[^.\n]*(ship|contain|include)[^.\n]*migrations`),
@@ -1195,7 +1201,7 @@ func TestServerProvisioningGuideSQLiteUnsupported(t *testing.T) {
 	text := normalizeDocText(guide)
 	assert.Contains(t, text, "SQLite is not supported on this path")
 	assert.Contains(t, text, "mysqldump")
-	assert.Regexp(t, regexp.MustCompile(`\]\(DOCKER\.md[)#]`), guide, "links DOCKER.md")
+	assert.Regexp(t, regexp.MustCompile(`\]\(docker\.md[)#]`), guide, "links docker.md")
 	assert.NotContains(t, guide, "VACUUM INTO")
 	assert.NotContains(t, guide, ".sqlite.gz")
 }
@@ -1229,18 +1235,18 @@ func subsectionBetween(t *testing.T, doc, start, stop string) string {
 
 // TestServerProvisioningGuideLinked pins AC-8.
 func TestServerProvisioningGuideLinked(t *testing.T) {
-	forking := subsectionBetween(t, readRepositoryFile(t, "docs/FORKING.md"), "### 5.2", "### ")
-	assert.Regexp(t, regexp.MustCompile(`\]\(SERVER_PROVISIONING\.md[)#]`), forking, "FORKING §5.2 links the guide")
+	forking := subsectionBetween(t, readRepositoryFile(t, "docs/development/forking.md"), "### 5.2", "### ")
+	assert.Regexp(t, regexp.MustCompile(`\]\(\.\./operations/systemd\.md[)#]`), forking, "forking.md §5.2 links the guide")
 	assert.NotContains(t, normalizeDocText(forking), "None of these ship in the repository (#231)")
 	assert.Contains(t, normalizeDocText(forking), "not ready for SQLite as shipped")
 
-	for _, rel := range []string{"README.md", "docs/SETUP.md"} {
-		assert.Contains(t, readRepositoryFile(t, rel), "SERVER_PROVISIONING.md", rel)
+	for _, rel := range []string{"README.md", "docs/development/local-setup.md"} {
+		assert.Contains(t, readRepositoryFile(t, rel), "operations/systemd.md", rel)
 	}
 
 	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
 	assert.Contains(t, unreleased, "#231")
-	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
+	assert.Contains(t, unreleased, serverProvisioningChangelogName)
 }
 
 // The tests below pin the #305 decisions (founder decisions of 13 Nov 2026):
@@ -1321,13 +1327,13 @@ func TestServerProvisioningGuideMigrationCommand(t *testing.T) {
 	}
 
 	// The dirty-state recovery moved to the upgrade page (#795).
-	upgrading := normalizeDocText(readRepositoryFile(t, "docs/UPGRADING.md"))
+	upgrading := normalizeDocText(readRepositoryFile(t, "docs/operations/upgrades.md"))
 	for _, phrase := range []string{
 		"dirty",
 		"-command force",
 		"last version that applied cleanly",
 	} {
-		assert.Contains(t, upgrading, phrase, "docs/UPGRADING.md")
+		assert.Contains(t, upgrading, phrase, "docs/operations/upgrades.md")
 	}
 
 	assertGuideSchemaSection(t)
@@ -1360,7 +1366,7 @@ func changelogEntry(t *testing.T, section, marker string) string {
 func TestServerProvisioningGuideTarballDecisionsChangelog(t *testing.T) {
 	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
 	assert.Contains(t, unreleased, "#305")
-	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
+	assert.Contains(t, unreleased, serverProvisioningChangelogName)
 	assert.NotContains(t, unreleased, "scripts/deploy/samples", "item 1 of #305 is not delivered")
 	assert.Contains(t, unreleased, "nothing under `scripts/deploy` changes", "the #231 entry stays")
 
@@ -1369,6 +1375,6 @@ func TestServerProvisioningGuideTarballDecisionsChangelog(t *testing.T) {
 	assert.Contains(t, entry, "bin/migrate")
 
 	assert.Contains(t, normalizeDocText(readProvisioningGuide(t)), "Nothing in this guide ships as a file")
-	forking := subsectionBetween(t, readRepositoryFile(t, "docs/FORKING.md"), "### 5.2", "### ")
+	forking := subsectionBetween(t, readRepositoryFile(t, "docs/development/forking.md"), "### 5.2", "### ")
 	assert.Contains(t, normalizeDocText(forking), "no sample file ships under")
 }

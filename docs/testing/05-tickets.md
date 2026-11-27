@@ -26,8 +26,8 @@ gating); where the two disagree, that disagreement gets its own case.
 - `gocrm-ui/e2e/tests/admin-tickets.spec.ts`, `gocrm-ui/e2e/screenshots/05-tickets.spec.ts`,
   `gocrm-ui/e2e/pages/tickets.page.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`
-- `docs/FEATURES.md` section 5 (rows 5.1–5.9) and the Gap Summary (G18, G34)
-- `docs/screenshots/tickets/01-list.png` … `05-delete-confirm.png`
+- `docs/reference/features.md` section 5 (rows 5.1–5.9) and the Gap Summary (G18, G34)
+- `docs/assets/tickets/01-list.png` … `05-delete-confirm.png`
 
 **Constraints**
 
@@ -83,7 +83,7 @@ gating); where the two disagree, that disagreement gets its own case.
   serialises the field as `company` (`Customer.Company` (`internal/models/customer.go`)) and
   `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts`) does not map the nested
   customer the way `transformCustomerFromBackend` (`gocrm-ui/src/api/endpoints/customers.ts`) does. Same root
-  cause as TC-TICK-026. Not recorded in FEATURES.md section 5.
+  cause as TC-TICK-026. Not recorded in reference/features.md section 5.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
 ### TC-TICK-003 — Paginate the list and change rows per page
@@ -241,7 +241,7 @@ gating); where the two disagree, that disagreement gets its own case.
   back and renders as **Open**. `CreateTicketRequest` (`internal/handler/ticket_handler.go`) has no `Status`
   field, and the handler hard-codes `Status: models.TicketStatusOpen`.
 - **Known issue:** The form offers a control that cannot take effect; the only way to reach a
-  non-open status is a follow-up edit. Not recorded in FEATURES.md row 5.2.
+  non-open status is a follow-up edit. Not recorded in reference/features.md row 5.2.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
 ### TC-TICK-011 — Leaving the agent picker empty assigns the ticket to the creator
@@ -508,7 +508,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Read the "Customer", "Created By" and "Assigned To" blocks.
 - **Expected:** "Customer" reads `N/A`. "Created By" shows the **customer's contact name**
   (`first_name last_name`), not the user who created the ticket. "Assigned To" is correct.
-  `docs/screenshots/tickets/03-detail.png` captures exactly this state: `Customer: N/A` beside
+  `docs/assets/tickets/03-detail.png` captures exactly this state: `Customer: N/A` beside
   `Created By: Gregg Nader`.
 - **Known issue:** Two separate defects. (a) `gocrm-ui/src/pages/tickets/TicketDetail.tsx` reads
   `ticket.customer?.company_name`, which the backend never sends — it sends `company`
@@ -516,7 +516,7 @@ gating); where the two disagree, that disagreement gets its own case.
   (`ticketRepository.GetByID` (`internal/repository/ticket_repository.go`) does `Preload("Customer")`), so the screenshot's `N/A` is a
   field-name bug, not a missing join. (b) There is no creator column on `models.Ticket` at all, so
   `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts`) sets `created_by = backendTicket.customer`
-  with the comment "Assuming customer created the ticket". Neither is recorded in FEATURES.md
+  with the comment "Assuming customer created the ticket". Neither is recorded in reference/features.md
   row 5.1/5.3.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
@@ -552,7 +552,7 @@ gating); where the two disagree, that disagreement gets its own case.
   content. After a reload the comment is gone. The button is disabled while the field is empty.
 - **Known issue:** There is no comment model, table, handler or route. Per the repo's standing
   directive the endpoint function in `endpoints/tickets.ts` is intended contract awaiting a
-  backend, not dead code — the UI must not be deleted. Not listed in FEATURES.md section 5.
+  backend, not dead code — the UI must not be deleted. Not listed in reference/features.md section 5.
 - **Automation:** blocked — the negative half is testable, but "comments persist" cannot be covered
   until the backend route exists; track the 404 assertion under
   `gocrm-ui/e2e/tests/admin-tickets.spec.ts`
@@ -837,7 +837,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   respectively, and in every case the returned order is unchanged: none of those columns is in the
   handler's allowlist, so `sortBy` is blanked and the plain `List` path runs. The header still
   renders its sort arrow, so the UI claims a sort that did not happen.
-- **Known issue:** Not recorded in FEATURES.md row 5.7, which only notes the missing E2E test.
+- **Known issue:** Not recorded in reference/features.md row 5.7, which only notes the missing E2E test.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (new describe block)
 
 ---
@@ -858,7 +858,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   ticket assigned to the caller. A sales user also gets 200 but always an empty list (tickets can
   only be assigned to support/admin); a customer-role user gets **403** "Customers cannot have
   tickets assigned to them".
-- **Known issue:** Gap **G18** in `docs/FEATURES.md` ("No E2E test for 'My Tasks' / 'My Tickets'
+- **Known issue:** Gap **G18** in `docs/reference/features.md` ("No E2E test for 'My Tasks' / 'My Tickets'
   views") understates it — for tickets there is no view to test.
 - **Automation:** blocked — the API half is coverable from a Playwright `request` context, but the
   UI half cannot exist until a page or nav entry is built
@@ -885,7 +885,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   `customerService.GetByUserID` and compares ids). A lookup failure — including a customer-role user
   with no linked customer record — also yields 403, never a 500.
 - **Known issue:** This was gap **G27**, an IDOR with no ownership check at all; it is fixed and
-  pinned by four handler tests, but FEATURES.md row 5.9 still records "no E2E test".
+  pinned by four handler tests, but reference/features.md row 5.9 still records "no E2E test".
 - **Automation:** blocked — needs a way to link a customer-role user to a customer record
   (`customers.user_id` is not settable through any UI or public endpoint today, exactly as in
   TC-CUST-041); once that exists the case is API-level via `request.newContext()` in

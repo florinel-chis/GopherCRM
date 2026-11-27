@@ -10,7 +10,7 @@
 # update). This is the only place the version is written. To change it, set
 # the version and both checksums below (sha256sum of the linux64 and of the
 # linux-arm64 zip of that version), then run
-# `scripts/e2e/quote-pdf-chain.sh image` (see docs/DOCKER.md).
+# `scripts/e2e/quote-pdf-chain.sh image` (see docs/operations/docker.md).
 ARG HEADLESS_SHELL_VERSION=156.0.8078.80
 ARG HEADLESS_SHELL_SHA256_AMD64=547dcd374e02961bf998f6046a267644f8502225c36bb78ca307dab32a0b3eb4
 ARG HEADLESS_SHELL_SHA256_ARM64=5bb6a00a4285c13303d3f72c5afdb70f144ea7a93eed462365a52b69631c9607

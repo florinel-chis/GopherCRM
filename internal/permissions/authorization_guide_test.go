@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -10,15 +11,19 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
-// The guide tests pin docs/AUTHORIZATION.md to this package: the catalogue
+// The guide tests pin docs/development/authorization.md to this package: the catalogue
 // and matrix tables are compared with Leaves and ForSystemRole, the single
 // sign-on section with its security rules, the guide's present-tense form (no
 // ticket references), and the pointers in the docs/README.md index,
-// docs/FEATURES.md and CHANGELOG with the guide's path.
+// docs/reference/features.md and CHANGELOG with the guide's path.
 
 const (
 	guideRepoRoot = "../.."
-	guidePath     = "docs/AUTHORIZATION.md"
+	guidePath     = "docs/development/authorization.md"
+	// guideChangelogPath is the guide's path in the CHANGELOG entry of #349.
+	// CHANGELOG entries are history, so they keep the path the guide had when
+	// they were written (#798 moved it to guidePath).
+	guideChangelogPath = "docs/AUTHORIZATION.md"
 )
 
 func readGuideFile(t *testing.T, rel string) string {
@@ -235,7 +240,7 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 	// exactly one bullet there, under a descriptive label rather than the
 	// file name, and README.md lists it neither in a table row nor in a
 	// bullet, which would make a second index.
-	indexBullet := regexp.MustCompile(`^- \[([^\]]+)\]\(AUTHORIZATION\.md\)`)
+	indexBullet := regexp.MustCompile(`^- \[([^\]]+)\]\(development/authorization\.md\)`)
 	indexBullets := 0
 	for _, line := range strings.Split(readGuideFile(t, "docs/README.md"), "\n") {
 		m := indexBullet.FindStringSubmatch(line)
@@ -243,15 +248,15 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 			continue
 		}
 		indexBullets++
-		if m[1] == "AUTHORIZATION.md" {
+		if m[1] == "authorization.md" || m[1] == "development/authorization.md" {
 			t.Errorf("docs/README.md: the bullet for the guide must have a descriptive label, not %q", m[1])
 		}
 	}
 	if indexBullets != 1 {
-		t.Errorf("docs/README.md must have exactly one bullet whose first link is (AUTHORIZATION.md), found %d", indexBullets)
+		t.Errorf("docs/README.md must have exactly one bullet whose first link is (development/authorization.md), found %d", indexBullets)
 	}
 	readme := readGuideFile(t, "README.md")
-	const link = "[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)"
+	const link = "[docs/development/authorization.md](docs/development/authorization.md)"
 	if hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "- "+link) }) {
 		t.Errorf("README.md must not have a bullet starting %q: docs/README.md is the index", "- "+link)
 	}
@@ -259,11 +264,11 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		t.Errorf("README.md must not have a table row starting %q: docs/README.md is the index", "| "+link)
 	}
 
-	features := readGuideFile(t, "docs/FEATURES.md")
+	features := readGuideFile(t, "docs/reference/features.md")
 	if !hasLine(features, func(l string) bool {
-		return strings.HasPrefix(l, "| 11.1 |") && strings.Contains(l, "](AUTHORIZATION.md)")
+		return strings.HasPrefix(l, "| 11.1 |") && strings.Contains(l, "](../development/authorization.md)")
 	}) {
-		t.Error("row 11.1 of docs/FEATURES.md must link ](AUTHORIZATION.md)")
+		t.Error("row 11.1 of docs/reference/features.md must link ](../development/authorization.md)")
 	}
 
 	// The entries since 1.2.0 (Unreleased and newer versions), cut into
@@ -287,12 +292,12 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 	}
 	named := false
 	for _, bullet := range bullets {
-		if strings.Contains(bullet, guidePath) && regexp.MustCompile(`#349\b`).MatchString(bullet) {
+		if strings.Contains(bullet, guideChangelogPath) && regexp.MustCompile(`#349\b`).MatchString(bullet) {
 			named = true
 		}
 	}
 	if !named {
-		t.Errorf("CHANGELOG.md needs a bullet since 1.2.0 naming %s and #349", guidePath)
+		t.Errorf("CHANGELOG.md needs a bullet since 1.2.0 naming %s and #349", guideChangelogPath)
 	}
 
 	guide := readGuideFile(t, guidePath)
@@ -301,7 +306,7 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		t.Errorf("%s links no other guide", guidePath)
 	}
 	for _, target := range targets {
-		rel := "docs/" + target[1]
+		rel := path.Join(path.Dir(guidePath), target[1])
 		if _, err := os.Stat(filepath.Join(guideRepoRoot, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("%s links %s, which does not exist: %v", guidePath, target[1], err)
 		}

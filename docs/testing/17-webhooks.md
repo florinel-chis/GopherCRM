@@ -32,7 +32,7 @@ exercises the API directly: TC-HOOK-023 plans one.
   `migrations/20261127120000_webhook_secret_rotation.up.sql`,
   `migrations/20261129120005_webhook_endpoint_pause.up.sql`,
   `migrations/20261129120007_widen_webhook_event_types.up.sql` and their `.down.sql` halves
-- `docs/user-guide/permissions-access/webhooks.md`
+- `docs/integrations/webhooks.md`
 
 ## Constraints
 

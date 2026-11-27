@@ -6,7 +6,7 @@ can create and edit them, and only admins can delete one.
 
 This page covers what a submission creates and how a form that opens support tickets titles them.
 The field types, the spam protection and the embed snippet are described in the
-[feature inventory](../FEATURES.md) and the [API reference](../../api/index.html).
+[feature inventory](../reference/features.md) and the [API reference](../../api/index.html).
 
 ## What a submission creates
 
@@ -46,4 +46,4 @@ only while **Create a support ticket** is chosen, and it lists the form's text a
 The title is ticket text like a title staff type in: whatever reads the ticket (the ticket list, a
 webhook delivery, an automation step) sees it, and deleting the customer later does not scrub it. See
 [Privacy and erasure](privacy-and-erasure.md) and the ticket text redaction procedure in
-`docs/DEV_ERASURE.md`.
+`docs/development/erasure.md`.

@@ -8,9 +8,9 @@ file, not by trusting the coverage matrix.
 
 **Sources**
 
-- `docs/FEATURES.md` section 1 (rows 1.1–1.17), section 10b "Auth sessions", section 11.1, Gap
+- `docs/reference/features.md` section 1 (rows 1.1–1.17), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
-- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
+- `docs/reference/roadmap.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
   session-ending events, live session updates across tabs)
 - `gocrm-ui/src/pages/auth/Login.tsx`, `gocrm-ui/src/pages/auth/Register.tsx`,
   `gocrm-ui/src/pages/auth/ForgotPassword.tsx`, `gocrm-ui/src/pages/auth/ResetPassword.tsx`
@@ -31,7 +31,7 @@ file, not by trusting the coverage matrix.
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/screenshots/helpers/login.ts`,
   `gocrm-ui/e2e/global-setup.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/fixtures/test-data.ts`
-- Visual reference: `docs/screenshots/auth/01-login.png`, `02-login-validation.png`,
+- Visual reference: `docs/assets/auth/01-login.png`, `02-login-validation.png`,
   `03-register.png`, `04-register-validation.png`
 
 **Constraints**
@@ -132,7 +132,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Click **Sign Up** without typing anything.
 - **Expected:** The form stays on `/register`; First Name / Last Name / Email / Password show
   validation errors and no `POST /auth/register` is issued. Matches
-  `docs/screenshots/auth/04-register-validation.png`.
+  `docs/assets/auth/04-register-validation.png`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "shows validation errors for empty fields"
 
 ### TC-AUTH-007 — Registration rejects a malformed email address
@@ -182,7 +182,7 @@ file, not by trusting the coverage matrix.
 - **Known issue:** Login and registration disagree about persistence — login honours the "Remember me"
   checkbox (`AuthContext.tsx` `login()`), registration always persists. A newly registered session
   also has no refresh token, so the first 401 in `client.ts` throws "No refresh token available" and
-  drops the user straight to `/login` instead of refreshing. Not recorded in FEATURES.md row 1.9,
+  drops the user straight to `/login` instead of refreshing. Not recorded in reference/features.md row 1.9,
   which describes only the login path.
 - **Automation:** planned — `gocrm-ui/e2e/tests/registration.spec.ts` (extended)
 
@@ -244,7 +244,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Navigate to `/login`.
 - **Expected:** "Sign In" heading, `input[name="email"]`, `input[name="password"]`, the "Remember me"
   checkbox, the **Sign In** submit button, "Forgot password?" and "Don't have an account? Sign Up"
-  links are all visible. Matches `docs/screenshots/auth/01-login.png`.
+  links are all visible. Matches `docs/assets/auth/01-login.png`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login page renders correctly"
 
 ### TC-AUTH-017 — Valid credentials log in and land on the dashboard
@@ -295,7 +295,7 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** Logged out, on `/login`.
 - **Steps:** Click **Sign In** with both fields empty.
 - **Expected:** No request is sent; the fields report their zod errors ("Invalid email address" /
-  "Password is required"). Matches `docs/screenshots/auth/02-login-validation.png`.
+  "Password is required"). Matches `docs/assets/auth/02-login-validation.png`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with empty fields"
 
 ### TC-AUTH-021 — A malformed email is blocked client-side
@@ -375,7 +375,7 @@ file, not by trusting the coverage matrix.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
   later.") before lockout can be observed. Spacing or `DISABLE_RATE_LIMIT=true` is mandatory — see
-  FEATURES.md row 11.2.
+  reference/features.md row 11.2.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new lockout describe block)
 
 ### TC-AUTH-026a — Expiry starts a fresh failure window
@@ -394,7 +394,7 @@ file, not by trusting the coverage matrix.
   (`internal/service/auth_login_failed_attempts_test.go`) sends parallel wrong passwords
   that have all read the account first and checks the stored count is exact: 4 failures
   leave 4, 20 leave 5 with the lock set, and 3 after an expired lock leave 3 with no lock.
-- **Validation:** the [auth profile](../VALIDATION_RELEASE.md) runs these regressions,
+- **Validation:** the [auth profile](../maintainers/validation-and-releases.md) runs these regressions,
   the surrounding auth/session checks, and health/login/registration browser specs.
 
 ### TC-AUTH-026b — Login issues its session from the owner row locked in one transaction (#336)
@@ -485,7 +485,7 @@ file, not by trusting the coverage matrix.
   `localStorage` and `sessionStorage` (`apiClient.clearTokens()` loops over both). The record is
   removed at once, without waiting for a refresh another tab may be running under the session lock;
   that refresh then stores nothing (#184). Navigating back to `/` redirects to `/login`.
-- **Known issue:** FEATURES.md row 1.4 still says "There is no server-side logout endpoint"; that row
+- **Known issue:** reference/features.md row 1.4 still says "There is no server-side logout endpoint"; that row
   is superseded by section 10b — the route is registered in `setupDependencies` (`cmd/main.go`) behind the auth
   middleware. Closes gap **G11**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new logout describe block)
@@ -864,7 +864,7 @@ file, not by trusting the coverage matrix.
   manager by `internal/service/auth_session_test.go` `TestAuthService_ConfirmPasswordReset`.
 - **Validation:** the three `password-reset-*` named acceptance checks run the six roots with
   `-race` and reject skipped evidence. `scripts/ci/check-auth.py`, the
-  [auth profile](../VALIDATION_RELEASE.md) checker, discovers these roots from the
+  [auth profile](../maintainers/validation-and-releases.md) checker, discovers these roots from the
   `auth*_test.go` pattern and also fails on a skipped root, so the bounded auth profile now
   requires `TEST_MYSQL_DSN` pointing at a disposable MySQL server.
 
@@ -1405,7 +1405,7 @@ delete (`DELETE /scim/v2/Users/{id}`, TC-AUTH-086), the same deactivation, never
 #506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`, TC-AUTH-088 to
 TC-AUTH-092), whose members patch recomputes the members' roles from the groups claim.
 `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
-`docs/AUTHORIZATION.md`.
+`docs/development/authorization.md`.
 
 ### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and is counted in the audit log
 - **Priority:** P0

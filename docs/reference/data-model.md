@@ -1,0 +1,1707 @@
+# GopherCRM Data Model Documentation
+
+> **For:** Developers and database administrators. Part of the [documentation index](../README.md).
+
+This document describes the tables that the MySQL/MariaDB migrations in `migrations/` and the
+SQLite schema step `MigrateDatabase` (`internal/models/database.go`) create, with the rules the
+backend applies to them.
+
+## Base Model
+
+All entities inherit from a common base model with the following fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | uint | Yes | Auto-generated unique identifier |
+| created_at | timestamp | Yes | Record creation timestamp |
+| updated_at | timestamp | Yes | Last update timestamp |
+| deleted_at | timestamp | No | Soft delete timestamp |
+
+## User Model
+
+Represents system users with different roles and permissions.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| email | string | Yes | - | unique, max 255 | User's email address |
+| password | string | Yes | - | max 255 | Hashed password (hidden in API responses) |
+| first_name | string | Yes | - | max 100 | User's first name |
+| last_name | string | Yes | - | max 100 | User's last name |
+| role | enum | Yes | 'customer' | max 20, index `idx_users_role` | User role (see below) |
+| role_id | bigint unsigned | No | NULL | index `idx_users_role_id`, foreign key `fk_users_custom_role` → `roles.id` ON DELETE RESTRICT | The custom role of an account whose role is `custom` (#344); NULL for every system-role account. Omitted from the JSON while NULL and not in the API reference yet. MySQL gets it from `20261119120000_add_roles_and_permissions`, SQLite from `MigrateDatabase`; existing accounts read NULL |
+| is_active | boolean | Yes | true | - | Account active status |
+| last_login_at | timestamp | No | - | - | Last login timestamp |
+| failed_login_attempts | int | Yes | 0 | - | Consecutive failed logins, reset by a successful login and restarted by the first failure after a lock has lapsed. `json:"-"`, so never in an API response |
+| locked_until | timestamp | No | NULL | - | End of the 15-minute login lock set after 5 consecutive failed logins. Serialised read-only as `locked_until`, omitted while NULL. It may lie in the past: a lapsed lock is cleared only by the next login attempt |
+| token_version | bigint unsigned | Yes | 0 | not null | Session generation (#236), hidden in API responses. Every access JWT carries it as the `token_version` claim and is refused once it differs; logout, a password change, a password reset and a SCIM write that sets `active` false (#471) increment it. MySQL gets it from `20261109120000_add_user_token_version`, SQLite from `MigrateDatabase`; existing accounts read 0 |
+
+### User Roles
+- `admin` - Full system access
+- `sales` - Access to leads and customers
+- `support` - Access to tickets and customer support
+- `customer` - Limited access to own data
+- `custom` - An account on a custom role (`models.RoleCustom`, a typed `UserRole` constant): the
+  account's permissions come from the role `role_id` names. `POST /users` and `PUT /users/{id}`
+  assign it together with `role_id` (#348); a customer login cannot receive it.
+
+### Relationships
+- Has many Leads (as owner)
+- Has many Tasks (as assignee)
+- Has many APIKeys
+- Belongs to a custom Role through `role_id` (optional)
+
+## Role Model
+
+Roles are stored in three tables, linked to accounts through `users.role_id`, with four seeded
+system rows (#344). The permission checks read them (#347); the role API and the user routes
+(`/roles`, `POST /users`, `PUT /users/{id}`) write them (#348), each change with its
+`role_audit_log` row in the same transaction.
+
+```mermaid
+erDiagram
+  roles ||--o{ role_permissions : "fk_roles_permissions"
+  roles |o--o{ users : "fk_users_custom_role ON DELETE RESTRICT"
+  roles {
+    bigint id PK
+    varchar system_key UK "NULL on custom roles"
+    varchar name "no personal text"
+    varchar name_key UK "lower(trim(name))"
+    varchar description "seeded text on system rows"
+  }
+  role_permissions {
+    bigint role_id PK
+    varchar permission_key PK
+    varchar scope "all|own"
+  }
+  users {
+    bigint id PK
+    varchar role "idx_users_role; +custom"
+    bigint role_id FK "NULL; idx_users_role_id"
+  }
+  role_audit_log {
+    bigint id PK
+    datetime created_at
+    bigint actor_user_id "no FK"
+    bigint role_id "no FK"
+    bigint target_user_id "no FK"
+  }
+```
+
+### roles
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | - | Set by the writer |
+| system_key | varchar(20) | Yes | NULL | Unique (`idx_roles_system_key`). `admin`, `sales`, `support` or `customer` on the four system rows, NULL on custom roles. Written only by the seed; the repository never writes it |
+| name | varchar(100) | No | - | At most 100 characters, not blank. **Must not carry personal text**, like an automation rule name: it reaches audit snapshots and every staff screen |
+| name_key | varchar(100) | No | - | Unique (`idx_roles_name_key`). `models.RoleNameKey(name)`: trimmed and lower-cased, so `Field Ops` and ` field ops ` collide, and so does a custom role named `ADMIN`. Hidden from JSON. On MySQL/MariaDB the column keeps the table's `utf8mb4_unicode_ci` collation, so accent and trailing-space variants also collide there (not on SQLite) |
+| description | varchar(500) | No | '' | |
+
+There is no `deleted_at`: a role is hard-deleted, and `fk_users_custom_role` refuses deleting one
+that a user, live or erased, still references.
+
+The four system rows (`models.SystemRoleSeeds`, the same literal values as the SQL up migration):
+
+| system_key | name | name_key | description |
+|---|---|---|---|
+| admin | Admin | admin | Full access. Cannot be edited or deleted. |
+| sales | Sales | sales | Built-in sales access. Cannot be edited or deleted. |
+| support | Support | support | Built-in support access. Cannot be edited or deleted. |
+| customer | Customer | customer | A customer's own login. Cannot be edited, deleted or cloned into portal access. |
+
+### role_permissions
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| role_id | bigint unsigned | No | - | Primary key part 1; `fk_roles_permissions` → `roles.id` (no ON DELETE clause) |
+| permission_key | varchar(100) | No | - | Primary key part 2; a leaf key of the permission catalogue (`internal/permissions`), validated on write |
+| scope | varchar(10) | No | 'all' | `all` or `own` |
+
+### role_audit_log
+
+Append-only, written in the transaction of the change it records by the role service, the
+governed user writes, the OpenID Connect sign-in and the SCIM writes. No column has a foreign key,
+so an audit row never blocks a role or user delete.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
+| actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace, patch or delete (#470, #471, #504, #552) or a SCIM group patch (#506), or `migration` for a startup or migration data step (#524); `actor_user_id` is NULL for `scim` and `migration` |
+| action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed`, and since #552 the account rows `user_activated`, `user_deactivated`, `user_erased`, `user_email_changed` (role_id NULL, role_name '', the account in target_user_id) |
+| role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
+| role_name | varchar(100) | No | '' | Snapshot of the name |
+| target_user_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_target_user_id` |
+| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data: the writers store a role's name, description and permissions, a user's `role` and `role_id`, or `{"is_active": …}` on an activation or deactivation row; the erasure and email-change rows store NULL and never an address. That is why the erasure does not touch the table |
+
+### Schema sources
+
+MySQL/MariaDB: `migrations/20261119120000_add_roles_and_permissions.*.sql` (tables created only when
+missing, every `users` change behind an `INFORMATION_SCHEMA` probe, `idx_users_role_id` before the
+foreign key). Its down half first sets `role = 'support'` and `is_active = 0` on every live user
+whose role is `custom` (erased rows untouched), then drops the foreign key, both indexes, the
+column and the three tables. SQLite: `MigrateDatabase`, which adds the foreign key by rebuilding
+`users` with enforcement off (the indexes survive). On every driver `MigrateDatabase` seeds the
+missing system rows (see *RBAC persistence* in [../development/roles.md](../development/roles.md)).
+
+## Lead Model
+
+Represents potential customers in the sales pipeline.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| first_name | string | Yes | - | max 100 | Lead's first name |
+| last_name | string | Yes | - | max 100 | Lead's last name |
+| email | string | Yes | - | max 255, indexed, not unique | Lead's email address |
+| phone | string | No | - | max 50 | Phone number |
+| company | string | No | - | max 200 | Company name |
+| position | string | No | - | max 100 | Job position/title |
+| source | string | No | - | max 100 | Lead source (e.g., website, referral) |
+| status | enum | Yes | 'new' | max 20 | Lead status (see below) |
+| classification | string | No | 'unclassified' | max 20, indexed | `unclassified`, `test`, `spam`, `lead`, `hot_lead` |
+| external_id | string | No | - | max 255, indexed, not unique | Identifier from an external source |
+| notes | text | No | - | - | Additional notes |
+| owner_id | uint | Yes | - | FK to users; a new value must name an active account whose role, system or custom, holds `assignment.form_owner` (`checkLeadOwner` (`internal/service/lead_service.go`), `permissions.AssignmentFormOwner` (`internal/permissions/catalogue.go`)) | The lead's owner |
+| customer_id | uint | No | - | FK to customers | ID when converted to customer |
+| company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
+
+### Lead Status Values
+- `new` - Newly created lead
+- `contacted` - Initial contact made
+- `qualified` - Qualified as potential customer
+- `unqualified` - Not a good fit
+- `converted` - Converted to customer
+
+### Lead Sources (Common Values)
+- `website` - Company website
+- `referral` - Customer referral
+- `cold_call` - Sales outreach
+- `advertisement` - Ad campaigns
+- `social_media` - Social platforms
+- `email_campaign` - Email marketing
+- `trade_show` - Events/trade shows
+- `other` - Other sources
+
+## Company Model
+
+An organisation that leads and customers link to through `company_id`. Holds no personal data;
+deleting one soft-deletes the row and clears the links. `domain` is unique among live rows,
+checked in the service rather than by a unique index; a plain (non-unique) index serves that
+check.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200 | Company name (trimmed; not unique) |
+| domain | string | No | - | max 255, indexed, unique among live rows | Normalised lower-case host, e.g. `acme.example` |
+| website | string | No | - | max 255, http(s) URL | Website |
+| industry | string | No | - | max 100 | Free text |
+| employee_range | string | No | - | one of `1-10`, `11-50`, `51-200`, `201-500`, `501-1000`, `1000+` | Head-count band |
+| phone | string | No | - | max 50 | Phone number |
+| address | string | No | - | max 255 | Street address |
+| city | string | No | - | max 100 | City |
+| state | string | No | - | max 100 | State/Province |
+| country | string | No | - | max 100 | Country |
+| postal_code | string | No | - | max 20 | ZIP/Postal code |
+| notes | text | No | - | max 65535 bytes | Free text |
+| owner_id | uint | No | - | FK to users | Account manager |
+
+`customer_count`, `lead_count` and `deal_count` are computed on read (live rows only) and are not
+columns.
+
+## Lookup Indexes and Query Plans
+
+Four non-unique single-column indexes back the lead and company lookups (#109). The names are
+the ones GORM AutoMigrate derives from the model tags, and the MySQL/MariaDB migration
+`20261029140000_add_lead_company_lookup_indexes` creates the same ones; `cmd/migrate`
+`TestLookupIndexesMigration` compares the two, and `internal/repository`
+`TestLookupIndexesServeLookupsSQLite` fails if a lookup stops using its index on SQLite.
+
+| Index | Serves |
+|-------|--------|
+| `idx_leads_email` | `GetLatestByEmail` (the form double opt-in match): `email = ?`, newest first |
+| `idx_leads_classification` | `GET /leads?classification=` and its count |
+| `idx_leads_external_id` | `GetByExternalID` |
+| `idx_companies_domain` | the live-row duplicate-domain check (`ExistsByDomain`) |
+
+None is unique: the same email may legitimately belong to several leads, and a soft-deleted
+company keeps its domain while a live company may reuse it. The domain check compares the
+column with plain equality against the lower-cased argument; the stored domain is always lower
+case (the service normalises it, and both the SQL migration and `models.MigrateDatabase`, on
+every start and every driver, lower-case any row written outside the application). Lower-casing
+cannot create a live duplicate the application did not already treat as one, because its check
+was case-insensitive before the change as well. The previous `LOWER(domain) = LOWER(?)` predicate cannot use a plain index on
+SQLite or on MySQL/MariaDB, and the functional indexes that could serve it are not portable
+(MariaDB 10.11 has none).
+
+Measured on 2026-10-29 with 20,000 leads (15,000 distinct emails, five classifications, unique
+external ids) and 5,000 companies, the tables analysed, on SQLite (glebarez driver) and MySQL 8
+(the runner container). This is a lab measurement, not a production incident.
+
+| Lookup | SQLite before | SQLite after | MySQL before | MySQL after |
+|--------|---------------|--------------|--------------|-------------|
+| lead by email, newest first | `SCAN leads` + temp B-tree for ORDER BY | `SEARCH leads USING INDEX idx_leads_email (email=?)` + temp B-tree over the matching rows | `ref` on `idx_leads_deleted_at`, ~9,756 rows examined, filesort | `ref` on `idx_leads_email`, 2 rows, filesort of those rows |
+| leads by classification, one page | `SCAN leads` | `SEARCH leads USING INDEX idx_leads_classification (classification=?)` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | `range` on `idx_leads_classification`, ~4,000 rows (one fifth of the table) |
+| count by classification | `SCAN leads` | `SEARCH ... USING INDEX idx_leads_classification` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | index intersection of `idx_leads_classification` and `idx_leads_deleted_at`, index only |
+| lead by external id | `SCAN leads` | `SEARCH leads USING INDEX idx_leads_external_id (external_id=?)` | `ref` on `idx_leads_deleted_at`, ~9,756 rows | `ref` on `idx_leads_external_id`, 1 row |
+| company domain check | `SCAN companies` | `SEARCH companies USING INDEX idx_companies_domain (domain=?)` | `range` on `PRIMARY`, ~2,476 rows | `range` on `idx_companies_domain`, 2 rows |
+
+With the index in place, `LOWER(domain) = LOWER(?)` still produced `SCAN companies` on SQLite and
+a primary-key range over ~2,550 rows on MySQL, which is why the predicate changed. The email
+lookup keeps a sort step because `created_at` lives in the shared base model and cannot join a
+composite tag; the index narrows the sort to the few rows that share one address.
+
+Migration cost. Each index costs one scan of its table. MySQL 8 and MariaDB 10.11 build a
+secondary index as in-place online DDL: reads and writes continue during the build, but the
+statement takes a brief exclusive metadata lock at its start and end. A long-running transaction
+that touched the table delays that lock, and statements arriving behind the waiting DDL queue
+until it is granted, so run the upgrade when no long transaction or report is open on `leads` or
+`companies`. The domain normalisation `UPDATE` in the SQL migration is a separate, one-time
+write: it scans `companies` once, and under InnoDB REPEATABLE READ it locks every record it scans,
+not only the ones it changes, until the migration statement finishes; on a large table run it in
+the same quiet window. `models.MigrateDatabase` repeats the normalisation on every start on every
+driver (which is how SQLite installs get it) without that cost: it finds the rows with a plain,
+non-locking `SELECT id`, a full read of `companies` on each boot, and only when that returns ids
+lower-cases those rows by primary key in chunks of 500. Writes and row locks are therefore limited
+to the rows that need normalising, and a normalised database takes none. SQLite builds the indexes during the startup
+AutoMigrate, holding the database write lock while it does.
+
+## Deal Model
+
+A sales opportunity, optionally linked to a company, a customer and the lead it grew from, always
+owned by a user. Deleting one is a soft delete that keeps the history. The title, notes and
+lost reason are staff-typed and may name the client: erasing the linked customer or lead keeps the
+row, its stage, amount, links, owner and history, and sets `title` to `[redacted]` and `notes` and
+`lost_reason` to `''` in the same transaction, live and soft-deleted deals alike (#245; see
+[../development/erasure.md](../development/erasure.md#deleting-personal-data)). Erasing the owner does not.
+Money is an integer amount in minor units next to an ISO 4217 code — sums are only meaningful per
+currency.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 200 | Deal title (trimmed); `[redacted]` after an erasure of the linked customer or lead |
+| stage | string | Yes | `qualification` | one of the stage values below | Pipeline stage |
+| amount_cents | int64 | Yes | 0 | ≥ 0 | Amount in minor units |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$` | ISO 4217 code |
+| probability | int | Yes | per stage | 0–100; won is 100, lost is 0 | Chance of closing |
+| expected_close_date | date | No | - | `YYYY-MM-DD` on the wire | Expected close |
+| closed_at | datetime | No | - | set on entering won or lost, cleared on leaving them | When the deal closed |
+| lost_reason | string | No | - | max 255; stored only while lost | Why the deal was lost |
+| source | string | No | - | max 100 | Free text |
+| notes | text | No | - | max 65535 bytes | Free text |
+| company_id | uint | No | - | FK to companies | Linked company |
+| customer_id | uint | No | - | FK to customers | Linked customer |
+| lead_id | uint | No | - | FK to leads | Lead it grew from |
+| owner_id | uint | Yes | the caller | FK to users | Staff account working the deal |
+
+### Deal Stage Values
+- `qualification` (default probability 10)
+- `proposal` (40)
+- `negotiation` (70)
+- `won` (100, closed)
+- `lost` (0, closed)
+
+### Deal Stage Change
+
+`deal_stage_changes` is append-only: one row per stage the deal entered, written in the same
+transaction as the create or the change, never updated, kept when the deal is soft-deleted.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| deal_id | uint | Yes | FK to deals, indexed | The deal |
+| from_stage | string | No | null on the creating row | Stage left |
+| to_stage | string | Yes | a stage value | Stage entered |
+| changed_by_id | uint | Yes | FK to users | Who made the change |
+| changed_at | datetime | Yes | - | When |
+
+## Product Model
+
+One entry of the catalogue a quote line is priced from, stored in the `products` table
+(`models.Product`, `internal/models/product.go`; MySQL/MariaDB from
+`20261026120000_add_products_and_quotes`). Products hold no personal data and are
+not erased; deleting one is a soft delete, and the quote lines that reference it keep the name and
+price they copied. Money is an integer amount in minor units next to an ISO 4217 code, the deal
+convention.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200, trimmed | Display name, copied into `quote_lines.description` when a line is added |
+| sku | string | No | - | max 64, indexed, not unique | Stock-keeping code |
+| description | text | No | - | max 65535 bytes | Free text |
+| unit_price_cents | int64 | Yes | - | 0 to 10^12 (`models.QuoteAmountCentsMax`); no column default, so an explicit 0 is kept | Price in minor units |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`, `char(3)` | ISO 4217 code |
+| is_active | boolean | Yes | true (set by the service) | no column default, so an explicit false is kept | Whether new quote lines may be priced from it |
+
+The SKU is deliberately not unique: a unique index over a soft-deleted table either blocks the
+reuse of a code or, scoped by `deleted_at`, stops meaning anything (see the gotchas in
+[development/README.md](../development/README.md)). An ERP or catalogue sync keys products through the external
+identity mappings below instead.
+
+### Relationships
+- Has many external identity mappings (`product_external_ids`, below); not embedded in its JSON
+- Referenced by quote lines (`quote_lines.product_id`, `fk_quote_lines_product`), which survive its
+  soft delete
+
+### Product External ID
+
+`product_external_ids` (#239) — one integrator identity mapped to a product, the same shape as the
+customer mappings. The triple is unique and compared exactly (case-sensitive): SQLite compares with
+`BINARY`, MySQL and MariaDB carry `utf8mb4_bin` on the three text columns (migration
+`20261112120000_add_product_external_ids`, or the collation guard of `MigrateDatabase` on a schema
+the application alone created). No `deleted_at`: a mapping is hard-deleted by `DELETE
+/products/{id}/external-ids/{mappingId}`, and `DELETE /products/{id}` hard-deletes every mapping of
+the product in the transaction that soft-deletes it, so the triples can be mapped again. Products
+hold no personal data, so no erasure step touches the table.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Mapping id |
+| created_at, updated_at | timestamp | - | now | - | Set by the server; a mapping is never updated in place |
+| product_id | uint | Yes | - | FK `fk_product_external_ids_product` to products (no cascade); index `idx_product_external_ids_product_id` | The mapped product (live, active or not) |
+| source | string | Yes | - | `varchar(64)`, 1-64 characters | System that issued the identifier, for example an ERP |
+| scope | string | Yes | `''` | `varchar(128)`, 0-128 characters | Namespace inside the source, for example a company code |
+| external_id | string | Yes | - | `varchar(255)`, 1-255 characters | The identifier |
+
+The table's only unique index is `idx_product_external_ids_identity (source, scope, external_id)`.
+Every value must be valid UTF-8 without control characters or leading or trailing whitespace.
+
+## Quote Model
+
+A priced offer to a customer, optionally grown from a deal, always owned by a user. A quote
+carries its lines and server-computed totals; everything, lines included, is editable only while
+the status is `draft`. Quotes copy no contact data: the recipient of the email is read from the
+linked customer at send time, so erasing the customer keeps the quote, its status, totals, lines
+and history, with `customer_id` in place as a business link (as deals keep theirs). The staff-typed
+text is not kept: erasing the quote's customer, or the customer or lead of its deal, sets `title`
+to `[redacted]` and `notes` to `''` and resets each line's `description` to the name of its product,
+in the same transaction and whatever the status (#245).
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 200, trimmed | Free text; `[redacted]` after an erasure that reaches the quote |
+| status | enum | Yes | `draft` | one of the status values below, max 20 | Lifecycle status |
+| currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`; immutable once the quote has lines | Currency of every line and total |
+| subtotal_cents | int64 | Yes | 0 | Σ of the rounded line gross values, round_half_up(quantity × unit_price_cents) per line (#343); never taken from a request | |
+| discount_cents | int64 | Yes | 0 | subtotal − total (both net) | |
+| total_cents | int64 | Yes | 0 | Σ line_total_cents | Net total: after the per-line discounts, before tax |
+| tax_cents | int64 | Yes | 0 (column `DEFAULT 0`) | Σ quote_lines.tax_cents; computed, read-only (#324) | 0 on quotes written before line tax existed |
+| gross_total_cents | int64 | Yes | 0 (column `DEFAULT 0`) | total_cents + tax_cents, at most 10^12; computed, read-only (#324) | Backfilled to total_cents + tax_cents for existing rows |
+| valid_until | date | No | - | `YYYY-MM-DD` on the wire, stored as local midnight (the deal date convention) | Acceptance is refused once this date has passed; expiry itself is a manual status. The client response link of the quote email (#382) stops working when this day ends (server's local date) |
+| notes | text | No | - | max 65535 bytes | Free text shown on the document and in the email |
+| sent_at | datetime | No | - | set on draft→sent, cleared on sent→draft | UTC |
+| closed_at | datetime | No | - | set on accepted, rejected and expired; cleared on sent→draft | UTC |
+| last_emailed_at | datetime | No | - | set by the conditional update that follows a successful email | UTC |
+| deal_id | uint | No | - | FK to deals; at least one of `deal_id` and `customer_id` on create; not editable | The deal it grew from |
+| customer_id | uint | No | - | FK to customers; taken from the deal when omitted; must be the deal's customer when the deal has one | The recipient, read live at send time and never copied |
+| owner_id | uint | Yes | the caller | FK to users; only an admin may name another | Owning staff account |
+
+The JSON adds `number` (`Q-` followed by the id zero-padded to six digits, `Q-000042`) and
+replaces the preloaded `customer`, `deal` and `owner` by summaries (`{id, first_name, last_name,
+company}`, `{id, title, stage}` and `{id, first_name, last_name}`): no email address or phone
+number is ever disclosed through a quote. Lists carry quotes without their lines.
+
+### Quote Status Values and Transitions
+- `draft` — editable; the only status in which the fields and the lines may change
+- `sent` — entered from draft, only when the quote has at least one line
+- `accepted`, `rejected`, `expired` — final; entered from sent
+
+The allowed moves are exactly `draft → sent`, `sent → accepted`, `sent → rejected`,
+`sent → expired` and `sent → draft` (revise). Any other pair, the same status again included, is
+refused with 400 `INVALID_STATUS_TRANSITION` and writes nothing. Each move claims the row with a
+conditional update (`WHERE id = ? AND status = <from>`, exactly one row, which is also what settles
+two competing moves) and writes one history row in the same transaction; `draft → sent` then counts
+the lines with a locking read and rolls the claim back with 409 when there are none; `accepted` is
+refused with 409 once `valid_until` lies in the past in the server's local zone. Accepting a quote
+does not change its deal.
+
+### Quote Line
+
+`quote_lines` — one priced row of a quote. The line copies the product's name and price when it is
+added, so a later change to the catalogue never alters an existing quote; both copies may be
+overridden in the request and edited while the quote is a draft. Lines are hard-deleted (no
+`deleted_at`).
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| quote_id | uint | Yes | FK to quotes, indexed | The quote |
+| product_id | uint | Yes | FK to products, indexed; a soft-deleted product still resolves | The product it was priced from |
+| position | int64 | Yes | 1-based, assigned max+1 on insert | Display order |
+| description | string | Yes | max 255 | Copied from `products.name` unless overridden; reset to `products.name` by an erasure that reaches the quote |
+| quantity_milli | bigint (`models.QuoteQuantity`) | Yes | thousandths of a unit, 1 to 10^9 (0.001 to 1,000,000); column `NOT NULL DEFAULT 0` | JSON key `quantity`, a decimal number without trailing zeros (`1.5`, `2`, `0.001`). Replaces the whole-unit `quantity` column (#343); the default exists only so SQLite can add the column to a populated table and is never written by the service |
+| unit_price_cents | int64 | Yes | 0 to 10^12, and round_half_up(quantity × unit_price_cents) at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
+| discount_bp | int64 | Yes | 0 to 10000 | Per-line percentage in basis points (12.5 % = 1250) |
+| line_total_cents | int64 | Yes | - | round_half_up(quantity × unit_price_cents × (10000 − discount_bp) / 10000), rounded once from the exact product (128-bit integer arithmetic, no floating point); for whole quantities the same as `(gross × (10000 − discount_bp) + 5000) / 10000` |
+| tax_rate_bp | int64 | Yes | 0 to 10000, column `DEFAULT 0`; writable only while the quote is a draft | Per-line tax rate in basis points (21 % = 2100); 0 when not sent (#324) |
+| tax_cents | int64 | Yes | column `DEFAULT 0`; computed, read-only | `(line_total_cents × tax_rate_bp + 5000) / 10000`: round half up on minor units (#324) |
+
+A quote holds at most 100 lines. The line amounts are computed by `models.ComputeQuoteLineAmounts`
+in 128-bit integer arithmetic, so thousandths × price × a discount factor never overflow, and a line
+whose rounded gross exceeds 10^12 is refused. The 10^12 cap of a quote
+is on its gross total (`gross_total_cents`), not on the net total; a write that would take it over
+is refused and rolled back whole.
+
+**Tax (#324).** Tax is rounded per line, then summed: `quotes.tax_cents` is Σ of the stored line
+`tax_cents`, so it can differ by a few cents from tax computed once on a per-rate total (two lines of
+0.01 at 50 % give 0.02, not 0.01). There are no tax categories, reverse charge or per-country rules,
+and `subtotal_cents` and `discount_cents` stay net. The four tax columns are `NOT NULL DEFAULT 0`, a
+deliberate exception to the no-default rule of the other totals: SQLite cannot add a `NOT NULL`
+column without a default to a populated table, and the default is the zero value itself, so an
+explicit 0 still persists. MySQL/MariaDB get them from `migrations/20261117120000_add_quote_tax.up.sql`
+(each column only when missing, then one `UPDATE` setting `gross_total_cents = total_cents +
+tax_cents` where it differs); SQLite from `models.MigrateDatabase`, whose `backfillQuoteGrossTotals`
+step does the same backfill on every driver, soft-deleted quotes included, by primary key in chunks
+of 500 and only for the rows that differ, without touching `updated_at`. Existing lines read a rate
+and a tax of 0, existing quotes a tax of 0 and a gross total equal to their total.
+
+**Fractional quantities (#343).** `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`)
+replaces the whole-unit `quantity bigint NOT NULL`. MySQL/MariaDB get it from
+`migrations/20261118120000_store_quote_line_quantity_milli.*.sql`: the column is added when missing,
+`quantity_milli = quantity × 1000` is copied where it is still 0 while `quantity` exists, and
+`quantity` is dropped when present, every step guarded by an `INFORMATION_SCHEMA` probe. The down
+half re-adds `quantity bigint NOT NULL` (no default), sets it to `GREATEST(1, (quantity_milli + 500)
+DIV 1000)` (half up to whole units, at least 1; the stored totals are not recomputed) and drops
+`quantity_milli`. `models.MigrateDatabase` performs the same conversion on every driver, which is
+the only path on SQLite: AutoMigrate adds `quantity_milli`, then `migrateLegacyQuoteLineQuantity`
+(only while `quantity` exists) finds the rows still at 0 with a plain `SELECT`, converts them by
+primary key in chunks of 500 without touching `updated_at`, and drops the legacy column with the
+native `ALTER TABLE quote_lines DROP COLUMN quantity`. GORM's `Migrator().DropColumn` is not used:
+on SQLite it rebuilds the table (losing `idx_quote_lines_quote_id` and `idx_quote_lines_product_id`)
+or panics when given a table name. A migrated database takes no write and no DDL on startup. Whole
+quantities keep their line and quote totals; nothing is recomputed. Stop every replica before
+upgrading: an older binary cannot write lines once `quantity` is gone, and an older binary started
+after the upgrade re-adds `quantity` empty, so roll back only after the down migration (MySQL/MariaDB)
+or by restoring the pre-upgrade backup (SQLite).
+
+### Quote Status Change
+
+`quote_status_changes` is append-only, the `deal_stage_changes` pattern: one row per status the
+quote entered, the create included (`from_status` null), written in the same transaction as the
+change, never updated, kept when the quote is soft-deleted. There is no foreign key to `quotes`;
+`changed_by_id` has one to `users` (`fk_quote_status_changes_changed_by`) and is NULL on a row
+the client wrote through the response link (#400), which `source` names.
+Its id is also the marker the email stamp compares against: `last_emailed_at` is set only when no
+row of the quote with `to_status = 'draft'` and an id above the one read before the send exists.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| quote_id | uint | Yes | indexed, no FK | The quote |
+| from_status | string | No | null on the creating row | Status left |
+| to_status | string | Yes | a status value | Status entered |
+| changed_by_id | uint | No | FK to users | The user who made the change; NULL on a client answer (#400). A client answer recorded before #400 holds the owner of the quote |
+| source | string | Yes | `varchar(20)`, default `staff` | `staff` (a signed-in user) or `client` (the client's answer through the response link) |
+| changed_at | datetime | Yes | UTC | When |
+
+### Quote Response Token
+
+`quote_response_tokens` (#382) holds the single-use tokens behind the client response link of a
+quote email. Only the HMAC-SHA256 hash of a token is stored (keyed by `API_KEY_SECRET`, else
+`JWT_SECRET`); the plain value exists in the mailed link alone. There is no foreign key and no
+`deleted_at`, and a row holds a hash, the quote id, timestamps and the decision, so no personal
+data: erasure keeps the rows. It stamps `used_at` on the unused rows of the quotes whose
+`customer_id` is an erased customer (#395), so a link mailed before the erasure is refused; rows
+the client spent and the rows of other customers' quotes are unchanged. A row is usable while `used_at` is NULL, `expires_at`
+is NULL or in the future, its quote is live and `sent`, and the quote's customer is live. The
+read carries all of these in one statement; the claim carries all but the customer one, which the
+answer checks under the quote lock before the claim. A successfully sent email stamps the unused
+rows older than its own, so after it the quote has one usable row, the one of that email; a
+failed send stamps nothing, so the row of the previous successful email stays usable next to the
+undelivered one until the next successful send.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)` | |
+| quote_id | uint | Yes | | `idx_quote_response_tokens_quote_id`, no FK | The quote the link answers |
+| token_hash | string | Yes | | `varchar(255)`; `idx_quote_response_tokens_token_hash` (unique) | hex(HMAC-SHA256(token)); `json:"-"` |
+| expires_at | datetime | No | NULL | `datetime(3)`, UTC | Start of the day after the quote's `valid_until` in the server's local zone; NULL when the quote has no `valid_until` |
+| used_at | datetime | No | NULL | `datetime(3)`, UTC | Set when the client answers, and when a later email of the quote is sent successfully (rows older than its own), a staff status change away from sent or the erasure of the quote's customer (#395) invalidates the row |
+| decision | string | No | NULL | `varchar(20)` | `accept` or `decline` on a row the client spent; NULL on an unused or invalidated row |
+
+A client answer claims the row, moves the quote `sent → accepted | rejected` and writes one
+`quote_status_changes` row (no user, `source` `client`) in one transaction; this row, with
+`used_at` and `decision`, records which link was spent. MySQL and MariaDB get the table from
+`20261121120000_add_quote_response_tokens` (created only when missing; the down drops it);
+SQLite from `MigrateDatabase`. `20261122120000_quote_history_source` (#400) adds
+`quote_status_changes.source` and makes `changed_by_id` nullable, without a backfill; its down
+gives the rows without a user the `owner_id` of their quote, restores NOT NULL and drops
+`source`. On SQLite the AutoMigrate step of `MigrateDatabase` rebuilds the table, keeping the
+rows, the index and the foreign key.
+
+## Follow-up Automation
+
+Six tables added by issue #164: the rules an admin defines, their ordered steps, the outbox
+events a lead, deal or ticket (#242) write records in its own transaction, the persisted runs the worker
+executes with their per-step log, and the in-app notifications a `notify` step creates. None of
+them stores personal data: events and run logs carry ids, types, statuses, outcomes and error
+codes; the only free text is what an admin typed into a rule and the rendered title and body of
+a notification addressed to a staff user (deleted with the lead it refers to and with its
+recipient).
+
+```mermaid
+erDiagram
+    users ||--o{ automation_rules : "created_by_id"
+    automation_rules ||--o{ automation_steps : "rule_id"
+    automation_rules ||--o{ automation_runs : "rule_id"
+    automation_runs ||--o{ automation_run_steps : "run_id"
+    automation_events o|--o{ automation_runs : "event_id (no FK)"
+    users ||--o{ notifications : "user_id"
+    automation_runs o|--o{ notifications : "run_id (no FK)"
+    leads o|--o{ automation_events : "entity_type = lead, entity_id (no FK)"
+    deals o|--o{ automation_events : "entity_type = deal, entity_id (no FK)"
+    leads o|--o{ automation_runs : "entity_type = lead, entity_id (no FK)"
+    deals o|--o{ automation_runs : "entity_type = deal, entity_id (no FK)"
+    tickets o|--o{ automation_events : "entity_type = ticket, entity_id (no FK)"
+    tickets o|--o{ automation_runs : "entity_type = ticket, entity_id (no FK)"
+```
+
+The ticket entity (#242) needs no schema change: `entity_type` is a plain `varchar(20)` in every
+table (no ENUM or CHECK, `migrations/20261028120000_add_follow_up_automation.up.sql`), and
+`filters.ticket_status` lives inside the rule's `trigger_config` JSON.
+
+### Automation Rule
+
+`automation_rules` — one rule with its trigger. Soft-deleted; a deleted rule's runs and logs stay.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 200, trimmed | Display name |
+| description | text | No | - | max 65535 bytes | Free text |
+| entity_type | string | Yes | - | `lead`, `deal` or `ticket`, max 20 | What the rule runs on |
+| trigger_type | string | Yes | - | `lead_created`, `lead_updated`, `lead_status_changed`, `lead_form_submitted` (lead rules only), `deal_created`, `deal_updated`, `deal_stage_changed` (deal rules only), `ticket_created`, `ticket_updated`, `ticket_status_changed` (ticket rules only) or `schedule`, max 40 | When a run starts |
+| trigger_config | text (JSON) | No | - | decoded as `trigger` | `from`/`to` for a status, stage or ticket status change (empty = any); `form_id` for `lead_form_submitted` (0 or absent = every form); `hour_utc` 0–23, `filters {status|stage|ticket_status}` (lead status, deal stage, ticket status; each only on its own entity) and `stale_days` for a schedule |
+| enabled | boolean | Yes | false | - | Disabled rules start no run |
+| version | int | Yes | 1 | incremented by every update | Every run records the version it started from |
+| schedule_pass_on | string | No | - | `YYYY-MM-DD` | UTC day of the schedule pass in progress |
+| schedule_cursor | uint | Yes | 0 | - | Last record id handed out in that pass |
+| schedule_completed_on | string | No | - | `YYYY-MM-DD` | UTC day whose pass finished (a batch shorter than 500 sets it) |
+| created_by_id | uint | No | - | FK to users | The admin who created the rule |
+
+The three `schedule_*` columns are the persisted cursor of the schedule trigger: each tick inserts
+one run per record above the cursor (at most 500, id order) and advances the cursor with a
+conditional update on `(schedule_pass_on, schedule_cursor)`, so a racing worker commits nothing.
+
+### Automation Step
+
+`automation_steps` — the ordered steps of a rule, numbered 1..n and replaced wholesale by every
+rule update (hard-deleted, no `deleted_at`).
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| rule_id | uint | Yes | FK to automation_rules, indexed | The rule |
+| position | int | Yes | 1-based | Execution order |
+| step_type | string | Yes | `wait`, `condition`, `create_task`, `assign_owner`, `send_email`, `notify`, max 20 | |
+| config | text (JSON) | No | decoded as `config`; validated per type | `duration_minutes`; `field`, `operator`, `value`, `currency`, `else` (stop|jump), `else_position` (forward only); `recipient` (owner|user), `user_id`; `title`, `description`, `priority`, `due_in_days`; `subject`, `body` |
+
+Limits checked when a rule is saved: at most 20 steps, at most 90 days of waits in total, a
+forward `else_position` within the rule, allowlisted condition fields and operators with a value
+of the matching JSON type, known `{{placeholders}}` only, and every named user a live, active
+staff account. A lead rule on `lead_form_submitted` may also compare the string fields
+`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host`, read
+from the submission the triggering event names (empty when it names none, belongs to another lead,
+or in a dry run); on any other rule they are refused (`not_applicable`). A ticket rule (#242)
+compares `status` and `priority` (strings) and `owner_id` (the assignee) and `customer_id`
+(numbers); the title, description, resolution and the customer's fields are never comparable. Its
+`assign_owner` user must also hold `assignment.ticket_assignee`, as a ticket assignee must
+(`isTicketAssignee` (`internal/service/automation_validation.go`),
+`permissions.AssignmentTicketAssignee` (`internal/permissions/catalogue.go`)).
+
+The placeholders an email subject or body and a notification title or body may use are scoped
+to the rule's entity type. A lead rule knows `lead.id`, `lead.first_name`, `lead.last_name`,
+`lead.email`, `lead.phone`, `lead.company`, `lead.status` and `lead.source`; a deal rule knows
+`deal.id`, `deal.title`, `deal.stage`, `deal.amount` (formatted with its currency),
+`deal.currency` and `deal.source`; a ticket rule knows `ticket.id`, `ticket.number`
+(`T-000042`), `ticket.status` and `ticket.priority`, never the title, description, resolution or a
+customer field; all three know `owner.first_name`, `owner.last_name` and `owner.email` of the
+record's owner at execution time (a ticket's owner is its assignee). Anything else, including a `lead.*`
+placeholder in a deal rule, is an unknown placeholder and the rule is refused. A mail is not
+stored, and a notification is hard-deleted with the lead it refers to, with its recipient, and,
+for a deal rule, when the deal's customer or lead is erased (#245), so neither rendering outlives
+the person.
+
+A task title or description is narrower: `lead.id`, `lead.status` and `lead.source` for a lead
+rule, the six `deal.*` placeholders for a deal rule, the four `ticket.*` placeholders for a ticket
+rule, and nothing of the owner. A ticket run's task is linked to the ticket's customer (tasks have
+no ticket link). A task is a
+business record that is kept when its lead is erased (the link resolves, the person does not), so
+the name, email, phone and company placeholders are refused in it when the rule is validated, and
+the task renderer blanks them even in a rule stored before the allowlist was narrowed.
+`deal.title` stays allowed in a task although it is staff-typed and may name the client: the
+erasure redacts the deal's own title (#245), but a task rendered from it before the erasure keeps
+that copy, an accepted and documented limitation. The rendered text goes into the task, the mail or the notification, never into a log line.
+
+### Automation Event
+
+`automation_events` — the outbox row of one committed lead, deal or ticket write. No foreign
+keys: the row outlives nothing and refers to the record by type and id.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| entity_type | string | Yes | `lead`, `deal` or `ticket`; composite index with entity_id | |
+| entity_id | uint | Yes | - | The record |
+| event_type | string | Yes | one of the event trigger types, max 40 | |
+| from_value | string | No | max 50 | Previous status or stage of a `*_status_changed` / `*_stage_changed` event (a ticket's, read under the ticket's row lock) |
+| to_value | string | No | max 50 | New status or stage (`deal_created` carries the stage, `ticket_created` the stored status) |
+| origin | string | Yes | `user`, `form`, `bulk`, `conversion` or `automation`, max 20 | `automation` events are claimed and start no run (loop guard) |
+| actor_id | uint | No | - | The acting user, when known (the caller of a bulk status batch; null on single lead and ticket create/update) |
+| form_id | uint | No | no index, no FK | `lead_form_submitted` only (#220): the form of the finalised submission; null on every other event |
+| submission_id | uint | No | no index, no FK | `lead_form_submitted` only: the submission, whose attribution a condition reads; null otherwise |
+| created_at | datetime | Yes | UTC | |
+| processed_at | datetime | No | indexed | Set by the dispatcher's conditional claim (`WHERE processed_at IS NULL`) |
+
+### Automation Run
+
+`automation_runs` — one execution of a rule against one record.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| rule_id | uint | Yes | - | FK to automation_rules, indexed | |
+| rule_version | int | Yes | - | - | The rule version the run started from; a changed rule cancels its runs |
+| entity_type | string | Yes | - | `lead`, `deal` or `ticket`; composite index with entity_id | |
+| entity_id | uint | Yes | - | - | The record |
+| event_id | uint | No | - | no FK | The event that started it (empty for schedule runs) |
+| dedupe_key | string | Yes | - | unique, max 100 | `evt:<event_id>:rule:<rule_id>` or `sch:<rule_id>:<YYYY-MM-DD>:<entity_id>`; inserted with `ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE id=id` |
+| status | string | Yes | `pending` | `pending`, `running`, `waiting`, `completed`, `failed`, `cancelled`; indexed | |
+| next_position | int | Yes | 1 | - | The step to execute next; every advance is `WHERE status = 'running' AND next_position = ?` |
+| attempts | int | Yes | 0 | - | Failed step attempts; the third failure fails the run with `step_failed` |
+| resume_at | datetime | No | - | indexed, UTC | When a waiting run becomes claimable |
+| claimed_at | datetime | No | - | - | When the executor claimed it; serialised, not a lease |
+| owner_instance | string | No | NULL | `varchar(64)`; not serialised | Instance id of the engine holding the claim (#237, see [Automation Run Leases](#automation-run-leases)) |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL, UTC; not serialised | The lease stamp, renewed every 30 s by the owner (#237) |
+| finished_at | datetime | No | - | - | Set on completed, failed and cancelled |
+| cancel_reason | string | No | - | `rule_changed`, `rule_disabled`, `rule_deleted`, `manual`, `record_deleted`, max 30 | `record_deleted`: the lead was erased or the ticket deleted (in that transaction), or the record was gone at the run's next step |
+| error_code | string | No | - | `email_unconfirmed`, `step_failed`, max 40 | |
+
+### Automation Run Step
+
+`automation_run_steps` — the log row of one executed step; `(run_id, position)` is unique, which
+is what keeps a second executor from recording a second `sending` row for an email step.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| run_id | uint | Yes | FK to automation_runs; unique with position | |
+| position | int | Yes | - | The step's position in the rule |
+| step_type | string | Yes | max 20 | |
+| outcome | string | Yes | `succeeded`, `skipped`, `failed`, `sending`, `waiting`, max 20 | |
+| error_code | string | No | `recipient_unavailable`, `mail_failed`, `email_unconfirmed`, max 40 | |
+| detail | text (JSON) | No | decoded as `details`; ids and statuses only | `task_id`, `notification_id`, `assignee_id`, `recipient_id`, `from_owner_id`, `to_owner_id`, `lead_id`, `customer_id`, `deal_id`, `due_date`, `resume_at`, `result`, `branch`, `next_position` |
+| executed_at | datetime | Yes | UTC | |
+
+### Notification
+
+`notifications` — an in-app message addressed to one staff user, created by a `notify` step.
+Hard-deleted with the lead it refers to, with the ticket it refers to (in the ticket delete's
+transaction, #242) and with its recipient.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| user_id | uint | Yes | FK to users, indexed | The recipient |
+| title | string | Yes | max 255 | Rendered from the step's title |
+| body | text | No | - | Rendered from the step's body |
+| entity_type | string | Yes | `lead`, `deal` or `ticket`; composite index with entity_id | The record the run acted on |
+| entity_id | uint | Yes | - | |
+| run_id | uint | No | no FK | The run that created it |
+| read_at | datetime | No | - | Set by `POST /notifications/{id}/read` and `read-all` |
+
+## Form Model
+
+Embeddable lead-capture forms (`models.Form`), their submissions (`models.FormSubmission`) and
+the double opt-in tokens (`models.FormConfirmationToken`), all in `internal/models/form.go`.
+MySQL/MariaDB get the three tables from `20261001120000_v1_2_0_schema_parity`, SQLite from
+`MigrateDatabase`. List-shaped attributes are stored as JSON text in a column and decoded on read.
+Later columns are described in their own sections and not repeated here: the ticket intake column
+of `forms` and the ticket columns of `form_submissions` in [Form Ticket Intake](#form-ticket-intake),
+the attribution columns of `form_submissions` in
+[Form Submission Attribution](#form-submission-attribution), and the mail outcome rows in
+[Form Mail Delivery](#form-mail-delivery).
+
+### forms
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id, created_at, updated_at, deleted_at | Base model | | | `idx_forms_deleted_at` |
+| name | varchar(255) | No | - | Trimmed; the source of the leads the form creates (cut to 100 characters) |
+| description | text | Yes | NULL | Staff-only; never on the public endpoints |
+| public_id | varchar(32) | No | - | Unique index `idx_forms_public_id`; 22 random URL-safe characters assigned at creation and never changed, the only identifier in public URLs |
+| status | varchar(20) | No | 'draft' | `draft`, `published`, `archived`; only a published form is served publicly |
+| fields | text | Yes | NULL | JSON array of 1 to 50 field definitions, exactly one of type `email` |
+| submit_action | varchar(20) | No | 'message' | `message` or `redirect` |
+| thank_you_message | text | Yes | NULL | |
+| redirect_url | varchar(512) | Yes | NULL | Required for `redirect`, http(s) |
+| consent_text | text | Yes | NULL | When set, a submission must carry consent |
+| notify_emails | text | Yes | NULL | JSON array of at most 20 staff addresses |
+| double_opt_in | tinyint(1) | No | 0 | Submissions wait as `pending` for a 48-hour confirmation link |
+| confirmation_subject | varchar(255) | Yes | NULL | |
+| confirmation_body | text | Yes | NULL | |
+| follow_up_subject | varchar(255) | Yes | NULL | Empty means no follow-up mail |
+| follow_up_body | text | Yes | NULL | |
+| content_url | varchar(512) | Yes | NULL | Inserted for `{content_link}` |
+| captcha_enabled | tinyint(1) | No | 0 | Effective only when the server has both reCAPTCHA keys |
+| create_lead | tinyint(1) | No | none | No column default on purpose (an explicit false must survive an insert); the API defaults it |
+| default_owner_id | bigint unsigned | Yes | NULL | Index `idx_forms_default_owner_id`; no FK. Required when `create_lead` is true; a non-zero value must name an active account holding `assignment.form_owner` (`formService.checkLeadOwner` (`internal/service/form_admin.go`)) |
+| allowed_domains | text | Yes | NULL | JSON array of at most 20 origin hosts; empty allows every origin |
+| created_by_id | bigint unsigned | Yes | NULL | Index `idx_forms_created_by_id`; no FK |
+
+A form delete is a soft delete (`formRepository.Delete` (`internal/repository/form_repository.go`))
+and leaves its submissions in place.
+
+### form_submissions
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id, created_at, updated_at, deleted_at | Base model | | | `idx_form_submissions_deleted_at` |
+| form_id | bigint unsigned | No | - | Index `idx_form_submissions_form_id`; no FK |
+| data | mediumtext | Yes | NULL | JSON object of the submitted values by field name; emptied when the linked lead is erased |
+| email | varchar(255) | Yes | NULL | Index `idx_form_submissions_email`; the submitted address, lower-cased |
+| status | varchar(20) | No | - | Index `idx_form_submissions_status`; `received`, `pending`, `confirmed` or `spam` |
+| spam_reason | varchar(100) | Yes | NULL | `honeypot`, `time_trap`, `captcha`, `domain`; empty otherwise |
+| lead_id | bigint unsigned | Yes | NULL | Index `idx_form_submissions_lead_id`; no FK. The lead the submission created or added a note to |
+| ip_address | varchar(45) | Yes | NULL | Client IP through the trusted proxies; emptied at lead erasure |
+| user_agent | varchar(255) | Yes | NULL | Emptied at lead erasure |
+| referrer | varchar(512) | Yes | NULL | The page URL the embed reported; emptied at lead erasure |
+| confirmed_at | datetime(3) | Yes | NULL | When the double opt-in link was confirmed |
+
+`deliveries` is read from `form_mail_deliveries` and is not a column. The retention purge
+(`FORM_RETENTION_DAYS`, off by default) hard-deletes old spam and never-confirmed pending rows
+without a lead, together with their tokens and mail delivery rows
+(`formRepository.PurgeSubmissionChunk`).
+
+### form_confirmation_tokens
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id, created_at, updated_at, deleted_at | Base model | | | `idx_form_confirmation_tokens_deleted_at` |
+| submission_id | bigint unsigned | No | - | Index `idx_form_confirmation_tokens_submission_id`; no FK |
+| token_hash | varchar(64) | No | - | HMAC-SHA256 hash of the opaque token; unique index `idx_form_confirmation_tokens_token_hash`; `json:"-"`. The raw token exists only in the mailed link |
+| expires_at | datetime(3) | No | - | 48 hours after the submission (`formConfirmationTTL` (`internal/service/form_service.go`)) |
+| used_at | datetime(3) | Yes | NULL | Set when the confirmation spends the token; single use |
+
+Tokens are hard-deleted by the retention purge with their submission and by the lead and
+unlinked-submission erasure scrubs (`scrubLeadFormSubmissions`
+(`internal/repository/erasure_cascade.go`)).
+
+## Form Mail Delivery
+
+`form_mail_deliveries` (#216) — the outcome of one form mail: the double-opt-in confirmation, the
+follow-up or one notification per `notify_emails` address. Written `pending` in the submission or
+confirmation transaction, claimed (`sending`) and stamped after the commit. No foreign keys: the
+rows are hard-deleted with their submission by the retention purge and by lead erasure. They hold no
+address and no message content. `stuck` and `retryable` are computed on read, not stored.
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| submission_id | uint | Yes | indexed | The submission the mail belongs to |
+| form_id | uint | Yes | indexed | |
+| kind | string | Yes | `confirmation`, `follow_up`, `notification`, max 20 | |
+| status | string | Yes | `pending`, `sending`, `sent`, `failed`, `log_only`, `skipped`, max 20, indexed | `sent` means accepted by the relay |
+| error_code | string | No | `mail_failed`, `timeout`, `invalid_recipient`, `no_mailer`, `no_recipient`, max 50 | |
+| recipient_hash | string | No | HMAC-SHA256 hex, max 64; never serialised | A notification's recipient, so a retry can find it in the current `notify_emails` |
+| attempts | int | Yes | default 0 | Claims: the first send and every retry |
+| last_attempt_at | datetime | No | UTC | |
+| sent_at | datetime | No | UTC; set for `sent` only | |
+
+## Form Submission Attribution
+
+`form_submissions` carries the attribution of each finalised enquiry (#220), kept apart from
+`leads.source`, which keeps the form name the lead was created with. The six columns are set when
+a received submission is stored or a double opt-in submission is confirmed; spam and pending rows,
+and rows stored before this change, hold empty strings. They are serialised on every submission
+read as strings, `""` when absent. Lead erasure empties them on every linked row, live and
+soft-deleted.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| utm_source | string | Yes | `''` | max 100 runes, lower-cased, no control characters | A non-blank submitted `utm_source` field, else the first `utm_source` query value of an absolute http(s) `page_url` |
+| utm_medium | string | Yes | `''` | as utm_source | Same rule for `utm_medium` |
+| utm_campaign | string | Yes | `''` | as utm_source | Same rule for `utm_campaign` |
+| utm_term | string | Yes | `''` | as utm_source | Same rule for `utm_term` |
+| utm_content | string | Yes | `''` | as utm_source | Same rule for `utm_content` |
+| referrer_host | string | Yes | `''` | max 255, lower-cased | Host of an absolute http(s) `page_url`, without port, credentials, path or query |
+
+No index: rules read the attribution of one submission by primary key. Migration
+`20261107120000_add_form_attribution` adds the columns on MySQL/MariaDB (with the two
+`automation_events` ids); `MigrateDatabase` adds them on SQLite.
+
+## Form Ticket Intake
+
+A form can open a support ticket instead of feeding a lead (#213). `forms.create_ticket` turns it
+on; a confirmed submission then opens one ticket for the live customer whose email matches the
+confirmed address (see [../development/form-background-work.md](../development/form-background-work.md#form-ticket-intake-213)).
+
+```mermaid
+erDiagram
+    forms ||--o{ form_submissions : "form_id"
+    forms ||--o{ form_ticket_keys : "form_id (no FK)"
+    form_submissions ||--o| form_ticket_keys : "submission_id (no FK)"
+    tickets ||--o{ form_ticket_keys : "ticket_id (no FK)"
+    tickets ||--o{ form_submissions : "ticket_id (no FK)"
+    customers ||--o{ tickets : "customer_id"
+    customers ||--o{ form_ticket_keys : "customer_id (no FK)"
+```
+
+### Form columns
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| create_ticket | boolean | Yes | false | `tinyint(1) NOT NULL DEFAULT 0` on MySQL/MariaDB; requires `double_opt_in` true and `create_lead` false | A confirmed submission opens a ticket for the matching customer. Absent on `POST /forms` and `PUT /forms/{id}` means false; forms stored before the change read false |
+| ticket_title_field | string | Yes | `''` | `varchar(50) NOT NULL DEFAULT ''`; trimmed; non-empty only with `create_ticket`, and then exactly the name of a text or select field of the form | The field whose submitted value titles the ticket `<form name>: <value>` (#804); `''` keeps `Form: <form name>`. Absent on `PUT /forms/{id}` clears it; forms stored before the change read `''`. MySQL/MariaDB get it from `20261129120009_add_form_ticket_title_field` |
+
+### Form submission columns
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| idempotency_key | string | Yes | `''` | `varchar(128)`; `[A-Za-z0-9._:-]` | The client key sent with the submission, stored on the pending rows of `create_ticket` forms only; `''` when none was sent, for spam and for other forms. Set to `''` by the lead and unlinked-submission erasure scrubs |
+| ticket_id | uint | No | NULL | non-unique index `idx_form_submissions_ticket_id`; no foreign key | The ticket the submission created (`created`) or duplicated (`duplicate`); null otherwise |
+| ticket_outcome | string | Yes | `''` | `varchar(20)`; one of `''`, `created`, `duplicate`, `key_conflict`, `no_customer`, `unavailable` | Set in the confirmation transaction: `''` for a non-ticket form or an unconfirmed submission; `key_conflict` when the key already opened a ticket for another customer; `no_customer` when no live customer has the address; `unavailable` when the server runs without ticket intake |
+
+All three are serialised on every submission read (`ticket_id` as `null` when unset).
+
+### Form Ticket Keys
+
+`form_ticket_keys` records that an idempotency key of a form opened one ticket. No `deleted_at` and
+no foreign keys; the links below are logical. It holds ids and the key only.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | timestamp | - | now | `datetime(3)` on MySQL | Written once |
+| form_id | uint | Yes | - | first column of the unique `idx_form_ticket_keys_identity` | The form the key is scoped to |
+| idempotency_key | string | Yes | - | `varchar(128)`; second column of `idx_form_ticket_keys_identity`; `utf8mb4_bin` on MySQL/MariaDB, `BINARY` on SQLite | The client key, or `submission-<submission id>` for a keyless submission. Compared exactly (case-sensitive) |
+| ticket_id | uint | Yes | - | index `idx_form_ticket_keys_ticket_id` | The ticket the key opened (`tickets.id`) |
+| submission_id | uint | Yes | - | index `idx_form_ticket_keys_submission_id` | The submission whose confirmation opened it |
+| customer_id | uint | Yes | - | index `idx_form_ticket_keys_customer_id` | The customer the ticket was opened for: tells `duplicate` from `key_conflict`, and is the erasure purge key |
+
+`idx_form_ticket_keys_identity (form_id, idempotency_key)` is the table's only unique index, so a key
+opens at most one ticket per form. Rows are hard-deleted by `DELETE /tickets/{id}` (in the
+transaction that soft-deletes the ticket, so the key can be used again), by every erasure that
+reaches the customer (rows whose `customer_id` is the customer or whose `ticket_id` names one of its
+tickets, soft-deleted tickets included), and by the lead and unlinked-submission erasure scrubs (the
+rows of the scrubbed submissions). Keys do not expire otherwise. A ticket opened by a form carries
+the fixed description `Submitted through form <form id>, submission <submission id>.`, which holds
+no submitted value, and the title `Form: <form name>`, or `<form name>: <value>` with the submitted
+value of the form's `ticket_title_field` when it is set (#804); either title is cut to 255 runes. MySQL and MariaDB get the columns, the index and the
+table from `20261115120000_add_form_ticket_intake` (each only when missing); SQLite from
+`MigrateDatabase`, whose collation guard also converts a key column AutoMigrate created on
+MySQL/MariaDB to `utf8mb4_bin`.
+
+## Customer Model
+
+Represents confirmed customers in the system.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| first_name | string | Yes | - | max 100 | Customer's first name |
+| last_name | string | Yes | - | max 100 | Customer's last name |
+| email | string | Yes | - | unique, max 255 | Customer's email |
+| phone | string | No | - | max 50 | Phone number |
+| company | string | No | - | max 200 | Company name |
+| position | string | No | - | max 100 | Job position |
+| address | string | No | - | max 255 | Street address |
+| city | string | No | - | max 100 | City |
+| state | string | No | - | max 100 | State/Province |
+| country | string | No | - | max 100 | Country |
+| postal_code | string | No | - | max 20 | ZIP/Postal code |
+| notes | text | No | - | - | Additional notes |
+| user_id | uint | No | - | FK to users | The customer's own login (a `customer`-role account). Erasure treats the two as one person and erases them together; a staff account here is never followed (#108). Not the account manager, which is `assigned_to_id` |
+| company_id | uint | No | - | FK to companies | Linked company record (independent of the text `company`) |
+
+### Relationships
+- May have an associated User account
+- Has many Tickets
+- Has many external identity mappings (`customer_external_ids`, below); not embedded in its JSON
+
+### Customer External ID
+
+`customer_external_ids` (#212) — one integrator identity mapped to a customer. The triple is unique
+and compared exactly (case-sensitive): SQLite compares with `BINARY`, MySQL and MariaDB carry
+`utf8mb4_bin` on the three text columns (migration `20261111120000_add_customer_external_ids`, or
+the collation guard of `MigrateDatabase` on a schema the application alone created). No
+`deleted_at`: a mapping is hard-deleted by `DELETE /customers/{id}/external-ids/{mappingId}` and by
+every erasure of its customer.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Mapping id |
+| created_at, updated_at | timestamp | - | now | - | Set by the server; a mapping is never updated in place |
+| customer_id | uint | Yes | - | FK to customers; index `idx_customer_external_ids_customer_id` | The mapped customer |
+| source | string | Yes | - | `varchar(64)`, 1-64 characters | System that issued the identifier |
+| scope | string | Yes | `''` | `varchar(128)`, 0-128 characters | Namespace inside the source, for example a storefront site |
+| external_id | string | Yes | - | `varchar(255)`, 1-255 characters | The identifier |
+
+The table's only unique index is `idx_customer_external_ids_identity (source, scope, external_id)`.
+Every value must be valid UTF-8 without control characters or leading or trailing whitespace.
+
+## Ticket Model
+
+Represents customer support tickets.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 255 | Ticket title/subject |
+| description | text | Yes | - | - | Detailed description |
+| status | enum | Yes | 'open' | max 20 | Ticket status (see below) |
+| priority | enum | Yes | 'medium' | max 20 | Priority level (see below) |
+| customer_id | uint | Yes | - | FK to customers | Customer who created ticket |
+| assigned_to_id | uint | No | - | FK to users | Assigned support user |
+| resolution | text | No | - | - | Resolution notes |
+| due_at | datetime | No | NULL | `datetime(3)` on MySQL | When the ticket is due (UTC, millisecond precision); set by admin and support callers on create and update, cleared with `null` (#278) |
+| first_responded_at | datetime | No | NULL | `datetime(3)` on MySQL | `created_at` of the first non-internal comment by an admin or support user; written once by the server, never through a request body (#278) |
+
+`overdue` is not a column: every ticket answer computes it as `due_at` set, strictly before the
+time of the response in UTC, on an `open` or `in_progress` ticket. Neither new column is indexed,
+and tickets created before migration `20261108120000_add_ticket_sla_fields` read NULL for both.
+
+### Ticket Status Values
+- `open` - New/unassigned ticket
+- `in_progress` - Being worked on
+- `resolved` - Solution provided
+- `closed` - Ticket closed
+
+### Ticket Priority Values
+- `low` - Low priority
+- `medium` - Normal priority
+- `high` - High priority
+- `urgent` - Urgent/critical
+
+A ticket comment (`ticket_comments`) serialises one extra key that is not a column: `delivery`, the
+Ticket Mail Delivery below. It is set only on the 201 of `POST /tickets/{id}/comments` sent with
+`email_customer` true (#219); every other answer, every read included, has no `delivery` key.
+
+## Ticket Mail Delivery
+
+`ticket_mail_deliveries` (#219) — the outcome of emailing one staff ticket comment to the ticket's
+customer. Written `pending` in the transaction that inserts the comment, and stamped after the
+commit by a conditional update on `status = 'pending'`. It holds ids, a status, an error code and
+timestamps: no address, no subject, no title and no comment text. There is no `deleted_at` and no
+foreign key; the links below are logical.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | Delivery id |
+| created_at, updated_at | timestamp | - | now | `datetime(3)` on MySQL | Written in the comment transaction; `updated_at` is the time of the stamp |
+| ticket_id | uint | Yes | - | index `idx_ticket_mail_deliveries_ticket_id` | The comment's ticket (`tickets.id`, logical) |
+| comment_id | uint | Yes | - | unique index `idx_ticket_mail_deliveries_comment_id` | The emailed comment (`ticket_comments.id`, logical); at most one delivery per comment |
+| customer_id | uint | Yes | - | index `idx_ticket_mail_deliveries_customer_id` | The ticket's `customer_id` when the comment was written (an id, never an address) |
+| status | string | Yes | - | `pending`, `sent`, `failed`, `log_only`, `skipped`; `varchar(20)` | `sent` means accepted by the relay; `log_only` that the development mailer (no `SMTP_HOST`) only logged it; a row left `pending` means the outcome is unknown (never resent) |
+| error_code | string | Yes | `''` | `varchar(50)` | `failed`: `mail_failed`, `timeout`, `invalid_recipient`, `lookup_failed`; `skipped`: `no_mailer`, `no_recipient`, `customer_unavailable`; empty otherwise. Never transport text |
+| sent_at | datetime | No | NULL | `datetime(3)` on MySQL | Set only for `sent` |
+
+The rows are hard-deleted when their ticket is deleted (`DELETE /tickets/{id}`, in the transaction
+that soft-deletes it) and when the ticket's customer is erased (every row whose `customer_id` is the
+customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included). Erasing the
+comment's staff author keeps them. There is no retry. MySQL and MariaDB get the table from
+`20261113120000_add_ticket_mail_deliveries` (created only when missing); SQLite from
+`MigrateDatabase`.
+
+## Task Model
+
+Represents tasks and to-dos for users.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| title | string | Yes | - | max 255 | Task title |
+| description | text | No | - | - | Task details |
+| status | enum | Yes | 'pending' | max 20 | Task status (see below) |
+| priority | enum | Yes | 'medium' | max 20 | Priority level (see below) |
+| due_date | timestamp | No | - | - | Due date |
+| assigned_to_id | uint | Yes | - | FK to users | Assigned user |
+| lead_id | uint | No | - | FK to leads | Related lead |
+| customer_id | uint | No | - | FK to customers | Related customer |
+| deal_id | uint | No | - | FK to deals, indexed (`idx_tasks_deal_id`, `fk_tasks_deal`) | Related deal, independent of the lead or customer link |
+
+`deal_id` follows the deal rule (admin any deal, sales only the deals it owns, every other role
+none) when it is written and on every read: a caller who may not see the deal receives neither
+`deal_id` nor the `deal` summary (id, title, stage). Soft-deleting a deal keeps the id on its tasks:
+an admin then receives `deal_id` with no `deal`. Erasing the lead or customer of a linked deal leaves
+the link and the deal in place. Migration: `20261101120000_add_task_deal_link`; rows that existed
+before it stay NULL.
+
+### Task Status Values
+- `pending` - Not started
+- `in_progress` - Being worked on
+- `completed` - Finished
+- `cancelled` - Cancelled
+
+### Task Priority Values
+- `low` - Low priority
+- `medium` - Normal priority
+- `high` - High priority
+
+## Label Model
+
+`labels` (`models.Label`, `internal/models/label.go`) holds the coloured tags of tasks, and
+`task_labels` joins them to `tasks`. Labels hold no personal data, so erasure does not touch either
+table. MySQL/MariaDB get both from `20261001120000_v1_2_0_schema_parity`, SQLite from
+`MigrateDatabase`.
+
+### labels
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id, created_at, updated_at, deleted_at | Base model | | | `idx_labels_deleted_at`; a delete never sets `deleted_at` (see below) |
+| name | varchar(50) | No | - | Trimmed, 1 to 50 characters. Unique index `idx_labels_name`; the service also refuses a name another label holds in another letter case (`labelRepository.ExistsByNameInsensitive` (`internal/repository/label_repository.go`), 409), so MySQL and SQLite agree |
+| color | varchar(7) | No | - | `#RRGGBB`: a hash and six hex digits (`CreateLabelRequest` (`internal/handler/label_handler.go`)) |
+
+`task_count` is computed on read and is not a column.
+
+### task_labels
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| task_id | bigint unsigned | No | - | Primary key part 1; `fk_task_labels_task` → `tasks.id` ON DELETE CASCADE |
+| label_id | bigint unsigned | No | - | Primary key part 2; index `idx_task_labels_label_id`; `fk_task_labels_label` → `labels.id` ON DELETE CASCADE |
+
+A label delete is a hard delete: `labelRepository.Delete` removes the label's `task_labels` rows and
+then the label row (unscoped) in one transaction, so its name can be used again. A task's soft
+delete leaves its join rows in place.
+
+## OpenID Connect Sign-in
+
+Two tables back the OIDC sign-in (#435). Both are in AutoMigrate and in
+`migrations/20261123120000_add_oidc_sign_in.*.sql` (each created only when missing; the down drops the
+two tables and nothing else).
+
+### user_identities
+
+Links the exact `(iss, sub)` pair of an ID token to a user. No `deleted_at`, and erasure keeps the
+row linked to the erased user, so that person's next sign-in is refused instead of provisioning a
+new account. Holds the issuer URL and the opaque subject only. Written by the first OIDC sign-in of
+a person and, since #470, by a SCIM user create (the effective issuer, with `externalId` as the
+subject), so a later sign-in with that pair uses the SCIM-created account. An Entra ID first
+sign-in whose `tid` is the configured tenant and whose `oid` is the subject of such a `scim` row
+uses that account too and adds its own `(iss, sub)` row (#505).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | NULL | |
+| user_id | bigint unsigned | No | - | Index `idx_user_identities_user_id`; FK `fk_user_identities_user` to `users.id` (ON DELETE RESTRICT) |
+| issuer | varchar(512) | No | - | `utf8mb4_bin` on MySQL/MariaDB (guarded by `ensureUserIdentityCollation`); unique index `idx_user_identities_issuer_subject (issuer, subject)` |
+| subject | varchar(255) | No | - | `utf8mb4_bin`; compared exactly. A sub with leading or trailing whitespace is refused before any lookup, because the binary collation still pads trailing spaces |
+| source | varchar(8) | No | `oidc` | Who wrote the row (#505, `migrations/20261128120000_user_identity_source.*.sql`): `scim` for the `(issuer, externalId)` link of a SCIM create, `oidc` for a sign-in (rows from before #505 read `oidc`). An Entra ID first sign-in with an unknown `(iss, sub)` uses only a `scim` row, found by the token's `oid`. No index |
+
+### oidc_login_attempts
+
+One single-use row per started sign-in. No foreign key and no user data; rows created more than
+one day ago are pruned by the stale bulk operation sweep (at boot and every 15 minutes, #453).
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | Yes | NULL | |
+| state_hash | varchar(64) | No | - | hex(HMAC-SHA256(state)) keyed by `API_KEY_SECRET`, else `JWT_SECRET`; unique index `idx_oidc_login_attempts_state_hash`; `json:"-"` |
+| nonce | varchar(64) | No | - | The nonce the ID token must carry; emptied (`''`) when the row is used or found expired |
+| code_verifier | varchar(128) | No | - | The PKCE verifier; emptied (`''`) when the row is used or found expired |
+| issuer | varchar(2048) | No | - | The issuer the attempt was started against |
+| expires_at | datetime(3) | No | - | Ten minutes after the start |
+| used_at | datetime(3) | Yes | NULL | Set by the claim: a plain read by `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`) that spends the row |
+
+### auth_audit_log
+
+One pseudonymous row per sign-in outcome (#454): a successful password sign-in, a single sign-on
+callback, a successful refresh or a successful SCIM user create,
+replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`), or one
+such row per member a successful SCIM group patch added or removed (#506), or a password change,
+password reset request, password reset completion or logout that reached the service (#550, one
+row each, written after the service returns), or an API key creation, revocation or refused
+re-enable of a revoked key (#551, one row each, with the key's id in `api_key_id`, migration
+`20261129120006_auth_audit_log_api_key_id`); refused API keys (#466), refused password sign-ins,
+refused refreshes and refused SCIM authentications (#468, #553) are counted in one row per method,
+reason, `user_id`, client network and UTC minute (`attempts`, migration
+`20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
+foreign key, no soft delete; erasure does not touch it. Rows older than
+`AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
+every 15 minutes). Migration `20261124120000_add_auth_audit_log`. Never holds an email, a name, a
+subject, a token, a code, a state, a nonce, a password, a full IP address or a full user agent.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | No | - | Written in UTC; index `idx_auth_audit_log_created_at` (the prune) |
+| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key`, `scim` (#468), `password_change`, `reset_request`, `reset_confirm` or `logout` (#550), `api_key_create`, `api_key_revoke` or `api_key_enable` (#551) |
+| outcome | varchar(16) | No | - | `success` or `refused` |
+| reason | varchar(64) | No | - | Stable reason code of a refusal (see [../development/authorization.md](../development/authorization.md#sign-in-audit-log)); `''` on success |
+| user_id | bigint unsigned | Yes | NULL | The account, when the account row was found; index `idx_auth_audit_log_user_id`; no foreign key |
+| attempt_id | bigint unsigned | Yes | NULL | The `oidc_login_attempts` row a callback claimed |
+| api_key_id | bigint unsigned | Yes | NULL | The `api_keys` row an `api_key_create`, `api_key_revoke` or `api_key_enable` row concerns (#551); no index, no foreign key; never the key, its prefix, its hash or its name |
+| request_id | varchar(64) | No | - | `X-Request-ID` when it matches `^[A-Za-z0-9._:-]{1,64}$`, else `''` |
+| subject_ref | varchar(64) | Yes | NULL | hex(HMAC-SHA256) keyed by `API_KEY_SECRET`, else `JWT_SECRET`, of the issuer and subject of a single sign-on identity refused after the ID token verified; index `idx_auth_audit_log_subject_ref` |
+| claim_roles | text | Yes | NULL | JSON array of the `roles` values the role mapping used (at most 100 of 256 bytes) |
+| claim_groups | text | Yes | NULL | JSON array of the `groups` values, after a Microsoft Graph or userinfo resolution |
+| client_network | varchar(64) | No | - | `a.b.c.0/24` (IPv4) or the IPv6 `/48` prefix; `''` when unknown |
+| user_agent_family | varchar(64) | No | - | `<browser> on <OS>` from a fixed vocabulary; `''` without a user agent |
+| attempts | bigint unsigned | No | 1 | How many outcomes the row counts: 1, or for a refused `password`, `refresh`, `scim` or `api_key` row the refusals of its method, reason, account, network and minute (one upsert adds 1, #466, #553); the row keeps the first refusal's `request_id`, `user_agent_family` and `created_at` |
+| aggregate_key | varchar(191) | Yes | NULL | `<method>|<reason>|<user id or 0>|<client network>|<UTC minute>` on a row that counts refused `password`, `refresh`, `scim` or `api_key` outcomes, NULL on every other row; unique index `idx_auth_audit_log_aggregate_key` (NULLs never collide); internal, never returned or logged |
+
+### scim_tokens
+
+The bearer tokens an identity provider uses on `/scim/v2` (#468), one row per token. Only the
+HMAC-SHA256 of the token is stored, keyed like API keys (`API_KEY_SECRET`, else `JWT_SECRET`), in
+the `hmac$<hex>` form; the plaintext (`scim_` + 64 hex characters) is shown once, on creation. A
+token is revoked by stamping `revoked_at` and is never deleted. No foreign key (a token belongs to
+the installation, not to a user), no `updated_at`, no soft delete. Migration
+`20261126120000_add_scim_tokens`; on SQLite AutoMigrate creates the same table.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| name | varchar(100) | No | - | The label the administrator chose (trimmed, 1 to 100 characters) |
+| token_hash | varchar(128) | No | - | `utils.HashAPIKeyHMAC` of the token; unique index `idx_scim_tokens_token_hash`; never returned or logged |
+| created_at | datetime(3) | No | - | Written in UTC |
+| last_used_at | datetime(3) | Yes | NULL | The last successful SCIM authentication, best-effort |
+| revoked_at | datetime(3) | Yes | NULL | Set once by a conditional `UPDATE ... WHERE revoked_at IS NULL`; a second revoke keeps it |
+
+### scim_group_members
+
+The members of the SCIM Groups (#506), one row per group and user. A group is a distinct value of
+the single sign-on role mapping's `groups` entries; the row holds that value exactly and the
+member's id, no name or address. No `updated_at`, no soft delete, and erasure keeps the rows (an
+erased or customer member is simply not served). A row outlives a mapping edit: it is matched
+against the mapping again only by that user's next group patch. Written and read only by
+`PATCH /scim/v2/Groups/{id}` inside its governed transaction; the OIDC sign-in does not read it.
+Migration `20261129120000_add_scim_group_members`; on SQLite AutoMigrate creates the same table.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | Yes | NULL | |
+| group_value | varchar(256) | No | - | The mapping value; `utf8mb4_bin` on MySQL/MariaDB (guarded by `ensureSCIMGroupMemberCollation`), so `Sales` and `sales` are two groups. The mapping validation trims values, so the PAD SPACE of the collation cannot merge two real values. Unique index `idx_scim_group_members_group_user (group_value, user_id)` |
+| user_id | bigint unsigned | No | - | Index `idx_scim_group_members_user_id`; FK `fk_scim_group_members_user` to `users.id` (ON DELETE RESTRICT) |
+
+## APIKey Model
+
+Represents API keys for programmatic access.
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| name | string | Yes | - | max 100 | Descriptive name |
+| key_hash | string | Yes | - | unique, max 128 | Hashed API key (hidden); `hmac$` + 64 hex characters |
+| prefix | string | Yes | - | max 8 | Key prefix for identification |
+| user_id | uint | Yes | - | FK to users | Key owner |
+| last_used_at | timestamp | No | - | - | Last usage timestamp |
+| expires_at | timestamp | No | - | - | Expiration timestamp. Set at creation: one year ahead by default and at most one year ahead (#532). NULL only on older rows, which count as expiring one year after `created_at`; migration `20261129120003_api_key_lifetime` and the same startup step capped every existing key at one year from the upgrade |
+| is_active | boolean | Yes | true | - | Active status; false once revoked, and a revoked key cannot be switched on again |
+| revoked_at | timestamp | No | - | datetime(3) NULL | When the key was revoked; NULL while it is live and on keys revoked before #525 |
+
+## RefreshToken Model
+
+Represents one refresh token of a sign-in session (`refresh_tokens`). Only the hash of the opaque
+value is stored; a rotation revokes the presented row and inserts its successor.
+
+### Fields
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | NULL | |
+| deleted_at | datetime(3) | Yes | NULL | Soft delete; index `idx_refresh_tokens_deleted_at` |
+| user_id | bigint unsigned | No | - | The owner; index `idx_refresh_tokens_user_id`, FK to `users.id` |
+| token_hash | varchar(255) | No | - | HMAC-SHA256 hash of the opaque token (hidden); unique index `idx_refresh_tokens_token_hash` |
+| expires_at | datetime(3) | No | - | `REFRESH_TOKEN_EXPIRY_DAYS` (30) after issuance; for `sign_in_method` `oidc` at most `session_started_at + 24` hours (#548), and an `oidc` row is refused at rotation from that instant on (or without a start) whatever this column holds |
+| is_revoked | tinyint(1) | No | 0 | Set by rotation, logout, and a password change or reset; erasure deletes the rows |
+| family_id | varchar(64) | No | '' | Shared by every token of one rotation chain; index `idx_refresh_tokens_family_id`. A sign-in (password or single sign-on) and the token issued by a password change start a new family of 32 lowercase hex characters; a rotation copies it. A row that predates #546 holds its own `id` as a decimal string |
+| sign_in_method | varchar(16) | No | '' | `password` or `oidc`, copied by a rotation. A row that predates #546 holds `oidc` when its owner has any `user_identities` row and `password` otherwise |
+| session_started_at | datetime(3) | Yes | NULL | When the sign-in of the chain happened, copied by a rotation. A password change that renews an `oidc` session keeps its `sign_in_method` and this start (#548); one that renews a password session starts a new one. A row that predates #546 holds its `created_at` |
+| provider_session_hash | varchar(64) | No | '' | The identity provider's session a single sign-on chain started in (#634): HMAC-SHA256 (hex) of the issuer, a newline and the ID token's `sid` claim, keyed like `token_hash`; the raw `sid` is never stored. '' for password sessions, for a sign-in whose ID token had no `sid` and for rows that predate the column. Copied by a rotation and by the password change that renews an `oidc` session; front-channel sign-out (`GET /auth/oidc/frontchannel-logout`) finds the live rows by it. Index `idx_refresh_tokens_provider_session_hash` |
+
+The three session columns come from AutoMigrate on SQLite and from migration
+`20261129120004_refresh_token_session` on MySQL/MariaDB; the startup step
+`backfillRefreshTokenSessions` and the up half fill legacy rows the same way, without touching
+`updated_at`, and a second run changes nothing. `provider_session_hash` and its index come from
+AutoMigrate and from migration `20261129120008_refresh_token_provider_session`; legacy rows keep
+''.
+
+## Password Reset Token Model
+
+`password_reset_tokens` (`models.PasswordResetToken`, `internal/models/password_reset_token.go`)
+holds one row per requested password reset. MySQL/MariaDB get it from
+`20261001120000_v1_2_0_schema_parity`, SQLite from `MigrateDatabase`.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id, created_at, updated_at, deleted_at | Base model | | | `idx_password_reset_tokens_deleted_at` |
+| user_id | bigint unsigned | No | - | Index `idx_password_reset_tokens_user_id`; `fk_password_reset_tokens_user` → `users.id` |
+| token_hash | varchar(255) | No | - | HMAC-SHA256 hash of the opaque token, keyed like the refresh tokens; unique index `idx_password_reset_tokens_token_hash`; `json:"-"`. The raw token exists only in the mailed link |
+| expires_at | datetime(3) | No | - | One hour after the request (`resetTokenTTL` (`internal/service/auth_service.go`)) |
+| used_at | datetime(3) | Yes | NULL | Set when the token is spent; a token is single use and spendable only while this is NULL and `expires_at` is in the future |
+
+The rows are hard-deleted at the erasure of their user (`purgeCredentials`
+(`internal/repository/erasure.go`)). `passwordResetTokenRepository.DeleteExpired`
+(`internal/repository/password_reset_token_repository.go`) hard-deletes spent and expired rows, but
+nothing in the server calls it yet, so those rows otherwise stay.
+
+## Configuration Model
+
+Represents system configuration settings that control application behavior. Stored in the
+`configurations` table (`models.Configuration`, `internal/models/configuration.go`).
+
+### Fields
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| config_key | string | Yes | - | unique, max 255 | Configuration key identifier |
+| value | string | Yes | - | - | Configuration value (JSON string) |
+| type | enum | Yes | 'string' | max 20 | Value type (see below) |
+| category | string | Yes | - | max 50 | Configuration category |
+| description | string | Yes | - | max 500 | Human-readable description |
+| default_value | string | Yes | - | - | Default value for reset operations |
+| is_system | boolean | Yes | false | - | Whether it's a system configuration |
+| is_read_only | boolean | Yes | false | - | Whether value can be modified |
+| valid_values | string | No | - | - | JSON array of valid values |
+
+### Configuration Types
+- `string` - Text value
+- `boolean` - True/false value
+- `integer` - Numeric value
+- `array` - JSON array
+
+### Configuration Categories
+- `general` - General application settings
+- `ui` - User interface settings
+- `security` - Security-related settings
+- `leads` - Lead management settings
+- `customers` - Customer management settings
+- `deals` - Deals settings
+- `tickets` - Ticket system settings
+- `tasks` - Task management settings
+- `integration` - Third-party integrations
+
+### Key Configuration Settings
+- `general.company_name` - Company name. Served on `GET /configurations/ui`; for signed-in users a non-blank value is the product name in the navigation drawer and on the printable quote (`useProductName`, falling back to `VITE_APP_NAME`, then `GoCRM`). The sign-in and registration pages always show the build-time name. The password reset mail (subject and first body line), the quote mail subject and the ticket reply mail subject use a non-blank value read at send time, trimmed, when it is valid UTF-8, free of control characters and at most 100 runes, else `GopherCRM` (`service.ResolveMailProductName`, #292); the mails never write this row
+- `ui.theme.primary_color` - Primary theme color. Served on `GET /configurations/ui`; for signed-in users it sets the light theme's primary colour when it is a 3- or 6-digit hex, `rgb()`/`rgba()` or `hsl()`/`hsla()` value, otherwise the default `#1976d2` is kept (`gocrm-ui/src/theme/primaryColor.ts`, #291)
+- `leads.conversion.allowed_statuses` - Lead statuses that allow conversion (any of `new`, `contacted`, `qualified`, `unqualified`; enforced by the convert endpoint; also served on `GET /configurations/ui`)
+- `leads.conversion.require_notes` - Whether non-blank conversion notes are required (enforced; also on `GET /configurations/ui`)
+- `leads.conversion.auto_assign_owner` - Make the lead owner the customer's `assigned_to_id` on conversion (enforced; also on `GET /configurations/ui`)
+- `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
+- `quotes.pdf_available` - Not a stored row: a synthetic read-only boolean that `GET /configurations/ui` appends last (id 0, zero timestamps, category `ui`), `true` when the server can produce quote PDFs (`QUOTE_PDF_CHROME_PATH` names an executable browser and `APP_BASE_URL` is set), `false` otherwise; always present. The quote page shows its Download PDF button only when it is `true` (#384)
+
+`security.session_timeout_hours` and `tickets.auto_assign_support` were seeded by earlier releases and never read. They are retired (#224): startup deletes them on every driver (`models.RetiredConfigurationKeys`), and `migrations/20261031120000_retire_inert_configurations.up.sql` does the same on MySQL and MariaDB. Session length comes from `JWT_EXPIRY_HOURS` (access token) and `REFRESH_TOKEN_EXPIRY_DAYS`. A ticket created without `assigned_to_id` is assigned to the user who created it (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)); nothing distributes tickets among support users.
+
+## Bulk Operation Model
+
+`bulk_operations` — the history row of one bulk status update (`POST /leads|tickets|tasks/bulk/status`).
+It holds ids, counts and statuses only, no record content, and is not touched by erasure.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| user_id | uint | Yes | - | FK to users | The caller |
+| resource_type | string | Yes | - | `leads`, `tickets` or `tasks`, max 50 | What the batch changed |
+| type | string | Yes | - | `action`, max 20 | Only `action` is written; legacy rows may hold `create`, `update` or `delete` |
+| status | string | Yes | `pending` | max 20, non-unique index `idx_bulk_operations_status` | `pending`, `completed` or `failed`; legacy rows may hold `processing` or `partial`, which nothing rewrites |
+| total_items | int | Yes | - | 1–100 | Distinct ids in the request |
+| success_count, failure_count | int | No | 0 | - | Not written by the status endpoints |
+
+The row is created `pending` before the batch runs. `completed` is written inside the batch
+transaction by a conditional update from `pending`, so it commits with the records or not at all;
+`failed` is written after a batch that rolled back, again only from `pending` (#196). A row still
+`pending` an hour after `created_at` belongs to a batch that never committed and is set to `failed`
+by the sweep every replica runs at boot and every 15 minutes, which reads its candidates through
+the status index without locking and updates them by primary key. Rows that were already `pending`
+before that change may belong to a batch that committed; the sweep fails them too, and the outcome
+is not recorded anywhere. Migration `20261110120000_add_bulk_operation_status_index` creates the
+index on MySQL/MariaDB; `MigrateDatabase` creates it on SQLite. `bulk_operation_items` holds legacy
+rows only; nothing writes it.
+
+## AEO Model
+
+Answer-engine visibility tracking: one brand profile, the prompts asked, the runs that ask them,
+each engine's answer and the URLs an answer cites. The models are `models.AEOProfile`,
+`models.AEOPrompt`, `models.AEORun`, `models.AEOAnswer` and `models.AEOCitation`
+(`internal/models/aeo.go`), each with a `TableName` method naming its table. MySQL/MariaDB get the
+five tables from `20261001120000_v1_2_0_schema_parity`, SQLite from `MigrateDatabase`. Every table
+carries the base model columns (`id`, `created_at`, `updated_at`, `deleted_at`, with an
+`idx_<table>_deleted_at` index). List- and map-shaped attributes are stored as JSON text and
+decoded on read.
+
+### aeo_profiles
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| brand_name | varchar(120) | No | - | Trimmed, required |
+| description | text | Yes | NULL | At most 2000 characters; context for prompt generation only |
+| brand_aliases | text | Yes | NULL | JSON array of alternative spellings |
+| owned_domains | text | Yes | NULL | JSON array of bare hosts the brand owns |
+| competitors | text | Yes | NULL | JSON array of `{name, aliases, domain}` |
+
+The service pins the profile's id to 1: there is at most one live row.
+
+### aeo_prompts
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| text | varchar(500) | No | - | Trimmed, 1 to 500 characters. No unique index: the service refuses a text another live prompt holds in any letter case |
+| is_active | tinyint(1) | No | 1 | Index `idx_aeo_prompts_is_active`; whether full runs ask it (at most 100 active) |
+| created_by_id | bigint unsigned | Yes | NULL | Index `idx_aeo_prompts_created_by_id`; no FK |
+
+A prompt delete is a soft delete (`aeoRepository.DeletePrompt`
+(`internal/repository/aeo_repository.go`)); its answers stay. `visibility`, `answer_count`,
+`mention_count` and `last_run_at` are computed on read.
+
+### aeo_runs
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| trigger | varchar(20) | No | - | Index `idx_aeo_runs_trigger`; `manual` or `scheduled`. A MySQL reserved word, quoted with backticks |
+| status | varchar(20) | No | - | Index `idx_aeo_runs_status`; `running`, `completed`, `partial` or `failed` |
+| started_at | datetime(3) | No | - | UTC |
+| completed_at | datetime(3) | Yes | NULL | Set on reaching a terminal status |
+| total_queries | bigint | No | 0 | Prompts in the run times the engines configured at its start |
+| failed_queries | bigint | No | 0 | Calls that failed or whose answer could not be stored |
+| triggered_by_id | bigint unsigned | Yes | NULL | Index `idx_aeo_runs_triggered_by_id`; no FK; NULL for scheduled runs |
+| owner_instance, heartbeat_at, running_lock, schedule_slot | | | | The four ownership columns, see [AEO Run Ownership](#aeo-run-ownership) |
+
+### aeo_answers
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| run_id | bigint unsigned | No | - | Index `idx_aeo_answers_run_id`; no FK |
+| prompt_id | bigint unsigned | No | - | Index `idx_aeo_answers_prompt_id`; no FK |
+| provider | varchar(40) | No | - | Index `idx_aeo_answers_provider`; the engine name, not a closed set |
+| model | varchar(120) | No | - | The model id the engine was called with |
+| attempt | bigint | No | 1 | Always 1 (calls are not retried) |
+| answer_text | longtext | Yes | NULL | Empty when the call failed |
+| brand_mentioned | tinyint(1) | No | 0 | Index `idx_aeo_answers_brand_mentioned` |
+| first_mention_pos | bigint | No | - | Code-point offset of the first brand mention, -1 when absent. No column default on purpose (0 is a real position) |
+| competitor_mentions | text | Yes | NULL | JSON object of mention counts by competitor name |
+| latency_ms | bigint | No | 0 | |
+| error | text | Yes | NULL | Sanitised failure text; omitted from the JSON when empty |
+
+A failed call is stored as an answer with `error` set, so failures stay counted.
+
+### aeo_citations
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| answer_id | bigint unsigned | No | - | Index `idx_aeo_citations_answer_id`; `fk_aeo_answers_citations` → `aeo_answers.id` |
+| url | varchar(1024) | No | - | Longer URLs are not stored |
+| domain | varchar(255) | No | - | Index `idx_aeo_citations_domain`; lower-cased host without a leading `www.` |
+| is_owned | tinyint(1) | No | 0 | The host is an owned domain or a subdomain of one |
+| competitor_name | varchar(120) | Yes | NULL | The competitor whose domain was cited, as configured at analysis time |
+
+Nothing in the server deletes runs, answers or citations.
+
+## AEO Run Ownership
+
+`aeo_runs` (one batch of AEO provider queries) carries four ownership columns (#229) that make
+runs safe across API replicas sharing one MySQL/MariaDB database. None of them is serialised: the
+run JSON is unchanged.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the process that claimed the run: 32 lowercase hex characters from `crypto/rand`, generated once per service. Not a foreign key; instances are not persisted. NULL on rows written before #229 |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL | Set to `started_at` by the claim and renewed by the owner every 30 s while the run executes |
+| running_lock | uint8 | No | NULL | unique index `idx_aeo_runs_running_lock`; `tinyint unsigned` | 1 while the run is running, NULL once it is terminal. At most one row holds 1, so admission is one atomic insert; NULLs never collide |
+| schedule_slot | string | No | NULL | unique index `idx_aeo_runs_schedule_slot`; `varchar(20)` | Daily slot of a scheduled run, the scheduler's `NextRunAt` instant in UTC as `2006-01-02T15:04Z`; NULL for manual and prompt runs. Each slot starts at most once, also after its run finished |
+
+Lifecycle: `ClaimRun` inserts the row `running` with its owner, `heartbeat_at = started_at` and
+`running_lock = 1`; a duplicate on `running_lock` is a run in progress (409, or a scheduled skip),
+a duplicate slot is a taken slot. A deadlock (error 1213), a lock wait timeout (error 1205) or,
+on MariaDB, a record-changed error (1020, treated like a deadlock) on the claim INSERT is
+contention, for slot and slot-less claims alike (#371): a slot claim whose
+slot a row already holds is a taken slot; otherwise the INSERT is replayed, at most 3 attempts in
+total. A deadlock or a 1020 on every attempt is a run in progress; a lock wait timeout is replayed once and
+a second one is returned as the driver error. The owner renews `heartbeat_at` and finishes the row with one
+`UPDATE … WHERE id = ? AND status = 'running' AND owner_instance = ?` that writes the terminal
+status, the counters, `completed_at` and `running_lock = NULL`; there is no full-struct write of
+the table. At boot and before every start, any replica fails, in one conditional `UPDATE`, the
+running rows whose `heartbeat_at` is NULL or older than 3 minutes or whose `started_at` is more
+than 6 hours old, clearing `running_lock`. A run a replica has failed this way is never written
+back by its former owner. A scheduled start refused by a manual run's lock records no slot. No
+backfill: a legacy running row has a NULL heartbeat and is failed by the next boot. MySQL and
+MariaDB get the columns and indexes from `20261114120000_add_aeo_run_ownership` (each only when
+missing); SQLite from `MigrateDatabase`. Several processes on one SQLite file are not supported.
+
+## Automation Run Leases
+
+`automation_runs` carries two lease columns (#237) that let several API replicas run the
+follow-up automation worker against one MySQL/MariaDB database. Neither is serialised: the run
+JSON is unchanged, and `claimed_at` still reads as before.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the engine holding the claim: 32 lowercase hex characters from `crypto/rand`, generated per `AutomationEngine`. Not a foreign key; never logged. NULL on legacy rows; cleared when the run leaves `running`, by every cancel included (#333) |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL, UTC | Set to the claim time by `ClaimRun` and renewed every 30 s by the owner while it executes. A `running` row whose value is NULL or older than now − 3 min is stale |
+
+Lifecycle: `ClaimRun` writes `running`, both columns and `claimed_at` in one conditional update.
+`RenewRunLease`, `AdvanceRun` and `ReleaseRun` match only `owner_instance = <owner>`; an advance or
+release that leaves `running` clears both columns, and so does every cancel: `CancelRun`,
+`CancelRunsForRule`, `CancelRunsForEntity` and, since #333, the lead erasure and ticket delete
+statement (`cancelAutomationForEntity`), each in the same conditional update that sets
+`cancelled`. A cancel matches only `pending`, `waiting` or `running`, so one issued after a
+completed, failed or cancelled row changes nothing. `claimed_at` is not cleared by a cancel. The stale sweep (boot and every worker tick) reads the stale running rows
+with a plain query and recovers each by primary key with `RecoverStaleRun`, re-checking status,
+owner and staleness: back to `pending` (attempts unchanged), or `failed`/`email_unconfirmed` when
+its last step row is a `send_email` still `sending`; both columns are cleared. No new index: the
+sweep reads through the existing `status` index without a lock and every lease write is by
+primary key. No backfill: a legacy running row has a NULL heartbeat and is recovered by the next
+sweep. MySQL and MariaDB get the columns from `20261116120000_add_automation_run_leases` (each only
+when missing; the down half drops each only when present); SQLite from `MigrateDatabase`. Upgrade
+by stopping every replica first: an older binary's boot reconciliation resets live runs. Several
+processes on one SQLite file are not supported. Runs cancelled by a lead erasure or a ticket
+delete before #333 may still hold values in the two columns (no backfill); nothing reads them on a
+cancelled run.
+
+## Outbound Webhooks
+
+Two tables (#345) hold the admin's webhook endpoints and the delivery outbox/log. Neither has a
+foreign key or a `deleted_at`: deleting an endpoint deletes its delivery rows in the same
+transaction (endpoint row locked first). Neither holds personal data: an endpoint stores an
+admin-typed URL, a sealed secret and event types; a delivery stores ids, the event type, a status,
+counters and timestamps, and the record id is the only record datum sent. The erasure of a person
+and the delete of a ticket therefore leave delivery rows in place (ids only); finished rows are
+pruned 30 days after their last change.
+
+### webhook_endpoints
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)` | GORM timestamps |
+| url | string | Yes | | `varchar(2048)` | https, no userinfo, query or fragment; never logged |
+| event_types | string | Yes | | `varchar(512)` (widened from `varchar(255)` by `20261129120007_widen_webhook_event_types`, #515) | canonical comma-separated sorted subset of `company.created`, `company.deleted`, `company.updated`, `customer.created`, `customer.deleted`, `customer.updated`, `deal.created`, `deal.deleted`, `deal.updated`, `lead.created`, `lead.deleted`, `lead.updated`, `quote.created`, `quote.deleted`, `quote.updated`, `task.created`, `task.deleted`, `task.updated`, `ticket.created`, `ticket.deleted`, `ticket.updated` (all 21 are 302 bytes, #518); JSON array |
+| secret_sealed | string | Yes | | `varchar(255)` | `utils.SecretBox` (context `webhook-endpoint-secret`) of `whsec_` + base64(32 bytes); `json:"-"` |
+| is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
+| previous_secret_sealed | string | No | NULL | `varchar(255)` | the sealed secret the last rotation replaced (#503), same box and context; `json:"-"` |
+| previous_secret_expires_at | datetime | No | NULL | `datetime(3)` | end of the rotation overlap window (rotation + 24 h): until then every request carries a signature under each secret; cleared by the runtime's next send after it; serialised, null without a rotation |
+| consecutive_failures | int | Yes | 0 | `int` | failed sends since the last success (#569); written only by the runtime with a conditional UPDATE by primary key, reset to 0 by a 2xx; serialised, read-only |
+| paused_until | datetime | No | NULL | `datetime(3)` | end of the endpoint's pause (#569): set from the 3rd consecutive failed send to the finish + 1 min, doubling up to 1 h; until then discovery skips the endpoint's due deliveries; cleared by a success, not by a PUT; serialised, null when not paused |
+
+### webhook_deliveries
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)`; `idx_webhook_deliveries_updated_at` | `updated_at` is the prune cutoff |
+| endpoint_id | uint | Yes | | `idx_webhook_deliveries_endpoint_event` (unique, with `event_id`) | |
+| event_id | string | Yes | | `varchar(64)` | `evt_` + 32 hex, shared by every endpoint's row of one event |
+| event_type | string | Yes | | `varchar(32)` | `lead.created`, `lead.updated`, `lead.deleted`, `customer.created`, `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`, `deal.created`, `deal.updated`, `deal.deleted`, `task.created`, `task.updated`, `task.deleted`, `company.created`, `company.updated`, `company.deleted`, `quote.created`, `quote.updated`, `quote.deleted` (the longest, `customer.deleted`, is 16 characters) |
+| record_id | uint | Yes | | | id of the created, updated or deleted lead, customer, ticket, deal, task, company or quote |
+| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating, updating or deleting transaction |
+| status | string | Yes | `pending` | `varchar(20)`; `idx_webhook_deliveries_status_next (status, next_attempt_at)` | `pending`, `sending`, `succeeded`, `failed` |
+| attempts | int | Yes | 0 | | at most 10 |
+| next_attempt_at | datetime | No | NULL | `datetime(3)` | due time while pending (`occurred_at` at enqueue); NULL once finished |
+| last_attempt_at | datetime | No | NULL | `datetime(3)` | set by the claim |
+| lease_until | datetime | No | NULL | `datetime(3)` | claim lease; `json:"-"` |
+| last_http_status | int | No | NULL | | status code of the last answer |
+| error_code | string | Yes | `''` | `varchar(50)` | `http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`, `endpoint_inactive`, `secret_unavailable`, `lease_expired` |
+
+The status index serves only plain (non-locking) discovery reads; every write is by primary key.
+MySQL and MariaDB get both tables from `20261120120000_add_outbound_webhooks` (created only when
+missing; the down drops both); SQLite from `MigrateDatabase`. The two rotation columns of
+`webhook_endpoints` come from `20261127120000_webhook_secret_rotation` (each added only when
+missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite. The
+two pause columns come from `20261129120005_webhook_endpoint_pause` the same way (each added only
+when missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite.
+
+## API Request/Response Format
+
+### Frontend to Backend Field Mapping
+
+The frontend uses different field names for some models. Here's the mapping:
+
+#### Lead Model
+- Frontend: `company_name` → Backend: `company`
+- Frontend: `contact_name` → Backend: `first_name` + `last_name`
+
+#### Customer Model
+- Frontend: `company_name` → Backend: `company`
+- Frontend: `contact_name` → Backend: `first_name` + `last_name`
+
+### Response Envelope
+
+All API responses are wrapped in a standard envelope:
+
+```json
+{
+  "success": boolean,
+  "data": object | array,    // Only on success
+  "error": {                  // Only on error
+    "code": string,
+    "message": string,
+    "details": object
+  },
+  "meta": {
+    "request_id": string,
+    "page": number,           // For paginated responses
+    "per_page": number,       // For paginated responses
+    "total": number,          // For paginated responses
+    "total_pages": number     // For paginated responses
+  }
+}
+```
+
+### Dashboard Statistics Response
+
+The dashboard stats endpoint returns aggregated statistics:
+
+```json
+{
+  "success": true,
+  "data": {
+    "total_leads": 25,
+    "total_customers": 18,
+    "open_tickets": 3,
+    "pending_tasks": 7,
+    "conversion_rate": 72.0
+  }
+}
+```
+
+The four system roles get system-wide totals. A custom role is counted at its own scope of
+`leads.view`, `customers.view`, `tickets.view` and `tasks.view` (at scope `own`, only the leads it
+owns and the tickets and tasks assigned to it), and a kind whose key it lacks counts 0
+(`DashboardHandler.GetStats` (`internal/handler/dashboard_handler.go`), `aggregateScope`
+(`internal/handler/permission_context.go`)).
+
+### Deal Pipeline Response
+
+`GET /deals/pipeline` returns every stage in pipeline order, empty ones included; totals are per
+currency (sorted by code) and never summed across currencies. `weighted_cents` is round half up of
+Σ `amount_cents × probability` / 100 over the stage's deals in that currency.
+`GET /dashboard/pipeline` returns the same `stages` plus `won_this_month`: the deals in the `won`
+stage whose `closed_at` falls in the current calendar month in UTC.
+
+```json
+{
+  "success": true,
+  "data": {
+    "stages": [
+      { "stage": "qualification", "count": 1,
+        "totals": [ { "currency": "EUR", "amount_cents": 100000, "weighted_cents": 10000 } ] },
+      { "stage": "proposal", "count": 3,
+        "totals": [ { "currency": "EUR", "amount_cents": 1000333, "weighted_cents": 400110 },
+                    { "currency": "USD", "amount_cents": 5000, "weighted_cents": 2000 } ] },
+      { "stage": "negotiation", "count": 0, "totals": [] },
+      { "stage": "won", "count": 1,
+        "totals": [ { "currency": "EUR", "amount_cents": 250000, "weighted_cents": 250000 } ] },
+      { "stage": "lost", "count": 0, "totals": [] }
+    ],
+    "won_this_month": {
+      "count": 1,
+      "totals": [ { "currency": "EUR", "amount_cents": 250000 } ]
+    }
+  }
+}
+```
+
+`won_this_month` is present on `/dashboard/pipeline` only.
+
+### Error Codes
+
+The list holds the common codes. The codes each route returns, with their HTTP status, are in its
+operation in `api/swagger.yaml`.
+
+- `VALIDATION_ERROR` - Input validation failed
+- `UNAUTHORIZED` - Authentication required
+- `FORBIDDEN` - Access denied
+- `NOT_FOUND` - Resource not found
+- `CONFLICT` - Resource conflict (e.g., duplicate, a quote that is not a draft, a closed deal)
+- `INTERNAL_ERROR` - Server error
+- `BAD_REQUEST` - Invalid request
+- `TOO_MANY_REQUESTS` - Rate limit exceeded
+- `INVALID_REFERENCE` - A body names a row that does not exist (an unknown company, deal, customer, owner or product)
+- `INVALID_STATUS_TRANSITION` - A quote status move that is not allowed, or lost its race (400); a cancel of a finished automation run (409)
+- `INVALID_INPUT` - An automation rule that fails validation (bad trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range `else_position`, an unknown placeholder), or a dry run on a record of the wrong entity type
+- `MAIL_DELIVERY_FAILED` - The mailer refused or failed to deliver a quote email (502)
+- `INSUFFICIENT_PERMISSIONS` - A bulk status batch names a record the caller may not change; `forbidden_ids` in the details (403; `CodeInsufficientPermissions` (`internal/errors/errors.go`))
+- `PDF_UNAVAILABLE` - Quote PDF output is switched off on this server (503; `utils.ErrCodePDFUnavailable` (`internal/utils/response.go`))
+- `PDF_RENDER_FAILED` - A quote PDF could not be produced in time (503, not 502, so the body survives a proxy; `utils.ErrCodePDFRenderFailed` (`internal/utils/response.go`))
+- `ISSUER_CHANGE_UNCONFIRMED` - A single sign-on settings save changes the effective issuer while accounts are linked under the current one, without `confirm_issuer_change` (409; `codeIssuerChangeUnconfirmed` (`internal/handler/sso_settings_handler.go`))
+- `SYSTEM_ROLE_IMMUTABLE` - An edit or delete of one of the four system roles (409)
+- `ROLE_NAME_TAKEN` - A role name another role already holds (409)
+- `ROLE_IN_USE` - A delete of a role still assigned to users; `user_count` in the details when known (409; these three in `respondRoleGovernanceError` (`internal/handler/role_handler.go`))
+- `REAUTHENTICATION_REQUIRED` - An API key create without a sign-in in the last 15 minutes (403; `APIKeyHandler.Create` (`internal/handler/apikey_handler.go`))
+
+## Data Validation Rules
+
+### Email Validation
+- Must be valid email format
+- Maximum 255 characters
+- Must be unique (for User and Customer models)
+
+### Password Requirements
+- At least 10 characters: `binding:"required,min=10"` on `RegisterRequest`, `ChangePasswordRequest`
+  and `PasswordResetConfirmRequest` (`internal/handler/auth_handler.go`)
+- At least one upper-case letter, one lower-case letter, one digit and one special character
+  (`utils.ValidatePasswordComplexity` (`internal/utils/password.go`))
+- At most 72 bytes, the longest input bcrypt hashes (`utils.MaxPasswordBytes`
+  (`internal/utils/password.go`)), checked before the complexity rule by `utils.ValidateNewPassword`
+- Stored as a bcrypt hash and never returned in API responses
+
+### String Length Limits
+- Names: 100 characters
+- Email: 255 characters
+- Company: 200 characters
+- Phone: 50 characters
+- Address: 255 characters
+- Title fields: 255 characters
+- Text fields: No limit
+
+### Required Field Validation
+All fields marked as "Required" must be provided on creation. Updates can be partial.
+
+## Business Logic Rules
+
+### Lead Conversion
+- When a lead is converted to a customer, the `customer_id` field is populated
+- Lead status changes to 'converted'
+- A new customer record is created with data from the lead
+
+### User Assignment
+- Who may be assigned is decided by the `assignment.*` permission keys of the assignee's role,
+  system or custom: a lead owner (and a form's default owner) must hold `assignment.form_owner`,
+  a ticket assignee `assignment.ticket_assignee`, a customer's assignee
+  `assignment.customer_assignee`. The keys and the scopes of the caller's own permissions are in
+  [../development/authorization.md](../development/authorization.md).
+- A task's assignee must be an existing, active user (`taskService.CreateWithLabels`
+  (`internal/service/task_service.go`)). A caller without `tasks.assign_others` may create tasks
+  only for itself and may not reassign one (`TaskHandler.Create`, `TaskHandler.Update`
+  (`internal/handler/task_handler.go`)).
+
+### Soft Deletes
+- The business entities that carry `deleted_at` are soft-deleted: users, leads, customers,
+  companies, deals, tickets, tasks, products, quotes, forms and AEO prompts. A delete sets
+  `deleted_at`, and normal queries exclude the row. Erasure of a user, customer or lead first overwrites its personal
+  fields, then soft-deletes it.
+- Roles are hard-deleted (`roleRepository.Delete` (`internal/repository/role_repository.go`)), with
+  their `role_permissions` rows.
+- Labels are hard-deleted with their `task_labels` rows (see [Label Model](#label-model)).
+- Webhook endpoints are hard-deleted, and their deliveries with them
+  (`webhookRepository.DeleteEndpoint` (`internal/repository/webhook_repository.go`)); finished
+  webhook deliveries are hard-deleted 30 days after their last change (`webhookRepository.PruneFinished`).
+- `oidc_login_attempts` rows are hard-deleted one day after creation
+  (`oidcLoginAttemptRepository.PruneCreatedBefore` (`internal/repository/oidc_repository.go`)), and
+  `auth_audit_log` rows past `AUTH_AUDIT_RETENTION_DAYS` likewise
+  (`authAuditRepository.PruneCreatedBefore` (`internal/repository/auth_audit_repository.go`)).
+- Refresh tokens, password reset tokens and API keys are hard-deleted at the erasure of their
+  user (`purgeCredentials` (`internal/repository/erasure.go`)).
+- The other tables without `deleted_at` that the sections above mark hard-deleted keep that
+  behaviour: automation steps, notifications, form mail deliveries, form ticket keys, ticket mail
+  deliveries, quote lines and the customer and product external identity mappings. Form
+  submissions past retention and their confirmation tokens are hard-deleted by the form retention
+  purge.
+
+### Timestamps
+- All timestamps are stored in UTC
+- `created_at` and `updated_at` are automatically managed
+- Custom timestamps (like `last_login_at`) must be explicitly set

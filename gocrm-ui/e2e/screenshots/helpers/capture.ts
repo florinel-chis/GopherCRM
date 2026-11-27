@@ -12,7 +12,7 @@ const screenshotRoot = path.resolve(
   '..',
   '..',
   'docs',
-  'screenshots'
+  'assets'
 );
 
 export interface CaptureOptions {
@@ -21,7 +21,7 @@ export interface CaptureOptions {
 }
 
 /**
- * Saves a screenshot to docs/screenshots/<area>/<name>.png.
+ * Saves a screenshot to docs/assets/<area>/<name>.png.
  *
  * Waits for the network to go quiet and gives MUI transitions a moment to
  * settle so captures are deterministic. Dialogs and menus should be captured

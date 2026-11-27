@@ -14,7 +14,7 @@ import (
 )
 
 // The least-privilege integration user (#211) is the setup the section of the
-// same name in docs/AUTHORIZATION.md describes: a custom role holding only
+// same name in docs/development/authorization.md describes: a custom role holding only
 // what the integration needs, a dedicated user on that role and an API key
 // issued to that user. The suite builds all three through the documented
 // routes and sends every request of the integration with the key, so what it

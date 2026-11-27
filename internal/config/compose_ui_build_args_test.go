@@ -254,7 +254,7 @@ func TestComposeUIBuildArgMatchesDockerfileBuildStage(t *testing.T) {
 	}
 }
 
-// dockerViteAppNameBullet returns the DOCKER.md bullet that documents the
+// dockerViteAppNameBullet returns the operations/docker.md bullet that documents the
 // VITE_APP_NAME build argument, up to the next top-level bullet or heading.
 func dockerViteAppNameBullet(t *testing.T, doc string) string {
 	t.Helper()
@@ -262,11 +262,11 @@ func dockerViteAppNameBullet(t *testing.T, doc string) string {
 	start := -1
 	for i, line := range lines {
 		if strings.HasPrefix(line, "- ") && strings.Contains(line, "`gocrm-ui/Dockerfile` also accepts") {
-			require.Equal(t, -1, start, "docs/DOCKER.md has the VITE_APP_NAME bullet twice")
+			require.Equal(t, -1, start, "docs/operations/docker.md has the VITE_APP_NAME bullet twice")
 			start = i
 		}
 	}
-	require.NotEqual(t, -1, start, "docs/DOCKER.md lacks the VITE_APP_NAME bullet")
+	require.NotEqual(t, -1, start, "docs/operations/docker.md lacks the VITE_APP_NAME bullet")
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		if strings.HasPrefix(lines[i], "- ") || strings.HasPrefix(lines[i], "#") {
@@ -279,9 +279,9 @@ func dockerViteAppNameBullet(t *testing.T, doc string) string {
 
 // TestComposeUIBuildArgsDocumented pins #308 AC-3.
 func TestComposeUIBuildArgsDocumented(t *testing.T) {
-	docker := readRepositoryFile(t, "docs/DOCKER.md")
-	docs := map[string]string{"docs/DOCKER.md": normalizeDocText(docker)}
-	for _, rel := range []string{"docs/FORKING.md", "docs/USE_CASES.md", "docs/ROADMAP.md"} {
+	docker := readRepositoryFile(t, "docs/operations/docker.md")
+	docs := map[string]string{"docs/operations/docker.md": normalizeDocText(docker)}
+	for _, rel := range []string{"docs/development/forking.md", "docs/reference/use-cases.md", "docs/reference/roadmap.md"} {
 		docs[rel] = normalizeDocText(readRepositoryFile(t, rel))
 	}
 	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
@@ -292,7 +292,7 @@ func TestComposeUIBuildArgsDocumented(t *testing.T) {
 		"${VITE_APP_NAME:-}", ".env", "docker compose up --build", "GoCRM", "not a secret", "JavaScript",
 		"docker build --build-arg VITE_APP_NAME=",
 	} {
-		assert.Contains(t, bullet, normalizeDocText(phrase), "docs/DOCKER.md VITE_APP_NAME bullet")
+		assert.Contains(t, bullet, normalizeDocText(phrase), "docs/operations/docker.md VITE_APP_NAME bullet")
 	}
 
 	stale := []string{
@@ -317,8 +317,8 @@ func TestComposeUIBuildArgsDocumented(t *testing.T) {
 		assert.Contains(t, text, "build.args", rel)
 	}
 
-	assert.Contains(t, docs["docs/ROADMAP.md"], "VITE_APP_NAME")
-	assert.Contains(t, docs["docs/FORKING.md"], "--build-arg VITE_APP_NAME")
+	assert.Contains(t, docs["docs/reference/roadmap.md"], "VITE_APP_NAME")
+	assert.Contains(t, docs["docs/development/forking.md"], "--build-arg VITE_APP_NAME")
 	changelog := docs["CHANGELOG.md [Unreleased]"]
 	for _, phrase := range []string{"#303", "VITE_APP_NAME", "#231", "SERVER_PROVISIONING.md"} {
 		assert.Contains(t, changelog, phrase, "CHANGELOG.md [Unreleased]")
@@ -331,33 +331,33 @@ func TestComposeUIBuildArgsDocumented(t *testing.T) {
 		"is the only build argument", "not shipped", "never reaches the UI image",
 		"add `ARG VITE_APP_NAME`", "docker history",
 	} {
-		assert.NotContains(t, docs["docs/DOCKER.md"], normalizeDocText(phrase), "docs/DOCKER.md")
+		assert.NotContains(t, docs["docs/operations/docker.md"], normalizeDocText(phrase), "docs/operations/docker.md")
 	}
 	for _, phrase := range []string{
 		"ignores `VITE_APP_NAME`",
-		"(not shipped; see [DOCKER.md](DOCKER.md))",
+		"(not shipped; see [docker.md](../operations/docker.md))",
 		"and nothing else (`gocrm-ui/Dockerfile:16-17`)",
 	} {
-		assert.NotContains(t, docs["docs/FORKING.md"], normalizeDocText(phrase), "docs/FORKING.md")
+		assert.NotContains(t, docs["docs/development/forking.md"], normalizeDocText(phrase), "docs/development/forking.md")
 	}
 	for _, phrase := range []string{"takes no `VITE_APP_NAME` build argument", "build argument (no issue yet)"} {
-		assert.NotContains(t, docs["docs/USE_CASES.md"], normalizeDocText(phrase), "docs/USE_CASES.md")
+		assert.NotContains(t, docs["docs/reference/use-cases.md"], normalizeDocText(phrase), "docs/reference/use-cases.md")
 	}
 
 	// The gaps-table row of #221.
 	var rows []string
-	for _, line := range composeSplitLines(readRepositoryFile(t, "docs/USE_CASES.md")) {
+	for _, line := range composeSplitLines(readRepositoryFile(t, "docs/reference/use-cases.md")) {
 		if strings.HasSuffix(strings.TrimSpace(line), "| #221 |") {
 			rows = append(rows, line)
 		}
 	}
-	require.Len(t, rows, 1, "docs/USE_CASES.md has one gaps-table row for #221")
+	require.Len(t, rows, 1, "docs/reference/use-cases.md has one gaps-table row for #221")
 	row := normalizeDocText(rows[0])
 	for _, phrase := range []string{"Delivered", "build.args", "#308"} {
-		assert.Contains(t, row, phrase, "docs/USE_CASES.md #221 row")
+		assert.Contains(t, row, phrase, "docs/reference/use-cases.md #221 row")
 	}
 	if _, open, ok := strings.Cut(row, "Still open:"); ok {
-		assert.NotContains(t, open, "#308", "docs/USE_CASES.md #221 row: Still open part")
+		assert.NotContains(t, open, "#308", "docs/reference/use-cases.md #221 row: Still open part")
 	}
 }
 
@@ -440,17 +440,17 @@ func TestComposeUIDocCitations(t *testing.T) {
 	envMySQL := fmt.Sprintf("%s:%d-%d", composeMySQLFile, mysql.envFrom, mysql.envTo)
 	envSQLite := fmt.Sprintf("%s:%d-%d", composeSQLiteFile, sqlite.envFrom, sqlite.envTo)
 
-	docker := normalizeDocText(readRepositoryFile(t, "docs/DOCKER.md"))
-	forking := normalizeDocText(readRepositoryFile(t, "docs/FORKING.md"))
+	docker := normalizeDocText(readRepositoryFile(t, "docs/operations/docker.md"))
+	forking := normalizeDocText(readRepositoryFile(t, "docs/development/forking.md"))
 
 	for _, citation := range []string{portsMySQL, portsSQLite, envMySQL, envSQLite} {
-		assert.Contains(t, docker, citation, "docs/DOCKER.md")
-		assert.Contains(t, forking, citation, "docs/FORKING.md")
+		assert.Contains(t, docker, citation, "docs/operations/docker.md")
+		assert.Contains(t, forking, citation, "docs/development/forking.md")
 	}
-	assert.Contains(t, docker, fmt.Sprintf("%s:%d,%d,%d", composeSQLiteFile, sqlite.name, sqlite.backendIt, sqlite.subnet), "docs/DOCKER.md")
-	assert.Contains(t, docker, fmt.Sprintf("%s:%d,%d", composeMySQLFile, mysql.backendIt, mysql.subnet), "docs/DOCKER.md")
+	assert.Contains(t, docker, fmt.Sprintf("%s:%d,%d,%d", composeSQLiteFile, sqlite.name, sqlite.backendIt, sqlite.subnet), "docs/operations/docker.md")
+	assert.Contains(t, docker, fmt.Sprintf("%s:%d,%d", composeMySQLFile, mysql.backendIt, mysql.subnet), "docs/operations/docker.md")
 	assert.Contains(t, forking, fmt.Sprintf("%s:%d,%d-%d,%d-%d", composeSQLiteFile,
-		sqlite.name, sqlite.backendPorts, sqlite.backendIt, sqlite.networks, sqlite.subnet), "docs/FORKING.md")
+		sqlite.name, sqlite.backendPorts, sqlite.backendIt, sqlite.networks, sqlite.subnet), "docs/development/forking.md")
 
 	// The citations as they read before the ui build block grew.
 	for _, old := range []string{
@@ -458,7 +458,7 @@ func TestComposeUIDocCitations(t *testing.T) {
 		"docker-compose.sqlite.yml:20,47,73", "docker-compose.yml:62,85",
 		"docker-compose.sqlite.yml:20,46-47,66-73",
 	} {
-		assert.NotContains(t, docker, old, "docs/DOCKER.md")
-		assert.NotContains(t, forking, old, "docs/FORKING.md")
+		assert.NotContains(t, docker, old, "docs/operations/docker.md")
+		assert.NotContains(t, forking, old, "docs/development/forking.md")
 	}
 }

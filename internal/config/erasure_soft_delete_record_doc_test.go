@@ -16,12 +16,12 @@ const erasureSoftDeleteTransientCaveat = "still has to be recorded on MySQL 8"
 const erasureSoftDeleteRecordedClause = "in the Delete-chain form used now, together with " +
 	"`TestIdentityErasureMySQL`, on MariaDB 10.11 (QA) and on MySQL 8.0 (the #355 acceptance run)"
 
-// TestErasureSoftDeleteRecordedDocs pins #355: docs/CONCURRENCY.md (Lead-rooted
-// erasure) and docs/DEV_ERASURE.md (Lead erasure against lead conversion) state
+// TestErasureSoftDeleteRecordedDocs pins #355: docs/development/concurrency.md (Lead-rooted
+// erasure) and docs/development/erasure.md (Lead erasure against lead conversion) state
 // the recorded MariaDB 10.11 and MySQL 8.0 results of the Delete-chain soft
 // delete instead of the transient caveat.
 func TestErasureSoftDeleteRecordedDocs(t *testing.T) {
-	for _, path := range []string{concurrencyDocFile, "docs/DEV_ERASURE.md"} {
+	for _, path := range []string{concurrencyDocFile, "docs/development/erasure.md"} {
 		t.Run(path, func(t *testing.T) {
 			text := concurrencyDocNormalize(readRepositoryFile(t, path))
 			assert.NotContains(t, text, erasureSoftDeleteTransientCaveat,
@@ -31,7 +31,7 @@ func TestErasureSoftDeleteRecordedDocs(t *testing.T) {
 		})
 	}
 
-	t.Run("CONCURRENCY.md clause lies in the Lead-rooted erasure flow before its Transaction line", func(t *testing.T) {
+	t.Run("concurrency.md clause lies in the Lead-rooted erasure flow before its Transaction line", func(t *testing.T) {
 		raw := readRepositoryFile(t, concurrencyDocFile)
 		const heading = "\n### Lead-rooted erasure\n"
 		start := strings.Index(raw, heading)

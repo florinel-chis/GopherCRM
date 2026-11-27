@@ -132,7 +132,7 @@ class Config:
     # Feature analysis workflow settings. Never part of the execution policy hash.
     analysis_output_dir: str = 'docs/specs'
     analysis_max_calls: int = 8
-    analysis_context_refs: tuple[str, ...] = ('AGENTS.md', 'docs/DEVELOPMENT.md')
+    analysis_context_refs: tuple[str, ...] = ('AGENTS.md', 'docs/development/README.md')
     analysis_rules_dir: str = ''
 
     @classmethod
