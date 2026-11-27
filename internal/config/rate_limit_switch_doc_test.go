@@ -71,6 +71,7 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 			"docs/FEATURES.md",
 			"docs/AUTHORIZATION.md",
 			"docs/DEVELOPMENT.md",
+			"docs/CONFIGURATION.md",
 			"docs/testing/01-authentication.md",
 			"docs/testing/09-cross-cutting.md",
 			"docs/testing/11-aeo.md",
@@ -101,6 +102,7 @@ func TestDisableRateLimitDocsMatchCode(t *testing.T) {
 			"docs/FEATURES.md",
 			"docs/AUTHORIZATION.md",
 			"docs/DEVELOPMENT.md",
+			"docs/CONFIGURATION.md",
 		} {
 			found := false
 			for _, sentence := range docSentences(readRepositoryFile(t, page)) {

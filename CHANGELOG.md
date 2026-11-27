@@ -94,6 +94,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The operations docs have one owner page per topic (#795). `docs/CONFIGURATION.md` is the
+  reference for the backend environment variables, the secrets and what rotating them does, the
+  public URLs, TLS, trusted proxies, CORS and the build-time `VITE_*` values (the variable table
+  and the secrets list moved there from `docs/FORKING.md` section 4, the extra rows from the
+  Configuration section of `docs/DEVELOPMENT.md`). `docs/BACKUP_RESTORE.md` holds backup and
+  restore for MySQL or MariaDB and SQLite, and `docs/UPGRADING.md` the upgrade order, the SQL
+  migrations with the dirty-state recovery and the SQLite release-by-release notes. `docs/SETUP.md`,
+  `docs/DOCKER.md`, `docs/FORKING.md`, `docs/SERVER_PROVISIONING.md` and `docs/DEVELOPMENT.md`
+  keep their own commands and link those pages. `docs/README.md` and
+  `docs/SERVER_PROVISIONING.md` open with a deployment decision table. `docs/SETUP.md` runs in
+  execution order (prerequisites, configuration, start, first admin, sign in, verify) with each
+  command labelled by its terminal, the Docker quick start creates the admin before you open the
+  UI and ends with a `/health` check, the production override example lists its requirements
+  first, and a provisioning deploy is complete only after the SQL migrations and a new
+  "Verify the deploy" check of `/health` from outside.
+
 - The README is a landing page now (#792). Its API section is a short pointer to the generated
   reference in `api/`. The response envelope and its exceptions (the CSV, AEO and quote PDF
   exports, the public form pages, the empty 204 deletes and SCIM) are listed in the Conventions

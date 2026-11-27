@@ -7,7 +7,7 @@ codebase enforces. For first-time setup instructions see [SETUP.md](SETUP.md); f
 feature and test-coverage matrix see [FEATURES.md](FEATURES.md).
 
 This page keeps the overview, the commands, the architecture, the package map and the repository
-layout, the tech stack, the conventions, the gotchas, the configuration and the API reference. The long-form sections live on seven topic
+layout, the tech stack, the conventions, the gotchas, a pointer to the configuration reference and the API reference. The long-form sections live on seven topic
 pages, listed under [Topic pages](#topic-pages).
 
 ## Project Overview
@@ -390,39 +390,11 @@ pragmas instead; `TestAEORuntimeSQLiteSurvivesADiscardedConnection` pins that be
 
 ## Configuration
 
-Environment-based via a `.env` file (loaded by godotenv). See `.env.example` for the full list. Key
-settings:
-
-- `DB_DRIVER` — `mysql` (default) or `sqlite`; anything else fails at startup
-- `DB_PATH` — SQLite database file (default `gophercrm.db`), read only when
-  `DB_DRIVER=sqlite`; must not contain `?`, because the connector appends its own pragma query string
-- `DB_*` — MySQL connection settings, ignored when `DB_DRIVER=sqlite`
-- `JWT_SECRET` — required, minimum 32 characters; values starting with `CHANGE_THIS` are refused
-- `API_KEY_SECRET` — optional, falls back to `JWT_SECRET`
-- `SERVER_PORT` (default 8080), `SERVER_MODE` (`development` / `production`)
-- `SERVER_HOST` — interface to bind; empty (default) listens on every interface, `127.0.0.1`
-  behind a reverse proxy on the same machine; IPv6 literals are bracketed automatically
-- `API_PREFIX` (default `/api/v1`)
-- `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
-- `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
-- `DISABLE_RATE_LIMIT` — lifts the strict tier and the two SCIM limits; for tests only. `true` stops startup when
-  `SERVER_MODE` is `production`
-- `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker and runs the
-  boot-time stale sweep; the API and the event capture work without it, but no run starts or
-  resumes and no stranded run is touched. It may be on for any number of replicas sharing one
-  MySQL/MariaDB database (run leases, #237); a SQLite file stays one process
-- `AUTOMATION_POLL_INTERVAL_SECONDS` (default 30, clamped to 1..3600) — how often the worker
-  polls for events, due runs and schedule passes; also the granularity of every wait
-- `FORM_RETENTION_DAYS` (default off) — age in days after which spam and never-confirmed form
-  submissions with no linked lead are permanently removed. Unset, empty, 0, negative or unparseable
-  keeps it off; 1 and 2 become the 3-day floor; above 36500 becomes 36500. The first boot with it
-  set removes the existing backlog (see *Form retention purge*)
-- `AUTH_AUDIT_RETENTION_DAYS` (default 90) — days a sign-in audit row (`auth_audit_log`, #454) is
-  kept; the stale bulk operation sweep deletes older rows at boot and every 15 minutes. Unset,
-  empty, 0, negative or unparseable keeps 90; above 36500 becomes 36500. Environment only
-
-Frontend configuration lives in `gocrm-ui/.env` (see `gocrm-ui/.env.example`); `VITE_API_BASE_URL`
-points the Axios client at the backend.
+Environment-based via a `.env` file (loaded by godotenv); `.env.example` is the commented
+reference. Every backend variable, its default and what it does, the secrets and what rotating
+them does, are in [CONFIGURATION.md](CONFIGURATION.md). Frontend configuration lives in
+`gocrm-ui/.env` (see `gocrm-ui/.env.example`); `VITE_API_BASE_URL` points the Axios client at the
+backend ([build-time web UI values](CONFIGURATION.md#build-time-web-ui-values)).
 
 ## Database
 
@@ -433,8 +405,9 @@ driver-specific decision — dialector, DSN shape, connection pool.
 Auto-migration runs on startup via `models.MigrateDatabase()` and is the **only** schema path on
 SQLite: the SQL files in `migrations/` are written for MySQL. The global DB handle is `models.DB`.
 The data model is documented in [datamodel.md](datamodel.md). Operational notes for the SQLite
-flavour — single-connection pool, WAL, backups — are in [SETUP.md](SETUP.md#sqlite) and
-[DOCKER.md](DOCKER.md).
+flavour — single-connection pool, WAL — are in [SETUP.md](SETUP.md#sqlite) and
+[DOCKER.md](DOCKER.md); SQLite backups are in [BACKUP_RESTORE.md](BACKUP_RESTORE.md#sqlite) and
+the upgrade notes in [UPGRADING.md](UPGRADING.md#sqlite-release-by-release).
 
 On MySQL and MariaDB both paths exist. `models.MigrateDatabaseWith` creates every table with
 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, the options the SQL migrations

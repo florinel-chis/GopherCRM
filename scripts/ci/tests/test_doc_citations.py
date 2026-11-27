@@ -281,6 +281,8 @@ class DocCitationCheckTest(unittest.TestCase):
             'docs/SERVER_PROVISIONING.md',
             'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
             'docs/CONCURRENCY.md', 'docs/KNOWN_LIMITATIONS.md',
+            # #795: the configuration reference took over the variable table.
+            'docs/CONFIGURATION.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
         self.assertNotIn('README.md', gate.CONVERTED_FILES)

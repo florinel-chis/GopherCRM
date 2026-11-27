@@ -110,6 +110,9 @@ CONVERTED_FILES = (
     'docs/SETUP.md',
     'docs/CONCURRENCY.md',
     'docs/KNOWN_LIMITATIONS.md',
+    # #795: the variable table and the secrets list moved here from FORKING.md
+    # with their symbol citations.
+    'docs/CONFIGURATION.md',
 )
 
 # Gitignored build outputs and local configuration the guides legitimately

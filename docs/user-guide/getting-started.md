@@ -2,7 +2,7 @@
 
 This page is for someone who has been given an account on a GopherCRM installation that is already
 running. If you are setting up a new installation and need the first administrator account, see
-[Create the first admin](../SETUP.md#6-create-the-first-admin) in the setup walkthrough, or the
+[Create the first admin](../SETUP.md#create-the-first-admin) in the setup walkthrough, or the
 [Docker quick start](../DOCKER.md#quick-start) for the Compose stacks.
 
 ## Where to sign in
