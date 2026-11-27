@@ -190,6 +190,6 @@ The secret is stored encrypted with `API_KEY_SECRET` (or `JWT_SECRET`). After th
 changes, the sender holds the deliveries of every endpoint whose secret it can no longer open:
 they stay `pending` with their attempts unchanged, and go out once the secret can be read again,
 after a restart with the previous key or after the endpoint's secret is rotated. Meanwhile the
-server's health check reports the webhook sender as paused (see the health check in the
-[API documentation](../../../README.md#api-documentation)), and one error line per held endpoint is
-logged.
+server's health check reports the webhook sender as paused in the `webhooks` field under `data`
+(see the [health check](../../SERVER_PROVISIONING.md#health-check)), and one error line per held
+endpoint is logged.

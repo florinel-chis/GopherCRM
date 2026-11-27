@@ -10,45 +10,28 @@ Go backend, React UI, SQLite or MySQL.
 **Who it's for:** small sales and support teams that want leads, deals and tickets in one place, on
 a server they control, without per-seat licence fees.
 
-- **A complete CRM.** Leads that convert into customers, companies, deals on a five-stage pipeline
-  with a full stage history, support tickets, tasks with labels, four fixed system roles (Admin,
-  Sales, Support, Customer) plus custom roles managed in Settings → Roles.
-- **Access control and sign-in.** Custom roles built from the permission catalogue, single sign-on
-  through OpenID Connect (for example Microsoft Entra ID or Okta), SCIM 2.0 provisioning of staff
-  accounts, signed outbound webhooks, and the sign-in and role audit logs.
-- **Lead capture built in.** Build forms in the CRM and embed them on any website with one script
-  tag. Submissions become leads, behind layered spam protection (time trap, origin allowlist,
-  honeypot, rate limits, optional reCAPTCHA v3) and an optional double opt-in. A double opt-in
-  form can instead open a support ticket for a known customer.
-- **Easy to run.** A single Go API binary and a static React UI. SQLite needs no database server;
-  MySQL 8 and MariaDB 10.11 are tested in CI. Docker Compose files ship for both.
-- **AI-visibility reports (AEO).** See whether Anthropic, OpenAI, Gemini, Kimi, Perplexity or any
-  OpenAI-compatible endpoint mentions your brand when buyers ask.
-
 ![GopherCRM dashboard](docs/img/gophercrm-dashboard.png)
 
 ## Features
 
-- **Leads and customers**: lead tracking with conversion to customers, and companies that leads and
-  customers link to, with domain de-duplication.
-- **Deals**: a five-stage pipeline with integer money per currency, per-stage probabilities and an
-  append-only stage history.
-- **Products and quotes**: a product catalogue and quotes with per-line tax, server-computed totals,
-  a draft → sent → accepted/rejected/expired lifecycle, a print page and a quote email.
-- **Tickets and tasks**: support tickets with comments and internal notes, tasks with labels.
-- **Forms**: lead-capture and contact forms embedded on any website with one script tag, with
-  layered spam protection and an optional double opt-in.
-- **Follow-up automation**: admin-defined rules on lead, deal and ticket events or a daily
-  schedule, run as persisted runs with a dry run.
-- **Access control**: four system roles plus custom roles built from the permission catalogue
-  ([docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)), single sign-on through OpenID Connect, SCIM 2.0
-  provisioning, API keys and the sign-in and role audit logs.
-- **Webhooks**: signed outbound events with a delivery log, a test ping, secret rotation and
-  redelivery.
-- **AEO**: daily visibility, share-of-voice and citation reports across Anthropic, OpenAI, Gemini,
-  Kimi, Perplexity and any OpenAI-compatible endpoint.
-- **Privacy and security**: deleting a person erases their personal data (GDPR Art. 17); account
-  lockout, password complexity and rate limiting.
+- **Sales in one place**: track leads, convert them into customers, group people under companies
+  and follow every deal through a five-stage pipeline, with its full stage history.
+- **Quotes your customers can read**: a product catalogue, quotes with tax and totals worked out
+  for you, a printable page and a quote email, from draft to accepted or rejected.
+- **Support that stays in context**: tickets linked to the customer, with replies and internal
+  notes, and tasks with labels.
+- **Leads from your website**: forms you build in the CRM and embed with one script tag, with
+  built-in spam protection and an optional double opt-in; a form can also open a support ticket.
+- **Follow-ups that run themselves**: rules that act on lead, deal and ticket events or on a daily
+  schedule, with a dry run to see what they would do first.
+- **Control over who sees what**: four system roles plus your own custom roles, single sign-on
+  through OpenID Connect, SCIM provisioning of staff accounts, API keys, signed webhooks and audit
+  logs of sign-ins and role changes.
+- **Know whether AI assistants mention you**: daily reports of how Anthropic, OpenAI, Gemini, Kimi,
+  Perplexity or any OpenAI-compatible endpoint answer about your brand.
+- **Your data on your server**: one Go binary and a static web UI on SQLite, MySQL or MariaDB;
+  deleting a person erases their personal data (GDPR Art. 17), with account lockout and rate
+  limiting built in.
 
 The full list, with test coverage and known gaps, is in [docs/FEATURES.md](docs/FEATURES.md).
 
@@ -59,18 +42,26 @@ Needs Docker with Compose and free ports 3000 and 8080.
 ```bash
 git clone https://github.com/florinel-chis/GopherCRM.git
 cd GopherCRM
-export JWT_SECRET="$(openssl rand -base64 32)"
+[ -f .env ] || printf 'JWT_SECRET=%s\nAPI_KEY_SECRET=%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" > .env
 docker compose -f docker-compose.sqlite.yml up -d --build
 docker compose -f docker-compose.sqlite.yml exec backend create-admin -non-interactive \
   -email admin@example.com -name "Admin" -password 'ChangeMe!2345'
 ```
 
-Open http://localhost:3000 and sign in as `admin@example.com` / `ChangeMe!2345`, then change the
-password under **Settings > Profile**. Port 3000 taken? Put `UI_PORT=3001` in front of the `up`
-command and open http://localhost:3001 instead.
+The third line writes two random secrets, `JWT_SECRET` and `API_KEY_SECRET`, to `.env` in the
+checkout, and only when no `.env` exists yet. Compose reads that file; it is gitignored and never
+copied into an image. Keep it across restarts and upgrades: a new `JWT_SECRET` signs everyone out,
+and a new `API_KEY_SECRET` invalidates the API keys, the stored AI provider keys and the webhook
+signing secrets.
 
-To run from source instead, copy `.env.example` to `.env` and replace the example `JWT_SECRET`
-first: `Load` (`internal/config/config.go`) refuses the placeholder at startup. The walkthrough is
+Open http://localhost:3000 and sign in as `admin@example.com` / `ChangeMe!2345`. That password is a
+local demo value: change it at once under **Settings > Profile**. Port 3000 taken? Put
+`UI_PORT=3001` in front of the `up` command and open http://localhost:3001 instead.
+
+To run from source instead, start from `.env.example`. If there is no `.env` yet, copy
+`.env.example` to `.env` and replace the example `JWT_SECRET`: `Load` (`internal/config/config.go`)
+refuses the placeholder at startup. If the quick start already wrote `.env`, do not copy over it:
+add the `.env.example` settings you need to it and keep its two secrets. The walkthrough is
 [docs/SETUP.md](docs/SETUP.md).
 
 The full documentation is listed in the [Documentation](#documentation) section below.
@@ -83,10 +74,13 @@ The whole stack (MySQL, API, UI) runs in containers, with database data persiste
 volume across restarts:
 
 ```bash
-export JWT_SECRET="$(openssl rand -base64 32)"   # or put it in .env
+[ -f .env ] || printf 'JWT_SECRET=%s\nAPI_KEY_SECRET=%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" > .env
 docker compose up -d --build
 docker compose exec backend create-admin          # first admin account
 ```
+
+The first line is the quick start's `.env` step: it writes the two secrets once, and the same file
+has to be kept across restarts and upgrades.
 
 UI at http://localhost:3000, API at http://localhost:8080/api/v1. Configuration, persistence and
 the SQLite flavor are in [docs/DOCKER.md](docs/DOCKER.md).
@@ -115,29 +109,11 @@ CI, start with [docs/FORKING.md](docs/FORKING.md).
 
 ## API Documentation
 
-All application routes are mounted under `/api/v1` (configurable via `API_PREFIX`). Every endpoint
-under the prefix answers with the unified envelope `{ success, data, error, meta }`: `data` holds
-the result, `error` the code and message of a refusal, and `meta` the pagination of a list.
-
-The complete reference, with every operation's roles, parameters, side effects, error codes and
-schemas, is generated into `api/`:
-
-- `api/index.html`: a static page that works offline, straight from the checkout;
-- `api/swagger.yaml` and `api/swagger.json`: the OpenAPI (Swagger 2.0) spec, for client
-  generators.
-
-`make swagger` regenerates all three from the handler annotations. How the spec is built is
-described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#api-reference); `make verify-api-docs`
-checks it (see [docs/DEV_TESTING_CI.md](docs/DEV_TESTING_CI.md#api-docs-gate)).
-
-The SCIM 2.0 server at `/scim/v2` is not part of the spec; see
-[docs/user-guide/permissions-access/scim-provisioning.md](docs/user-guide/permissions-access/scim-provisioning.md).
-
-`GET /health` is served outside the API prefix, needs no authentication and is not in the spec.
-Its `webhooks` field is `{"state": "running"}`, or `{"state": "paused", "reason": "secret_unavailable"}`
-while the webhook sender holds the deliveries of an endpoint whose signing secret cannot be
-opened; the top-level `status` stays `healthy` and the answer stays 200 either way.
-
+The API reference is generated into `api/`. [api/index.html](api/index.html) is a static page that
+works offline; GitHub shows its source, so download it or open it from a checkout.
+[api/swagger.yaml](api/swagger.yaml) and [api/swagger.json](api/swagger.json) are the Swagger 2.0
+spec, for client generators. Conventions and regeneration are in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#api-reference).
 
 ## Contributing
 
@@ -157,7 +133,6 @@ GopherCRM is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Support
 
-For support and questions:
-- Create an issue in the GitHub repository
-- Check the documentation index in [docs/README.md](docs/README.md)
-- Review the configuration settings for system behavior customization
+- Questions and bugs: open an issue at https://github.com/florinel-chis/GopherCRM/issues.
+- Security problems: report them as [SECURITY.md](SECURITY.md) describes.
+- Documentation: the index is [docs/README.md](docs/README.md).

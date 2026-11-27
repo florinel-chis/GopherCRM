@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README is a landing page now (#792). Its API section is a short pointer to the generated
+  reference in `api/`. The response envelope and its exceptions (the CSV, AEO and quote PDF
+  exports, the public form pages, the empty 204 deletes and SCIM) are listed in the Conventions
+  section of `docs/DEVELOPMENT.md`, which also states that `/health` uses the envelope. The
+  `/health` payload is described in the new "Health check" subsection of
+  `docs/SERVER_PROVISIONING.md`. The quick start writes its secrets once to the gitignored `.env`
+  and says to keep that file, and the two feature lists are one summary. A new `SECURITY.md`
+  explains how to report a security problem and which version is supported, and the README
+  Support section links to it and to GitHub issues. `scripts/ci/check-doc-citations.py` no
+  longer requires code citations in README.md. Docs only.
 - The single sign-on FAQ now says that switching a password account to single sign-on in place is
   not supported and recommends keeping the password account or a separate identity; deleting the
   account is described as the erasure it is, with a link to the erasure guide. The login gaps

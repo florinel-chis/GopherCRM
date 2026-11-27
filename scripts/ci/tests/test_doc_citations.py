@@ -274,16 +274,28 @@ class DocCitationCheckTest(unittest.TestCase):
         # #487 converted the fork and extension guides, #488 the rest of the
         # guides that cited code by line and #743 docs/CONCURRENCY.md; #786
         # moved a README symbol citation to docs/KNOWN_LIMITATIONS.md. Each
-        # must stay under rule c.
+        # must stay under rule c. README.md left the list in #792: it is a
+        # landing page and need not cite code.
         expected = {
             'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
-            'docs/SERVER_PROVISIONING.md', 'README.md',
+            'docs/SERVER_PROVISIONING.md',
             'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
             'docs/CONCURRENCY.md', 'docs/KNOWN_LIMITATIONS.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
+        self.assertNotIn('README.md', gate.CONVERTED_FILES)
         for name in expected:
             self.assertTrue((ROOT / name).is_file(), name)
+
+    def test_readme_without_citations_passes_default_run(self):
+        # #792: the README is a landing page. It is still a default file, but
+        # rule c no longer asks it for a path or symbol citation.
+        self.write('README.md', '# Readme\n')
+        self.write('docs/A.md', 'See `pkg/sample.go`.\n')
+        self.assertIn('README.md', gate.default_files(self.root))
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('no path citation found', out)
 
     # Rule d: every relative .md link and #anchor resolves. Each test fails on a
     # broken fixture and passes once the fixture is fixed.

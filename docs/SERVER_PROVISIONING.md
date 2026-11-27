@@ -657,6 +657,22 @@ the field the `Verify from outside` step of `.github/workflows/deploy.yml` looks
 curl -fsS https://crm.example.com/health
 ```
 
+### Health check
+
+`GET /health` is served outside the API prefix, needs no authentication and is not in the API spec.
+It answers 200 in the standard envelope, `{"success": true, "data": {...}, "meta": {"request_id": ...}}`.
+The fields sit under `data`, so a script reads `.data.status`, not `.status`. `data` carries the
+fields `healthPayload` (`cmd/main.go`) builds:
+
+- `status`: always `healthy`;
+- `time`: the server time, in UTC;
+- `revision`: the commit the release build was made from (`dev` for a local build);
+- `webhooks`: `{"state": "running"}`, or `{"state": "paused", "reason": "secret_unavailable"}` while
+  the webhook sender holds the deliveries of an endpoint whose signing secret cannot be opened.
+
+The answer stays 200 and `data.status` stays `healthy` either way, so a held webhook sender never
+fails a deploy check.
+
 ## Bootstrap and first deploy
 
 From the repository root on your workstation (root SSH access to the server, a `gh` login with
