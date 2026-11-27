@@ -201,7 +201,7 @@ redirect URI; the Microsoft Graph fake and the second host stay in that test fil
 `TestOIDCHandler` (`internal/handler`), `TestOIDCRoutesWired` (`cmd`) and
 `TestUserIdentitiesMigration{Files,}` (`cmd/migrate`). The user-facing rules (first-match
 mapping, overage, subject whitespace, JIT, erasure) are in
-[AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435).
+[AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in).
 
 **Single sign-on sign-out (#634)** — the callback answers `id_token` next to the token pair, and
 the SPA keeps it in the session record (`idToken`). `POST /auth/logout` takes an optional
@@ -318,7 +318,7 @@ Regression roots: `TestSCIMUserWritesSQLite` and `TestSCIMUserWritesMySQL` (`int
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserWriteHandler`
 (`internal/handler`), `TestWriteErrorTypeWriteTypes` (`internal/idkit/scim`) and
 `TestSCIMUserWritesWired` (`cmd`). The rules are in
-[AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
+[AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace).
 
 **SCIM user patch (#471)** — `PATCH /scim/v2/Users/:id` is mounted by `SetupSCIMRoutes`;
 the server reads the body as the writes do (64 KiB, one JSON object, no trailing
@@ -349,7 +349,7 @@ Regression roots: `TestSCIMUserPatchSQLite` and `TestSCIMUserPatchMySQL` (`inter
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserPatchHandler`
 (`internal/handler`), `TestParsePatch` (`internal/idkit/scim`), `TestSCIMUserPatchWired` (`cmd`) and
 `TestConcurrencyDocSCIMUserPatch` (`internal/config`). The rules are in
-[AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
+[AUTHORIZATION.md](AUTHORIZATION.md#users-patch).
 
 **SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (no body
 read, 204 on success, refusals mapped as for the writes) calls `scimUserService.Delete`, which runs
@@ -361,7 +361,7 @@ already inactive one commits nothing and records no audit row, the last active a
 `TestSCIMUserDeleteSQLite` and `TestSCIMUserDeleteMySQL` (`internal/service`, discovered by the
 auth checker; run the MySQL root on MariaDB too), `TestSCIMUserDeleteHandler`
 (`internal/handler`), `TestSCIMUserDeleteWired` (`cmd`) and `TestConcurrencyDocSCIMUserPatch`
-(`internal/config`). The rules are in [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504).
+(`internal/config`). The rules are in [AUTHORIZATION.md](AUTHORIZATION.md#users-delete).
 
 **SCIM groups (#506)** — `GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/:id` (204 on success),
 the create `POST /Groups` that resolves a mapping value to its existing group (#630) and the
@@ -403,7 +403,7 @@ subtests), `TestSCIMGroupHandler` and `TestSCIMDiscoveryDocuments` (`internal/ha
 assertion until #524 moved it to `TestAdminOnlyPermissionsMigrationFiles`) and
 `TestSCIMGroupMembersMigration` (`cmd/migrate`), required by the migrations workflow,
 `scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`. The rules are in
-[AUTHORIZATION.md](AUTHORIZATION.md#groups-506).
+[AUTHORIZATION.md](AUTHORIZATION.md#groups).
 
 ## Credentials and account writes
 

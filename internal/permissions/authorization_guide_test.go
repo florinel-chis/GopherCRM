@@ -11,9 +11,10 @@ import (
 )
 
 // The guide tests pin docs/AUTHORIZATION.md to this package: the catalogue
-// and matrix tables are compared with Leaves and ForSystemRole, the phase 2
-// design note with the seam list of #259, and the pointers in the
-// docs/README.md index, docs/FEATURES.md and CHANGELOG with the guide's path.
+// and matrix tables are compared with Leaves and ForSystemRole, the single
+// sign-on section with its security rules, the guide's present-tense form (no
+// ticket references), and the pointers in the docs/README.md index,
+// docs/FEATURES.md and CHANGELOG with the guide's path.
 
 const (
 	guideRepoRoot = "../.."
@@ -98,28 +99,37 @@ func guideRowsByKey(t *testing.T, table string, rows [][]string) map[string][]st
 	return byKey
 }
 
-func TestAuthorizationGuideCoversPhase2Seams(t *testing.T) {
+// guideTicketReference matches a ticket or pull request number such as #123.
+// The guide describes current behaviour; delivery history is in CHANGELOG.md.
+var guideTicketReference = regexp.MustCompile(`(^|[^A-Za-z0-9&/])#[0-9]+\b`)
+
+func TestAuthorizationGuideCoversSingleSignOn(t *testing.T) {
 	doc := readGuideFile(t, guidePath)
 
 	for _, heading := range []string{
-		"## Phased plan",
 		"## Permission catalogue",
 		"## System-role matrix",
-		"## Phase 2 design note",
+		"## Single sign-on",
 	} {
 		if _, ok := guideSection(doc, heading); !ok {
 			t.Errorf("%s must have the heading %q exactly once", guidePath, heading)
 		}
 	}
-
-	plan := strings.Join(mustGuideSection(t, doc, "## Phased plan"), "\n")
-	for _, ticket := range []string{"322", "344", "347", "348", "349", "260", "261"} {
-		if !regexp.MustCompile(`#` + ticket + `\b`).MatchString(plan) {
-			t.Errorf("the Phased plan section must name #%s", ticket)
+	for _, heading := range []string{"## Phased plan", "## Phase 2 design note"} {
+		for _, line := range strings.Split(doc, "\n") {
+			if line == heading {
+				t.Errorf("%s must not have the heading %q", guidePath, heading)
+			}
 		}
 	}
 
-	note := strings.Join(mustGuideSection(t, doc, "## Phase 2 design note"), "\n")
+	for i, line := range strings.Split(doc, "\n") {
+		if guideTicketReference.MatchString(line) {
+			t.Errorf("%s:%d carries a ticket reference: %q", guidePath, i+1, line)
+		}
+	}
+
+	sso := strings.Join(mustGuideSection(t, doc, "## Single sign-on"), "\n")
 	for _, token := range []string{
 		"OIDC",
 		"PKCE",
@@ -134,8 +144,8 @@ func TestAuthorizationGuideCoversPhase2Seams(t *testing.T) {
 		"not implemented",
 	} {
 		t.Run(token, func(t *testing.T) {
-			if !strings.Contains(note, token) {
-				t.Errorf("the Phase 2 design note must contain %q", token)
+			if !strings.Contains(sso, token) {
+				t.Errorf("the Single sign-on section must contain %q", token)
 			}
 		})
 	}
@@ -221,18 +231,24 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		return false
 	}
 
-	// docs/README.md is the only docs index: the guide has exactly one bullet
-	// there, and README.md lists it neither in a table row nor in a bullet,
-	// which would make a second index.
-	const indexLink = "[AUTHORIZATION.md](AUTHORIZATION.md)"
+	// docs/README.md is the only docs index: the guide is the first link of
+	// exactly one bullet there, under a descriptive label rather than the
+	// file name, and README.md lists it neither in a table row nor in a
+	// bullet, which would make a second index.
+	indexBullet := regexp.MustCompile(`^- \[([^\]]+)\]\(AUTHORIZATION\.md\)`)
 	indexBullets := 0
 	for _, line := range strings.Split(readGuideFile(t, "docs/README.md"), "\n") {
-		if strings.HasPrefix(line, "- "+indexLink) {
-			indexBullets++
+		m := indexBullet.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		indexBullets++
+		if m[1] == "AUTHORIZATION.md" {
+			t.Errorf("docs/README.md: the bullet for the guide must have a descriptive label, not %q", m[1])
 		}
 	}
 	if indexBullets != 1 {
-		t.Errorf("docs/README.md must have exactly one bullet starting %q, found %d", "- "+indexLink, indexBullets)
+		t.Errorf("docs/README.md must have exactly one bullet whose first link is (AUTHORIZATION.md), found %d", indexBullets)
 	}
 	readme := readGuideFile(t, "README.md")
 	const link = "[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)"
@@ -333,20 +349,28 @@ func TestAuthorizationGuideCoversIntegrationUser(t *testing.T) {
 		}
 	}
 
-	// The section sits directly before the design note.
+	// The section sits directly before the single sign-on section.
 	order := regexp.MustCompile(`(?m)^## .*$`).FindAllString(doc, -1)
+	sso := false
 	for i, heading := range order {
-		if heading == "## Phase 2 design note" && (i == 0 || order[i-1] != "## Least-privilege integration user") {
-			t.Error("the Least-privilege integration user section must come directly before the Phase 2 design note")
+		if heading != "## Single sign-on" {
+			continue
 		}
+		sso = true
+		if i == 0 || order[i-1] != "## Least-privilege integration user" {
+			t.Error("the Least-privilege integration user section must come directly before the Single sign-on section")
+		}
+	}
+	if !sso {
+		t.Errorf("%s must have the heading %q", guidePath, "## Single sign-on")
 	}
 }
 
 // TestAuthorizationGuideStatesPermissionModel pins the guide's statements
 // about where the system role still decides, the own-account rule on
 // /users/{id}, the POST /api-keys rules, the registration routes, the role
-// routes and codes, the sign-in audit aggregation and the SCIM and single
-// sign-on deliveries since #506.
+// routes and codes, the sign-in audit aggregation, the SCIM group create and
+// the single sign-on security rules.
 func TestAuthorizationGuideStatesPermissionModel(t *testing.T) {
 	doc := readGuideFile(t, guidePath)
 	spaces := regexp.MustCompile(`\s+`)
@@ -388,19 +412,19 @@ func TestAuthorizationGuideStatesPermissionModel(t *testing.T) {
 	audit := mustGuideSection(t, doc, "## Audit trail")
 	found := false
 	for i, line := range audit {
-		if !strings.Contains(line, "The `migration` rows of #524") {
+		if !strings.Contains(line, "The `migration` rows") {
 			continue
 		}
 		found = true
-		if !strings.HasPrefix(line, "The ") {
-			t.Errorf("%s: the line naming the migration rows of #524 must start a paragraph, got %q", guidePath, line)
+		if !strings.HasPrefix(line, "The `migration` rows") {
+			t.Errorf("%s: the line naming the migration rows must start a paragraph, got %q", guidePath, line)
 		}
 		if i == 0 || strings.TrimSpace(audit[i-1]) != "" {
-			t.Errorf("%s: the paragraph naming the migration rows of #524 must follow an empty line", guidePath)
+			t.Errorf("%s: the paragraph naming the migration rows must follow an empty line", guidePath)
 		}
 	}
 	if !found {
-		t.Errorf("%s \"## Audit trail\" must name the migration rows of #524", guidePath)
+		t.Errorf("%s \"## Audit trail\" must have a paragraph starting \"The `migration` rows\"", guidePath)
 	}
 
 	signIns := section("## Sign-in audit log")
@@ -421,36 +445,18 @@ func TestAuthorizationGuideStatesPermissionModel(t *testing.T) {
 		}
 	}
 
-	plan := mustGuideSection(t, doc, "## Phased plan")
-	contains("## Phased plan", spaces.ReplaceAllString(strings.Join(plan, "\n"), " "),
-		"#630", "#633", "#634", "#719")
-	phase2 := false
-	for _, line := range plan {
-		if !strings.HasPrefix(line, "| Phase 2 |") {
-			continue
-		}
-		phase2 = true
-		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
-		if last := strings.TrimSpace(cells[len(cells)-1]); strings.HasPrefix(last, "Open") {
-			t.Errorf("%s: the Phase 2 row's status must not start with Open, got %q", guidePath, last)
-		}
-	}
-	if !phase2 {
-		t.Errorf("%s \"## Phased plan\" must have a Phase 2 row", guidePath)
-	}
+	contains("## SCIM provisioning", section("## SCIM provisioning"), "POST /scim/v2/Groups")
 
-	contains("## SCIM provisioning", section("## SCIM provisioning"), "#630")
-
-	note := section("## Phase 2 design note")
-	lacks("## Phase 2 design note", note,
+	note := section("## Single sign-on")
+	lacks("## Single sign-on", note,
 		"creating, renaming or deleting a group through SCIM are not implemented")
-	if i := strings.Index(note, "### Design conditions"); i < 0 {
-		t.Errorf("%s \"## Phase 2 design note\" must have \"### Design conditions\"", guidePath)
+	if i := strings.Index(note, "### Security rules"); i < 0 {
+		t.Errorf("%s \"## Single sign-on\" must have \"### Security rules\"", guidePath)
 	} else {
-		conditions := note[i:]
-		lacks("### Design conditions", conditions,
+		rules := note[i:]
+		lacks("### Security rules", rules,
 			"one or more configured issuers", "in a table an administrator edits")
-		contains("### Design conditions", conditions,
+		contains("### Security rules", rules,
 			"security.sso.issuer_url", "security.sso.role_mapping")
 	}
 }

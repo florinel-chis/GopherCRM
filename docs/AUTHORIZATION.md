@@ -3,37 +3,23 @@
 > **For:** Administrators and developers who need to know who may do what. Part of the [documentation index](README.md).
 
 Who may do what in GopherCRM: the permission catalogue, the fixed matrices of the four system
-roles, custom roles, and the rules that govern role changes. It describes the code on `main`; the
-sign-in design at the end is a note for later work and says so.
+roles, custom roles, the rules that govern role changes, the audit trails, the SCIM provider and
+single sign-on. Every protected route is checked against a permission key, deny by default; a
+user holds the permissions of its role, a system role or a custom role.
 
-The work is tracked in #258 and specified in #259. The source of truth for every table below is
-`internal/permissions`; `go test -count=1 ./internal/permissions` fails when this guide and the
-package disagree (see the Testing section of [DEV_TESTING_CI.md](DEV_TESTING_CI.md)). The administrator
-guide, in plain language and task by task, is
+The source of truth for every table below is `internal/permissions`;
+`go test -count=1 ./internal/permissions` fails when this guide and the package disagree (see the
+Testing section of [DEV_TESTING_CI.md](DEV_TESTING_CI.md)). The administrator guide, in plain
+language and task by task, is
 [user-guide/permissions-access/overview.md](user-guide/permissions-access/overview.md).
 
-## Phased plan
-
-Phase 1 (#259) replaces the role checks with permissions and adds custom roles, in six slices.
-Phase 2 (#261) is single sign-on and provisioning.
-
-| Slice | Ticket | Delivers | Status |
-|---|---|---|---|
-| S1 | #322 | Tests only: the frozen record of what every protected route answers to each system role (`cmd/testdata/system_role_route_matrix.json`) | Merged as #369 |
-| S2 | #344 | Persistence: the `roles`, `role_permissions` and `role_audit_log` tables, `users.role_id`, the seeded system rows, `RoleRepository` | Merged as #359 |
-| S3 | #347 | The permission catalogue, the system-role matrices, `permissions.RouteKeys` and deny-by-default enforcement on every protected route | Merged as #370 |
-| S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
-| S5 | #349 | This guide, with the phase 2 design note | This document |
-| S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Closed: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; the SCIM Groups read and members patch (`GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/{id}`) delivered by #506; the SCIM group create (`POST /scim/v2/Groups`), which only resolves an existing mapping value, delivered by #630 (PR #659); the certificate client credential delivered by #633 (PR #695); the sign-out at the identity provider delivered by #634 (PR #719) |
-
-Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
-and buttons by permission key, so a user on a custom role sees what its role grants. It reads
-`GET /users/me` again when the window regains focus, after a role is saved in the role editor
-and after the signed-in user's own account is saved in the user form (#566). Since #381
-custom roles are created, cloned, edited and deleted in Settings > Roles (`/settings/roles`,
-shown with `roles.view`, written with `roles.manage`) and assigned in the user form, whose role
-picker lists the roles of `GET /roles`; the role API stays available for the same operations.
+The SPA reads the permissions of `GET /users/me` and shows routes, navigation entries and buttons
+by permission key, so a user on a custom role sees what its role grants. It reads
+`GET /users/me` again when the window regains focus, after a role is saved in the role editor and
+after the signed-in user's own account is saved in the user form. Custom roles are created,
+cloned, edited and deleted in Settings > Roles (`/settings/roles`, shown with `roles.view`,
+written with `roles.manage`) and assigned in the user form, whose role picker lists the roles of
+`GET /roles`; the role API is available for the same operations.
 
 ## Permission catalogue
 
@@ -368,7 +354,7 @@ write that would is refused with 409 `LAST_ADMIN`, also when the last admin demo
 deactivates itself. Only active, non-erased users on the admin system role count; a custom role
 holding every permission does not. A concurrent handover of the admin role (a SCIM group patch
 that demotes one admin and promotes another) cannot strand the installation either: the locked
-row of the account being changed counts as an admin before the write whenever it is one (#513).
+row of the account being changed counts as an admin before the write whenever it is one.
 
 ## Escalation rule
 
@@ -380,7 +366,7 @@ refusal is 403 `ROLE_ESCALATION`, and the rule applies to the caller's own accou
 customer system role counts as the empty set here, so a customer login is never above a manager.
 The admin system role holds the two admin-only keys, which no custom role can hold, so an admin
 account is always above a custom-role caller: only an admin can assign the admin role or edit,
-activate, deactivate or erase an admin account (#524).
+activate, deactivate or erase an admin account.
 
 A customer login with a linked customer record (a `customers` row whose `user_id` is that login,
 erased rows included) asks for the customer key next to the user key: erasing it
@@ -397,12 +383,12 @@ Every role create, clone, update and delete, and every change of a user's `role`
 writes one `role_audit_log` row in the transaction of the change; a failed insert rolls the
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
-to its own account, #435, or `scim` for a SCIM 2.0 user create, replace, patch or delete, #470,
-#471 and #504, or a SCIM group patch, #506, whose `actor_user_id` is NULL because no user acts, or `migration` for a startup or
-migration data step, #524, also with `actor_user_id` NULL), the action and the state before and
+to its own account, or `scim` for a SCIM 2.0 user create, replace, patch or delete, or a SCIM
+group patch, whose `actor_user_id` is NULL because no user acts, or `migration` for a startup or
+migration data step, also with `actor_user_id` NULL), the action and the state before and
 after, as ids, role names, permission keys and scopes only.
 
-Since #552 the same table records account changes, with `role_id` NULL, an empty `role_name` and
+The same table records account changes, with `role_id` NULL, an empty `role_name` and
 the account in `target_user_id`:
 
 - `user_activated` and `user_deactivated` (before and after hold `{"is_active": …}` only) when
@@ -424,15 +410,16 @@ left alone on purpose and write no account row:
 - an OpenID Connect sign-in, which never activates, deactivates, erases or changes an email (its
   `user_role_changed` rows with method `oidc` are unchanged);
 - the caller's own profile-only email change (`PUT /users/me`, or `PUT /users/{own id}` without
-  `role` or `is_active`), which stays the plain update behind the current-password check (#394); a
+  `role` or `is_active`), which stays the plain update behind the current-password check; a
   `PUT` on the caller's own id that also carries `role` or `is_active` is governed and writes the
   row;
 - the erasure of a customer login through `DELETE /customers/{id}` or a lead erasure cascade, which
   is not a governed write.
 
-The `migration` rows of #524 record the role's stored permission rows, which can include a key the catalogue no longer resolves;
-the role API records the resolved set. `GET /roles/audit` lists the rows, newest first, and
-needs `roles.audit_view`.
+The `migration` rows record the role's stored permission rows, which can include a key the
+catalogue no longer resolves; the role API records the resolved set.
+
+`GET /roles/audit` lists the rows, newest first, and needs `roles.audit_view`.
 
 The three rules above are decided inside one transaction per write, after the rows are locked.
 The lock order is in [CONCURRENCY.md](CONCURRENCY.md#rbac-user-role-and-role-writes), flow "RBAC
@@ -442,28 +429,28 @@ writes".
 
 ## Sign-in audit log
 
-Since #454 every sign-in outcome is recorded in `auth_audit_log`, after the sign-in's own
+Every sign-in outcome is recorded in `auth_audit_log`, after the sign-in's own
 transaction has ended. Each `POST /auth/oidc/callback`, and each `POST /auth/login` and
 `POST /auth/refresh` that passes request validation and succeeds, writes one row of its own
 (`attempts` 1) as one `INSERT`. Refusals are counted instead: a request whose `ApiKey`
-credential is refused (#466), a refused `POST /auth/login` or `POST /auth/refresh` and a refused
-SCIM authentication on `/scim/v2` (#553) add to the row of their method, reason, `user_id` (or
+credential is refused, a refused `POST /auth/login` or `POST /auth/refresh` and a refused
+SCIM authentication on `/scim/v2` add to the row of their method, reason, `user_id` (or
 none), client network and UTC minute, whose `attempts` is how many there were. The first refusal
 of that bucket writes the row; every later one adds 1 to `attempts` in the same statement
 (`INSERT ... ON DUPLICATE KEY UPDATE` on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on
 SQLite, on a unique internal `aggregate_key`), so the row keeps the first refusal's
-`request_id`, `user_agent_family` and `created_at`. A refused SCIM authentication (#468) has
+`request_id`, `user_agent_family` and `created_at`. A refused SCIM authentication has
 method `scim`, `user_id` NULL and reason `token_missing`, `token_invalid` or `token_revoked`.
-Since #470 a successful SCIM user create
-or replace, since #471 a successful patch and since #504 a delete that deactivates, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
-after its transaction; since #506 a successful group patch writes one such row per account added
+A successful SCIM user create, replace or patch, and a delete that deactivates, writes one row
+(method `scim`, outcome `success`, reason empty, `user_id` the account), after its transaction; a
+successful group patch writes one such row per account added
 to or removed from the group; a refused one (400 or 409), and a delete of an already inactive account,
-writes none. Since #550 each `POST /auth/change-password`, `POST /auth/password-reset`,
+writes none. Each `POST /auth/change-password`, `POST /auth/password-reset`,
 `POST /auth/password-reset/confirm` and `POST /auth/logout` that reaches the service writes one
 row of its own (methods `password_change`, `reset_request`, `reset_confirm` and `logout`,
 `attempts` 1) after the service returns: a request refused by the authentication middleware or
 a rate tier, a binding 400 or a new password refused by the length or complexity check writes
-none. Since #551 a `POST /api-keys` answered 201, a revocation answered 200 (`DELETE /api-keys/:id`,
+none. A `POST /api-keys` answered 201, a revocation answered 200 (`DELETE /api-keys/:id`,
 an idempotent repeat included, or `PUT /api-keys/:id` with `is_active` false, with or without a
 new name) and a `PUT /api-keys/:id` with `is_active` true answered 409 because the key is revoked
 each write one row (methods `api_key_create`, `api_key_revoke` and `api_key_enable`, `attempts`
@@ -472,7 +459,7 @@ rename alone, `is_active` true on a live key, a 400, 401, 403, 404 or 500 and ev
 none. Any other request made with an API key, and any other SCIM request, writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
-Answers, status codes and messages are the same as before.
+Recording a row changes no answer, status code or message.
 
 **Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
 `api_key`, `scim`, `password_change`, `reset_request`, `reset_confirm`, `logout`,
@@ -509,7 +496,7 @@ or the full user agent. Neither are they logged.
   changed between the check and the owner lock), `sso_account` (an account linked to single
   sign-on while `allow_password` is off), `internal_error`.
 - `refresh`: `token_invalid` (unknown, revoked, expired, or a claim lost to a concurrent
-  rotation of the same token), `token_reuse` (#547: a token already exchanged for a successor,
+  rotation of the same token), `token_reuse` (a token already exchanged for a successor,
   presented again; every refresh token of its family is revoked, the row carries the owner's
   `user_id`), `account_inactive`, `account_erased`, `unavailable` (the 503
   `SESSION_REFRESH_UNAVAILABLE` path).
@@ -517,9 +504,9 @@ or the full user agent. Neither are they logged.
   `is_active` false, recorded with the owner's `user_id`), `key_expired` (past `expires_at`, or,
   for a key stored without one, more than one year after `created_at`), `account_inactive`,
   `account_erased` (the owner row is gone), `customer_login_role` (a key owned by a customer
-  account, #532). A key that is both revoked and expired is recorded
+  account). A key that is both revoked and expired is recorded
   as `key_revoked`.
-- `scim` (#468): `token_missing` (no `Authorization` header, another scheme than `Bearer`, or an
+- `scim`: `token_missing` (no `Authorization` header, another scheme than `Bearer`, or an
   empty token), `token_invalid` (no SCIM token has that hash: an unknown token, a user's JWT or
   API key, a token altered in case or padding) and `token_revoked` (a revoked SCIM token). The
   row never names the token.
@@ -533,25 +520,25 @@ or the full user agent. Neither are they logged.
   `token_exchange_failed`, `sso_disabled` (404) and `internal_error` (500). A refusal of a
   linked account (`account_erased`, `account_inactive`, `customer_login_role`, `last_admin`)
   carries that account's `user_id`.
-- `password_change` (#550, always the caller's `user_id`): `invalid_credentials` (a wrong
+- `password_change` (always the caller's `user_id`): `invalid_credentials` (a wrong
   current password, or one changed concurrently), `session_stale` (the `refresh_token` is not a
   live session of the caller; 409 `SESSION_STALE`), `account_inactive`, `account_erased`,
   `internal_error`.
-- `reset_request` (#550, the answer is the same 200 in every case): success with the account's
+- `reset_request` (the answer is the same 200 in every case): success with the account's
   `user_id` once a link was stored, whether or not the mail was delivered; `account_unknown` (no
   account has that email, `user_id` NULL), `account_inactive`, `account_erased`, `sso_account`
   (an account linked to single sign-on while `allow_password` is off), `unavailable` (the reset
   flow is not wired, `user_id` NULL) and `internal_error`.
-- `reset_confirm` (#550): `token_invalid`, `account_inactive`, `account_erased`, `sso_account`,
+- `reset_confirm`: `token_invalid`, `account_inactive`, `account_erased`, `sso_account`,
   `unavailable` and `internal_error`. An unknown, spent or expired token carries no `user_id`;
   `token_invalid` names the owner only when a stored token was found but another confirmation
   claimed it first. The owner refusals carry the owner's `user_id`.
-- `logout` (#550, the caller's `user_id`): success, or `internal_error` (the 500). A
-  front-channel sign-out (`GET /auth/oidc/frontchannel-logout`, #634) writes one such row for each
+- `logout` (the caller's `user_id`): success, or `internal_error` (the 500). A
+  front-channel sign-out (`GET /auth/oidc/frontchannel-logout`) writes one such row for each
   account it logs out, with that account's `user_id`.
-- `api_key_create` and `api_key_revoke` (#551, the caller's `user_id` and the key's
+- `api_key_create` and `api_key_revoke` (the caller's `user_id` and the key's
   `api_key_id`): success only.
-- `api_key_enable` (#551, the caller's `user_id` and the key's `api_key_id`): `key_revoked`
+- `api_key_enable` (the caller's `user_id` and the key's `api_key_id`): `key_revoked`
   only (the 409 for a revoked key).
 
 **Subject reference.** A single sign-on refusal decided after the ID token verified and its nonce
@@ -568,27 +555,27 @@ stale bulk-operation sweep, at boot and every 15 minutes on every replica, in ch
 Erasure of a user does not touch the rows: they hold only ids, a network prefix and a family
 string, and they age out.
 
-**How many rows.** Since #466 the moderate tier (120 requests a minute, burst 30, per client
+**How many rows.** The moderate tier (120 requests a minute, burst 30, per client
 address and per process) is charged before authentication on every protected route, so a
 throttled request gets a 429 without a key lookup or a write, and refused or missing credentials
 count against the same budget as authenticated traffic. The refusals that reach the key check
 add to one row per reason, account, client network and UTC minute, however many addresses of
 that `/24` or `/48` and however many replicas they reach: a burst of bogus keys from one network
 writes at most one `key_invalid` row a minute, and its `attempts` still counts every refusal.
-Refused password sign-ins and refreshes (#553) are counted the same way, one row per method,
+Refused password sign-ins and refreshes are counted the same way, one row per method,
 reason, account, client network and UTC minute; successful ones and single sign-on callbacks
 are one row per request. All of them pass the strict tier on `/auth` first (10 requests a
 minute, burst 5, per client address, applied before the handler, so a 429 writes nothing).
-Refused SCIM authentications are counted per reason, client network and UTC minute as well
-(#553), behind the SCIM refusal limit on `/scim/v2` (10 a minute, burst 5, per client address; a
+Refused SCIM authentications are counted per reason, client network and UTC minute as well,
+behind the SCIM refusal limit on `/scim/v2` (10 a minute, burst 5, per client address; a
 refusal over it is answered 429 and writes nothing). Password change, reset request, reset completion and
-logout rows (#550) are one per request as well: the strict `/auth` tier bounds the two reset
+logout rows are one per request as well: the strict `/auth` tier bounds the two reset
 routes, the authenticated tier bounds `POST /auth/change-password` and `POST /auth/logout`.
 `DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits (token and refusal), and a
 `gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
 test-only. With `DISABLE_RATE_LIMIT` or the e2e switch set, `SERVER_MODE=production` stops startup.
 
-**Reading the log.** Since #455 `GET /audit/sign-ins` returns the rows, guarded by
+**Reading the log.** `GET /audit/sign-ins` returns the rows, guarded by
 `audit.sign_ins_view`; among the system roles only admin holds it, and a custom role may. The
 order is `created_at` descending, then `id` descending; pagination is `offset`/`limit`
 (`utils.ParseOffsetLimit`: default 20, at most 100) with `meta.total` the filtered count. The
@@ -628,11 +615,11 @@ outcome, reason, user and time range, so the SQL below is optional):
 ## Which events end which credentials
 
 An account holds three kinds of credential: access tokens (JWTs, refused once the account's
-`token_version` moves past the value they carry), refresh tokens and API keys. Since #526 one
+`token_version` moves past the value they carry), refresh tokens and API keys. One
 service step, `revokeAllCredentials` (`internal/service/credential_revocation.go`), ends all
 three inside the transaction of a password change, a password reset, an administrator's
 deactivation, a SCIM deactivation and a SCIM group patch that leaves an active account in no
-mapped group (#530): it increments `token_version`, revokes every refresh token and revokes every
+mapped group: it increments `token_version`, revokes every refresh token and revokes every
 API key (`is_active` false, `revoked_at` stamped; a key revoked earlier keeps its first
 `revoked_at`). Its first two steps are `endSessions`, which a SCIM group patch also runs alone
 when it gives an account a role that lacks a permission the old one had: `token_version` and
@@ -643,7 +630,7 @@ keeps its own, narrower revocation.
 |---|---|---|---|
 | Logout (`POST /auth/logout`) | Every earlier one ends | The presented one, or every one without a `refresh_token` | Not affected |
 | Refresh rotation (`POST /auth/refresh`) | None end; the replaced one stays valid until it expires | The presented one is spent and replaced | Not affected |
-| Single sign-on session limit (an `oidc` session at `session_started_at + 24` hours, #548) | None end; the last one issued stays valid until it expires | The session can no longer be rotated (reason `token_invalid`) or renewed by a password change (`session_stale`); nothing is written | Not affected |
+| Single sign-on session limit (an `oidc` session at `session_started_at + 24` hours) | None end; the last one issued stays valid until it expires | The session can no longer be rotated (reason `token_invalid`) or renewed by a password change (`session_stale`); nothing is written | Not affected |
 | Refresh token presented again after its exchange (`POST /auth/refresh`, reason `token_reuse`) | None end; those already issued stay valid until they expire | Every one of the presented token's session (its family), the successors included; other sessions are not affected | Not affected |
 | Password change (`POST /auth/change-password`) | Every earlier one ends, the caller's included; the renewed session's new token works | Every one, except the renewed session's successor | Every one, for good, the key that made the request included |
 | Password reset (`POST /auth/password-reset/confirm`) | Every earlier one ends | Every one | Every one, for good |
@@ -667,18 +654,17 @@ of an already inactive account writes nothing. Regression roots:
 
 ## SCIM provisioning
 
-Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RFC 7644) at
-`/scim/v2`, outside the API prefix, so an identity provider such as Entra ID or Okta can be
-pointed at `PUBLIC_BASE_URL/scim/v2`. #468 brought the tokens, the authentication and the
-discovery documents; #469 brought the read of the Users resource (see [Users read](#users-read-469)
-below) and #470 its create and replace (see
-[Users create and replace](#users-create-and-replace-470)) and #471 its patch, which also
-deprovisions (see [Users patch](#users-patch-471)), and #504 its delete, a deactivation that never
-erases (see [Users delete](#users-delete-504)), and #506 the Groups read and members patch (see
-[Groups](#groups-506)), and #630 the group create, which only resolves an existing mapping value
-(`POST /scim/v2/Groups`). `/Schemas/{id}`,
-`/ResourceTypes/{id}` and a SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
-router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
+GopherCRM serves a SCIM 2.0 provider (RFC 7643, RFC 7644) at `/scim/v2`, outside the API
+prefix, so an identity provider such as Entra ID or Okta can be pointed at
+`PUBLIC_BASE_URL/scim/v2`. It has provider tokens, the token authentication and the discovery
+documents; the read of the Users resource (see [Users read](#users-read) below), its create and
+replace (see [Users create and replace](#users-create-and-replace)), its patch, which also
+deprovisions (see [Users patch](#users-patch)), and its delete, a deactivation that never erases
+(see [Users delete](#users-delete)); and the Groups read and members patch (see
+[Groups](#groups)) and the group create, which only resolves an existing mapping value
+(`POST /scim/v2/Groups`). `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped answer for
+unknown `/scim/v2` paths are not implemented: an unknown path gets the router's default 404, and
+a panic under `/scim/v2` the API's 500 envelope.
 
 **Tokens.** A SCIM provider token belongs to the installation, not to a user. It is
 `scim_` followed by the hex of 32 random bytes, shown once when it is created; `scim_tokens`
@@ -687,7 +673,7 @@ stores only its HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it is u
 Rotating that secret invalidates every token. A token is revoked, never deleted.
 
 **Admin API.** Three routes under the API prefix, each guarded by `settings.scim_manage` (an
-admin-only key: only the admin system role holds it, and no custom role can since #524):
+admin-only key: only the admin system role holds it, and no custom role can):
 
 - `GET /settings/scim/tokens` lists every token, revoked ones included, newest first.
 - `POST /settings/scim/tokens` with `{"name": "..."}` (trimmed, 1 to 100 characters, else 400
@@ -698,7 +684,7 @@ admin-only key: only the admin system role holds it, and no custom role can sinc
   404.
 
 A token's JSON is `id`, `name`, `created_at`, `last_used_at` and `revoked_at`: never the token
-and never its hash. The SPA screen Settings > SCIM tokens (`/settings/scim-tokens`, #490) lists,
+and never its hash. The SPA screen Settings > SCIM tokens (`/settings/scim-tokens`) lists,
 creates and revokes them; its route and navigation entry need `settings.scim_manage`, and a new
 token is shown once, in a dialog, and kept nowhere else.
 
@@ -707,11 +693,11 @@ token (the scheme word is case-insensitive, the token is not trimmed). A user's 
 not a SCIM token and is refused, and a SCIM token is not accepted by the API. A successful
 request updates `last_used_at` best-effort (a failed write is logged without the token and never
 changes the answer) and writes no audit row. Every refusal is the same 401 whatever its reason,
-and is counted in the sign-in audit row of its reason, client network and UTC minute (#553),
+and is counted in the sign-in audit row of its reason, client network and UTC minute,
 method `scim`, reason `token_missing`, `token_invalid` or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or hash is logged.
 
 **Rate limit.** `/scim/v2` has two limits, applied inside the token authentication, per process,
-whatever the HTTP method (#555). The SCIM token limit counts every request whose token is
+whatever the HTTP method. The SCIM token limit counts every request whose token is
 accepted per token id, whatever the client address: `SCIM_RATE_LIMIT_PER_MINUTE` a minute
 (default 1500, maximum 6000; 25 requests a second) with a burst of `SCIM_RATE_LIMIT_BURST`
 (default 150, maximum 1000); an unset, unparseable or below-1 value takes the default. Over it
@@ -731,7 +717,7 @@ production mode with either one set).
 `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`;
 `status` is the HTTP status as a string. The 429 has `"status":"429"`. A 400 of the Users read
 and writes also carries `scimType` (`invalidFilter`, `invalidValue` or `invalidSyntax`), and the
-409 of a write carries `uniqueness`. The Groups add `mutability` (see [Groups](#groups-506)) and
+409 of a write carries `uniqueness`. The Groups add `mutability` (see [Groups](#groups)) and
 a 405 without `scimType`.
 
 **Discovery.** With a valid token, three documents answer 200 with `application/scim+json`;
@@ -745,23 +731,23 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
   unique on the server), `name` (`givenName`, `familyName`), `emails` (multi-valued: `value`,
   `type` with canonical values `work`, `home`, `other`, and `primary`) and `active`, each with
   every RFC 7643 §7 characteristic. Its `meta.location` is
-  `PUBLIC_BASE_URL/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User`. Since #506 the
-  core Group schema (`urn:ietf:params:scim:schemas:core:2.0:Group`) follows: `displayName`
+  `PUBLIC_BASE_URL/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User`. The core
+  Group schema (`urn:ietf:params:scim:schemas:core:2.0:Group`) follows: `displayName`
   (required, case-exact, read-only, unique on the server) and `members` (multi-valued, read-write,
   one sub-attribute `value`, case-exact and immutable).
 - `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
   `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`,
-  then (#506) the `Group` resource type, endpoint `/Groups`, schema the Group URN,
+  then the `Group` resource type, endpoint `/Groups`, schema the Group URN,
   `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/Group`. The ServiceProviderConfig is
-  unchanged: RFC 7643 §5 lists no resources, and its `patch` and `filter` cover the Groups.
+  unchanged by the Groups: RFC 7643 §5 lists no resources, and its `patch` and `filter` cover the Groups.
 
 The advertised `patch` feature is the Users patch below; the Users read, create, replace and
 patch are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
 `GET /health`. The shipped nginx configurations (the UI image's `gocrm-ui/docker/nginx.conf` and
 the TLS site of `docs/SERVER_PROVISIONING.md`) and that guide's Apache site forward `/scim/v2/`
-to the backend, so `PUBLIC_BASE_URL/scim/v2` reaches it (#728).
+to the backend, so `PUBLIC_BASE_URL/scim/v2` reaches it.
 
-### Users read (#469)
+### Users read
 
 Two routes, behind the same rate limits and token authentication, answer with
 `application/scim+json`:
@@ -774,7 +760,7 @@ Two routes, behind the same rate limits and token authentication, answer with
   of resources returned), `startIndex` and `Resources` (always an array, `[]` when empty), in
   ascending id order.
 
-**Visibility.** SCIM serves and changes managed accounts only (#529). An account is managed when
+**Visibility.** SCIM serves and changes managed accounts only. An account is managed when
 its row is live (erasure soft-deletes, so an erased account is never served), its role is not
 `customer` (the staff roles and `custom`), and it has at least one `user_identities` row whose
 `issuer` equals the effective single sign-on issuer byte for byte, whatever its `source` (`scim`
@@ -829,7 +815,7 @@ rows. Errors of the read are logged without the filter value, an email, a name o
 
 Regression roots of the read: see the end of the next section.
 
-### Users create and replace (#470)
+### Users create and replace
 
 Two more routes behind the same rate limits and token authentication:
 
@@ -850,7 +836,7 @@ write but neither served on the resource nor advertised in the discovery documen
 
 **Linking.** The created account gets one `user_identities` row: the effective single sign-on
 issuer (whether sign-on is enabled does not matter) with `externalId` as the subject and
-`source` `scim` (#505). A later OIDC sign-in with the same issuer and a `sub` equal to
+`source` `scim`. A later OIDC sign-in with the same issuer and a `sub` equal to
 `externalId` uses this account instead of provisioning one. Entra ID's default user mapping sends
 `mailNickname` as `externalId`; the administrator maps `objectId` to it (user guide), and its `sub`
 is pairwise, so for an Entra ID issuer an unknown `sub` also finds
@@ -870,9 +856,9 @@ only, so a created customer could never be read back.
 **Account.** A created account is active unless `active` is `false`, and its password is the
 bcrypt hash of random bytes that are discarded, so it cannot sign in with a password. On replace
 an absent `name` or sub-attribute clears it (PUT replaces), and an absent `active` leaves
-`is_active` as it is. Since #471 `active: false` deprovisions as a patch does (see
-[Users patch](#users-patch-471)): in the same transaction it increments the account's
-`token_version`, revokes every refresh token and, since #526, every API key of the account, so
+`is_active` as it is. `active: false` deprovisions as a patch does (see
+[Users patch](#users-patch)): in the same transaction it increments the account's
+`token_version`, revokes every refresh token and every API key of the account, so
 its sessions and keys end at once.
 
 **Answers.** Error details are fixed and never echo a submitted value.
@@ -894,7 +880,7 @@ address fails the format rule with 400. Either way nothing is written.
 sign-in (`admin set → users → roles → user_identities`, see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM user create and replace"). A create, and a replace that changes the role or
 `role_id`, writes one `role_audit_log` row (`user_role_changed`, `auth_method` `scim`,
-`actor_user_id` NULL); a replace that keeps the role writes none. Since #552 a replace that changes
+`actor_user_id` NULL); a replace that keeps the role writes none. A replace that changes
 `userName` writes `user_email_changed`, and one that changes `active` writes `user_activated` or
 `user_deactivated`, the same way and before the role row; a create writes no such row. After the commit one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
@@ -910,21 +896,21 @@ the variants the Go judges drop, and that the padded and accented variants of a 
 are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource`,
 `TestWriteErrorType` and `TestWriteErrorTypeWriteTypes` (`internal/idkit/scim`),
 `TestSCIMTokenSchemaSQLite` (`internal/models`) and `TestSCIMTokensMigration{Files,}`
-(`cmd/migrate`). The patch (#471) adds `TestSCIMUserPatchWired` (`cmd`),
+(`cmd/migrate`). The patch adds `TestSCIMUserPatchWired` (`cmd`),
 `TestSCIMUserPatchHandler` (`internal/handler`), `TestSCIMUserPatchSQLite`/`TestSCIMUserPatchMySQL`
 (`internal/service`, also run on MariaDB), `TestParsePatch` (`internal/idkit/scim`) and
-`TestConcurrencyDocSCIMUserPatch` (`internal/config`). The delete (#504) adds
+`TestConcurrencyDocSCIMUserPatch` (`internal/config`). The delete adds
 `TestSCIMUserDeleteWired` (`cmd`), `TestSCIMUserDeleteHandler` (`internal/handler`) and
 `TestSCIMUserDeleteSQLite`/`TestSCIMUserDeleteMySQL` (`internal/service`, also run on MariaDB),
 and extends `TestConcurrencyDocSCIMUserPatch`.
-The managed-account rule (#529) is proven by the local-account, other-issuer, padded-issuer,
+The managed-account rule is proven by the local-account, other-issuer, padded-issuer,
 empty-issuer and `oidc`-link subtests of `TestSCIMUsers{SQLite,MySQL}`,
 `TestSCIMUserWrites{SQLite,MySQL}`, `TestSCIMUserPatch{SQLite,MySQL}`,
 `TestSCIMUserDelete{SQLite,MySQL}` and `TestSCIMGroups{SQLite,MySQL}` (`internal/service`, the
 MySQL roots also on MariaDB) and by `TestSCIMUsersWired`, `TestSCIMUserPatchWired`,
 `TestSCIMUserDeleteWired` and `TestSCIMGroupsWired` (`cmd`).
 
-### Users patch (#471)
+### Users patch
 
 `PATCH /scim/v2/Users/{id}`, behind the same rate limits and token authentication, applies an
 RFC 7644 §3.5.2 PatchOp to a managed account and answers 200 with the User resource and
@@ -992,7 +978,7 @@ locked in the transaction.
 **Session end.** A patch that sets `active` false (also on an already inactive account), like a
 PUT with `"active": false`, deprovisions at once: after the `users` write the same transaction
 increments `token_version`, so every access token issued before is refused with 401, and revokes
-every `refresh_tokens` row and every API key of the account (#526, see
+every `refresh_tokens` row and every API key of the account (see
 [Which events end which credentials](#which-events-end-which-credentials)). `active` true only
 sets `is_active`: the account can sign in again, but no earlier access token, refresh token or
 API key comes back. The administrator deactivation (`POST /users/{id}/deactivate`) ends the same
@@ -1001,7 +987,7 @@ credentials.
 **Transaction and audit.** One governed transaction in the order
 `admin set → users → roles → refresh_tokens → api_keys` (see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM user patch"). A changed role or `role_id` writes one `role_audit_log` row (`user_role_changed`,
-`auth_method` `scim`, `actor_user_id` NULL); since #552 a changed `userName` writes
+`auth_method` `scim`, `actor_user_id` NULL); a changed `userName` writes
 `user_email_changed` and a changed `active` `user_activated` or `user_deactivated`, the same way and
 before the role row. `active` false on an inactive account writes no row (it still increments
 `token_version`). After the commit one `auth_audit_log` row (method
@@ -1015,7 +1001,7 @@ stay; Entra ID's PATCH bodies are accepted with and without the `aadOptscim06202
 
 Regression roots: see the end of the previous section.
 
-### Users delete (#504)
+### Users delete
 
 `DELETE /scim/v2/Users/{id}`, behind the same rate limits and token authentication, deactivates a
 managed account the way a patch with `active` false does, and never erases it. The request body is
@@ -1033,7 +1019,7 @@ not read.
 **What it writes.** On an active account one `users` write sets `is_active` false; then, in the
 same transaction, `token_version` becomes the locked value plus one, so every access token issued
 before is refused with 401, and every `refresh_tokens` row and every API key of the account is
-revoked (#526). The email,
+revoked. The email,
 names, role, `role_id`, the `user_identities` link and `deleted_at` (NULL) stay as they were: the
 erasure of `DELETE /users/{id}` is never called. A later PATCH or PUT with `active` true
 reactivates the account, without bringing back an earlier session or API key.
@@ -1047,18 +1033,18 @@ bearer check already refuses an inactive owner.
 `admin set → users → refresh_tokens → api_keys → role_audit_log`, a prefix-compatible subsequence of the patch order; no
 `roles` row is locked because no role is written (see [CONCURRENCY.md](CONCURRENCY.md), flow
 "SCIM user delete"). The deactivation of an active account writes one `role_audit_log` row
-`user_deactivated` (`auth_method` `scim`, `actor_user_id` NULL, #552). After the commit of a deactivation one
+`user_deactivated` (`auth_method` `scim`, `actor_user_id` NULL). After the commit of a deactivation one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
 nothing.
 
-Regression roots: see the end of [Users create and replace](#users-create-and-replace-470).
+Regression roots: see the end of [Users create and replace](#users-create-and-replace).
 
-### Groups (#506)
+### Groups
 
 A SCIM Group is a distinct value of a role-mapping row with claim `groups` in the effective single
 sign-on settings, read on every request; roles rows are not groups. `displayName` is the value,
 compared byte for byte, and the `id` its unpadded base64url encoding. Groups come from the mapping
-and cannot be renamed or deleted through SCIM; a POST only resolves an existing value (#630).
+and cannot be renamed or deleted through SCIM; a POST only resolves an existing value.
 Membership is stored in
 `scim_group_members` (`group_value` exact: `utf8mb4_bin` on MySQL/MariaDB, `BINARY` on SQLite;
 unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT`).
@@ -1068,7 +1054,7 @@ unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT
 | `GET /scim/v2/Groups` | 200 `ListResponse`, ascending by value, paged by `startIndex`/`count`; the only filter is `displayName eq "<value>"`, anything else 400 `invalidFilter` |
 | `GET /scim/v2/Groups/{id}` | 200 Group with its managed members (live, not customer, linked to the issuer), id ascending; an id that does not decode or names no current group is 404 `Group not found` |
 | `PATCH /scim/v2/Groups/{id}` | 204 with no body; see below |
-| `POST /scim/v2/Groups` | 201 with the existing group, its `Location` and the scim content type, when the body's `externalId` or, failing that, its `displayName` equals a current `groups` value byte for byte; it writes nothing, so a repeat gives the same answer. Otherwise 400 `invalidValue` `A Group can be created only for a groups value of the single sign-on role mapping` (also a non-string `externalId`/`displayName` or neither present); a non-empty `members` is 400 `invalidValue` `Add the members of a Group with PATCH`; a body that is not one JSON object or repeats a key is 400 `invalidSyntax` (#630) |
+| `POST /scim/v2/Groups` | 201 with the existing group, its `Location` and the scim content type, when the body's `externalId` or, failing that, its `displayName` equals a current `groups` value byte for byte; it writes nothing, so a repeat gives the same answer. Otherwise 400 `invalidValue` `A Group can be created only for a groups value of the single sign-on role mapping` (also a non-string `externalId`/`displayName` or neither present); a non-empty `members` is 400 `invalidValue` `Add the members of a Group with PATCH`; a body that is not one JSON object or repeats a key is 400 `invalidSyntax` |
 | `DELETE /scim/v2/Groups/{id}` | 405 SCIM error with `Allow: GET, PATCH` |
 
 `PUT /scim/v2/Groups/{id}` is not routed (the router's 404). Both GETs (and the POST) honour
@@ -1082,14 +1068,14 @@ set: `add`/`replace` with path `members` or path-less with `{"members": [...]}`,
 an `add` or `replace` names must be a managed account (a deactivated one may be added), otherwise
 the whole patch is 400 `invalidValue`, as for an unknown id; removing a non-member is a no-op, and a
 member row is removed even when its account is not managed. Such a leftover row of an account that
-is not managed (for example a local account's row stored before #529) is only deleted: the account
+is not managed (for example a row of a local account) is only deleted: the account
 gets no role change, no `users` write and no audit row, and the last-admin rule does not count it as
 losing the admin role.
 
 **Roles.** Each added or removed managed account gets the role of the sign-in's first-match rule
 on the groups claim, over its groups after the change (`rolemap.Match` (`internal/idkit/rolemap/rolemap.go`) with the groups only); a
-mapping to a missing role row or to the customer role refuses the patch with `invalidValue`. Since
-#530 an active account left in no mapped group is deactivated instead: `is_active` false, its role
+mapping to a missing role row or to the customer role refuses the patch with `invalidValue`. An
+active account left in no mapped group is deactivated instead: `is_active` false, its role
 and `role_id` kept, no `user_role_changed` row, and `revokeAllCredentials` ends every access token,
 refresh token and API key, as a SCIM deactivation does; an account already deactivated gets no
 `users` write, only its membership row and its `auth_audit_log` row. A role that lacks a
@@ -1119,7 +1105,7 @@ refusal with `invalidValue`.
 scim_group_members → refresh_tokens → api_keys → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM group patch"); the membership writes, the `users` writes, the credential revocations
 and the role audit rows commit together or not at all; each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
-each member the patch deactivates one `user_deactivated` row the same way (#552), and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
+each member the patch deactivates one `user_deactivated` row the same way, and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
 membership changed. A refusal, and a patch that changes nothing, write nothing.
 
 Regression roots: `TestSCIMGroupsWired` (`cmd`), `TestSCIMGroupHandler` and
@@ -1194,14 +1180,14 @@ request, and so does a key taken away.
 **What stays open.** The ten self-service routes of [Deny by default](#deny-by-default) need
 authentication only, so the integration user can read and edit its own profile and create, list,
 update and revoke its own API keys. Changing its own email needs the account's current password
-in `current_password` (#394), so a leaked key alone cannot move the address a password reset is
-sent to. A changed email also ends the reset links already issued for the account (#554). It cannot change its own role that way: `PUT /users/me` has
+in `current_password`, so a leaked key alone cannot move the address a password reset is
+sent to. A changed email also ends the reset links already issued for the account. It cannot change its own role that way: `PUT /users/me` has
 no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and `is_active`
 from a caller without `users.assign_role` and `users.activate`. A request authenticated with an
 API key cannot create keys or switch one on: `POST /api-keys`, and `PUT /api-keys/{id}` with
-`is_active: true`, answer 403 `FORBIDDEN` to it (#525). Only a signed-in session (password or
+`is_active: true`, answer 403 `FORBIDDEN` to it. Only a signed-in session (password or
 single sign-on) creates keys, and only with a sign-in within the last 15 minutes: otherwise, and
-for a token from `POST /auth/refresh`, it answers 403 `REAUTHENTICATION_REQUIRED` (#532). A key
+for a token from `POST /auth/refresh`, it answers 403 `REAUTHENTICATION_REQUIRED`. A key
 expires one year after creation unless an earlier `expires_at` is sent, and never later. Customer
 accounts cannot hold keys (403 `FORBIDDEN`).
 
@@ -1218,7 +1204,7 @@ is final: `PUT /api-keys/{id}` with `is_active: true` answers 409 `CONFLICT` and
 (403 `FORBIDDEN` from a request authenticated with an API key). An administrator cannot list, read
 or revoke another user's keys (403 `FORBIDDEN`); the administrator's switch is
 `POST /users/{id}/deactivate`, which revokes every key of that user for good (its next request is
-401, and `POST /users/{id}/activate` brings none back, #526). Changing or resetting the
+401, and `POST /users/{id}/activate` brings none back). Changing or resetting the
 integration user's password revokes every key of it too, so issue a new key afterwards. After a
 suspected leak, deactivate the user, or revoke every key of the user and not only the leaked one,
 then issue a new key.
@@ -1228,18 +1214,19 @@ then issue a new key.
 this section with the key: the two creates, 403 on the other routes, the lead and assignee
 rules, rotation, revocation and deactivation.
 
-## Phase 2 design note
+## Single sign-on
 
-This section is a design note for #261. Since #434 the single sign-on settings exist: nine
-reserved configuration entries (`allow_password` since #457, the client certificate and its key since #633), the `OIDC_*` environment fallbacks behind them, the admin-only
-`GET/PUT /settings/sso` pair guarded by `settings.sso_manage`, and the `SSOConfig` accessor that
-returns the effective values:
+GopherCRM signs staff in through one OpenID Connect identity provider at a time and can be
+provisioned by it through SCIM 2.0. The single sign-on settings are nine reserved configuration
+entries, the `OIDC_*` environment fallbacks behind them, the admin-only `GET/PUT /settings/sso`
+pair guarded by `settings.sso_manage`, and the `SSOConfig` accessor that returns the effective
+values:
 
 - `security.sso.enabled` (`OIDC_ENABLED`); a read error keeps SSO off.
-- `security.sso.allow_password` (`OIDC_ALLOW_PASSWORD`, #457), default false; a read error
+- `security.sso.allow_password` (`OIDC_ALLOW_PASSWORD`), default false; a read error
   keeps it off. It decides whether an account linked to single sign-on may also use password
   sign-in and password reset (see "Passwords for linked accounts" under
-  [OIDC sign-in](#oidc-sign-in-435) below). While it is on, a password keeps working after the identity provider removes the person
+  [OIDC sign-in](#oidc-sign-in) below). While it is on, a password keeps working after the identity provider removes the person
   or the mapped role, so offboarding must also deactivate the account in GopherCRM.
 - `security.sso.issuer_url` (`OIDC_ISSUER_URL`), an https issuer of at most 512 bytes, the width
   of `user_identities.issuer`; a longer `OIDC_ISSUER_URL` is treated as unset. A save whose
@@ -1250,7 +1237,7 @@ returns the effective values:
   applies is a change too.
 - `security.sso.client_id` (`OIDC_CLIENT_ID`).
 - `security.sso.client_secret` (`OIDC_CLIENT_SECRET`), encrypted at rest and never returned.
-- `security.sso.client_certificate` and `security.sso.client_private_key` (#633, no environment
+- `security.sso.client_certificate` and `security.sso.client_private_key` (no environment
   variable), encrypted at rest and never returned: one PEM certificate and its unencrypted RSA key
   (PKCS#8 or PKCS#1, at least 2048 bits), saved and cleared together, each at most 16384 bytes. A
   save checks that the certificate parses and has not expired and that the key matches it, and
@@ -1264,25 +1251,26 @@ returns the effective values:
   mapping is empty, never the environment one.
 
 The generic `/configurations` endpoints neither list nor write those entries, whatever the
-case or padding of the key. Since #435 the backend signs in with those settings (see
-[OIDC sign-in](#oidc-sign-in-435) below): the authorization code flow with PKCE, identity
-linking by `(iss, sub)` in `user_identities`, JIT provisioning and the role mapping re-applied
-on every sign-in. Since #436 the SPA offers the sign-in (see
-[SPA sign-in and settings](#spa-sign-in-and-settings-436) below). Since #451 an ID token without
-a `groups` claim has its groups read from the issuer's userinfo endpoint when the mapping uses
-groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider tokens and the
-`/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
-#469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
-and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the patch
-(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions (and, since #526, its API keys);
-#504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases;
-#506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`), the groups-claim
-values of the role mapping, whose members patch recomputes the members' roles. SCIM bulk
-operations, `/Schemas/{id}`, `/ResourceTypes/{id}` and creating a *new* group value, renaming or
-deleting a group through SCIM are not implemented; a POST only resolves an existing value (#630). The rest of the note
-records the conditions phase 2 has to meet, which the sign-in below follows.
+case or padding of the key. The backend signs in with those settings (see
+[OIDC sign-in](#oidc-sign-in) below): the authorization code flow with PKCE, identity linking by
+`(iss, sub)` in `user_identities`, JIT provisioning and the role mapping re-applied on every
+sign-in. The SPA offers the sign-in (see [SPA sign-in and settings](#spa-sign-in-and-settings)
+below). An ID token without a `groups` claim has its groups read from the issuer's userinfo
+endpoint when the mapping uses groups (see Mapping below).
 
-### OIDC sign-in (#435)
+The SCIM 2.0 provider (see [SCIM provisioning](#scim-provisioning)) has provider tokens, the
+`/scim/v2` authentication and discovery documents, the user read (`GET /scim/v2/Users` and
+`/Users/{id}`), create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), the patch
+(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions
+and its API keys, the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never
+erases, and the Groups (`GET /scim/v2/Groups`, `POST /scim/v2/Groups`, `GET` and
+`PATCH /scim/v2/Groups/{id}`), the groups-claim values of the role mapping, whose members patch
+recomputes the members' roles. SCIM bulk operations, `/Schemas/{id}`, `/ResourceTypes/{id}` and
+creating a *new* group value, renaming or deleting a group through SCIM are not implemented; a
+POST only resolves an existing value. The security rules the sign-in follows are listed under
+[Security rules](#security-rules) below.
+
+### OIDC sign-in
 
 **Flow.** `POST /auth/oidc/start` (no body, strict `/auth` tier, no authentication) re-reads the
 settings, discovers the issuer (the discovery document and the signing keys are kept per issuer
@@ -1306,7 +1294,7 @@ redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S
 a failing token endpoint is 503 `SSO_UNAVAILABLE`; every refusal is the same 401 "Single sign-on
 failed", with the reason logged as an `error_code` only.
 
-**Discovery cache (#632).** One discovery is kept at a time, keyed by the configured issuer URL,
+**Discovery cache.** One discovery is kept at a time, keyed by the configured issuer URL,
 whether the application signing keys are used and, only then, the client id. A sign-in that
 starts 24 hours or more after the fetch, or with another key, discovers again; a failed discovery
 answers 503 as before and leaves the kept entry unchanged. go-oidc fetches the keys again when a
@@ -1316,7 +1304,7 @@ a stored setting) makes an Entra ID issuer's ID tokens be verified against
 with the signing algorithms the discovery document lists (filtered to those go-oidc supports); any
 other issuer ignores it and uses the plain `jwks_uri`.
 
-**Sign-in cookie (#528).** A sign-in finishes only in the browser that started it. A 200 from
+**Sign-in cookie.** A sign-in finishes only in the browser that started it. A 200 from
 `POST /auth/oidc/start` sets the cookie `gophercrm_oidc_state`, holding the state of the returned
 URL: `Path=<API_PREFIX>/auth/oidc` (it reaches only start and callback), `Max-Age=600` (the
 lifetime of the attempt), `HttpOnly`, `SameSite=Lax`, no `Domain`, and sent only over HTTPS
@@ -1331,7 +1319,7 @@ store and send it, the SPA and the API must be served from the same site (the sa
 domain and scheme), as the shipped nginx proxy serves them from one origin; the SPA sends
 credentials on these two calls only.
 
-**Attempt hygiene and logs (#453).** A used or expired attempt has its verifier and nonce
+**Attempt hygiene and logs.** A used or expired attempt has its verifier and nonce
 cleared: the claim (a plain read by the state hash, then one conditional `UPDATE` by id) blanks
 the nonce and the PKCE verifier in the same statement that spends the row, and a callback that
 finds the row expired blanks them without spending it. When that clearing fails the callback
@@ -1340,7 +1328,7 @@ every 15 minutes, on every replica) prunes sign-in attempts older than one day; 
 itself deletes nothing. Every `oidc_sign_in` log line carries the `request_id` of the HTTP
 request (from `X-Request-ID` when the client sends one, logged only as a field) and the
 `attempt_id` of the attempt row, `0` before the row exists or has been claimed (an unknown, used
-or expired state). Since #454 the `Single sign-on refused` line, the `Single sign-on unavailable`
+or expired state). The `Single sign-on refused` line, the `Single sign-on unavailable`
 line of a 503 and the success line also carry `audit_id`, the id of the callback's
 [sign-in audit](#sign-in-audit-log) row (`0` when that write failed).
 
@@ -1350,7 +1338,7 @@ not printable ASCII, or has leading or trailing whitespace is refused on every e
 the binary collation still pads trailing spaces; a stored row is also compared byte for byte.
 `email`, `preferred_username` and `name` never link or authorize.
 
-An unknown `(iss, sub)` can still name an existing account in one case (#505): the configured
+An unknown `(iss, sub)` can still name an existing account in one case: the configured
 issuer is Entra ID (host `login.microsoftonline.com`), the token's `tid` is a string equal byte
 for byte to the issuer's tenant segment (the first path segment of
 `https://login.microsoftonline.com/<tenant id>/v2.0`; no case folding, no trimming), and the
@@ -1367,7 +1355,7 @@ falls through to JIT provisioning unchanged. A concurrent first sign-in that com
 **Mapping.** The role is the FIRST entry of the role mapping, in stored order, whose claim
 (`groups` or `roles`) holds its value exactly, case-sensitively. Each claim must be absent or a
 JSON array of strings. No match is 401 with nothing written. A token whose `_claim_names` has a
-`groups` key (a group overage, #450) is handled three ways: when the mapping has no `groups`
+`groups` key (a group overage) is handled three ways: when the mapping has no `groups`
 entry the overage is ignored and `roles` decides; when the mapping has a `groups` entry and the
 issuer is Entra ID (host `login.microsoftonline.com`), the group object ids are read from
 Microsoft Graph (see the Entra ID example) and go through the same first-match mapping, any Graph
@@ -1376,7 +1364,7 @@ failure refusing with `groups_unavailable`; for any other issuer it is refused
 
 When the mapping has a `groups` entry, the ID token has no `groups` key at all (an empty `[]` is
 a present claim) and no Entra ID overage is being resolved through Graph, the groups are read
-from the issuer's userinfo endpoint (#451), after every other token check has passed. The
+from the issuer's userinfo endpoint, after every other token check has passed. The
 callback sends one `GET` to the `userinfo_endpoint` from discovery with the access token of the
 same code exchange, within 5 seconds, through the issuer client (no redirect followed, no proxy),
 and reads at most 1 MiB. The endpoint must be an absolute `https` URL without credentials, and
@@ -1406,7 +1394,7 @@ demoted (401, nothing written, no session), a custom role is not given to a cust
 a changed role commits one `role_audit_log` row with `auth_method` `oidc` and the signed-in user
 as actor. An unchanged role writes no row.
 
-**Session limit (#548).** The refresh session a single sign-on sign-in starts (`sign_in_method`
+**Session limit.** The refresh session a single sign-on sign-in starts (`sign_in_method`
 `oidc`) ends at `session_started_at + 24` hours, a fixed limit with no setting, so the mapping is
 re-applied at least once a day. Every refresh token of the session expires by then; a presented
 `oidc` token at or past that instant, or one without a start (rows issued before the limit
@@ -1419,7 +1407,7 @@ Ending a session at once is SCIM deactivation or **Deactivate**.
 
 **JIT provisioning.** An unknown identity that no SCIM link names (see **Identity**) creates an active user with the mapped role, the
 `email` claim as given and `given_name`/`family_name` (cut to 100 bytes; when both are absent,
-`name` split at the first whitespace into a first name and the rest as the last name, #453), and
+`name` split at the first whitespace into a first name and the rest as the last name), and
 a password that is
 the hash of discarded random bytes, so password login cannot succeed for it. It needs an `email`
 claim; when any account, live or erased, already holds that address in any letter case, the
@@ -1427,7 +1415,7 @@ sign-in is refused and nothing is linked to that account (`LOWER(email)` on ever
 SQLite refuses what the MySQL/MariaDB collation refuses). A concurrent first sign-in of the same
 address or identity loses on the unique index and rolls back whole.
 
-**Passwords for linked accounts (#444, #457).** An account with a `user_identities` row, which
+**Passwords for linked accounts.** An account with a `user_identities` row, which
 a SCIM create or the first OIDC sign-in creates (an email never links an existing account) and erasure keeps,
 is an account linked to single sign-on. Whether it may also use a password is the setting
 `allow_password` in `/settings/sso` (`security.sso.allow_password`, environment fallback
@@ -1495,7 +1483,7 @@ OIDC_ROLE_MAPPING=[{"claim":"groups","value":"crm-admins","role_id":1},{"claim":
 Okta group names are the values the filtered claim carries; keep them stable. For the org server
 use `OIDC_ISSUER_URL=https://<org>.okta.com`. When Okta returns a thin ID token without a `groups`
 claim, the callback reads `groups` from Okta's userinfo endpoint with the access token of the
-sign-in (#451, see Mapping above): the userinfo `sub` must equal the ID token's
+sign-in (see Mapping above): the userinfo `sub` must equal the ID token's
 (`userinfo_subject_mismatch` otherwise), only `groups` is used, and any failure refuses as
 `groups_unavailable`. Okta answers userinfo as plain JSON; signed `application/jwt` userinfo is
 not supported.
@@ -1514,7 +1502,7 @@ OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":1},{"claim":"r
 ```
 
 A mapping on `groups` uses group object ids. Above 200 groups Entra ID leaves the `groups` claim
-out and sends `_claim_names` instead (the group overage). Since #450 the CRM then reads the
+out and sends `_claim_names` instead (the group overage). The CRM then reads the
 person's groups from Microsoft Graph:
 
 - It happens only for an Entra ID issuer whose host is exactly `login.microsoftonline.com` and a
@@ -1525,7 +1513,7 @@ person's groups from Microsoft Graph:
   the settings). That is the delegated Microsoft Graph permission `User.Read`, which Microsoft
   names as the least-privileged permission for `/me/getMemberObjects`: keep it granted on the app
   registration, or users of an overflowing group set cannot sign in. No other Graph permission is
-  needed for it; one that a deployment granted earlier for this lookup can be removed (#631).
+  needed for it; any other Graph permission granted for this lookup can be removed.
 - The callback sends `POST /v1.0/me/getMemberObjects` to `https://graph.microsoft.com` with
   `{"securityEnabledOnly": true}`, so only security groups count, and follows `@odata.nextLink`
   only to `https` URLs on that same host. Only the returned object ids are used, never group
@@ -1548,14 +1536,14 @@ groups, or no groups claim configured) make the callback read Entra's userinfo e
 App roles remain the recommended setup: they have no overage limit, need no extra permission and
 no Graph call. Role ids are those of `GET /roles`.
 
-### SPA sign-in and settings (#436)
+### SPA sign-in and settings
 
 Settings > Single sign-on (`/settings/sso`, shown and opened only with `settings.sso_manage`)
 edits `GET`/`PUT /settings/sso`: the Enabled switch, the "Allow password sign-in and password
-reset for accounts linked to single sign-on" switch (#457) with an always-shown offboarding
+reset for accounts linked to single sign-on" switch with an always-shown offboarding
 warning, the issuer URL, the client ID, the scopes
 (one field, separated by spaces), the client secret, the client certificate and its private key
-(#633) and the role mapping. Each field says when
+and the role mapping. Each field says when
 its value comes from the environment or the default. The client secret is write-only: the page
 shows only "A client secret is set" or "No client secret is set", the input always starts empty,
 a typed secret is sent once and cleared after the save, "Clear client secret" sends an empty
@@ -1574,7 +1562,7 @@ The login page reads `sso_enabled` from the public `GET /auth/registration` prob
 makes, so no second request spends the strict `/auth` budget. Only when it is true does it show
 "Sign in with single sign-on" below the password form; the button calls `POST /auth/oidc/start`
 (with `withCredentials`, as the callback post does, so the browser keeps and returns the sign-in
-cookie when the SPA and the API run on different ports of one site, as in development; #528)
+cookie when the SPA and the API run on different ports of one site, as in development)
 and sends the browser to the returned authorization URL, and a failed start shows "Single sign-on
 is unavailable. Sign in with your password." The issuer redirects to the public `/auth/callback`
 page, which reads `code` and `state` once, removes them from the address bar with a replace
@@ -1585,7 +1573,7 @@ generic message "Single sign-on failed. Try again or sign in with your password.
 back to the sign-in page; the page never shows or logs the code, the state or the tokens.
 Password login stays available as break-glass.
 
-### Single sign-on sign-out (#634)
+### Single sign-on sign-out
 
 The callback also answers `id_token`, the raw ID token of the exchange, and the SPA keeps it in
 the session record (`idToken`, sessionStorage like the rest of the session; a refresh or a
@@ -1621,7 +1609,7 @@ ended, never the `sid`, the issuer, a token or a URL. The provider must send `si
 tokens (for Entra ID an optional claim) and have the front-channel logout URL registered; see the
 [Entra ID how-to](user-guide/permissions-access/how-to-microsoft-entra-id.md).
 
-### Browser tests against a local test issuer (#446)
+### Browser tests against a local test issuer
 
 `gocrm-ui/e2e/tests/sso.spec.ts` drives the real browser round trip (login page, issuer page,
 `/auth/callback`, the app) against a disposable OpenID Connect issuer,
@@ -1643,7 +1631,7 @@ and a verifier whose S256 hash is the challenge, spends a code once, and returns
 with the authorization request's nonce. Its own checks are covered by
 `go test ./scripts/e2e/oidc-issuer` and by the spec's scenario S12, which acts as a client
 itself. The test issuer accepts only the client secret, so the spec's client certificate scenario
-(S15, #633) covers the settings screen only; the client assertion itself is covered over real HTTP
+(S15) covers the settings screen only; the client assertion itself is covered over real HTTP
 by `TestOIDCClientAssertion` in `internal/service`.
 
 The issuer serves the run's per-run test certificate (the one the AEO provider fixture uses). Only
@@ -1653,25 +1641,25 @@ installs it as Go's fallback roots and refuses (the process exits before opening
 a listener) when `SERVER_MODE` is `production`, whether it comes from the environment or from
 `.env`. A normal build has no such switch. The check against a live Entra ID tenant stays manual.
 
-### Design conditions
+### Security rules
 
-**Sign-in.** OIDC authorization code flow with PKCE, against one configured issuer,
-`security.sso.issuer_url` (or `OIDC_ISSUER_URL` when that is empty): an Okta org or custom
-authorization server, or an Entra ID tenant. The ID token is validated against
-the issuer's published keys (issuer, audience, expiry, nonce).
+**Sign-in.** The sign-in uses the OIDC authorization code flow with PKCE, against one
+configured issuer, `security.sso.issuer_url` (or `OIDC_ISSUER_URL` when that is empty): an Okta
+org or custom authorization server, or an Entra ID tenant. The ID token is validated against the
+issuer's published keys (issuer, audience, expiry, nonce).
 
-**Identity linking.** A `user_identities` table links an external identity to a `users` row. It
-is keyed by `(iss, sub)`, never by email: an email address can be reassigned or changed at the
+**Identity linking.** The `user_identities` table links an external identity to a `users` row.
+Identities are linked by `(iss, sub)`, never by email: an email address can be reassigned or changed at the
 provider, and matching on it would let one person take over another's account. The same holds
 for `preferred_username` and the display name: none of them links or authorizes. The one
-exception to "keyed by `(iss, sub)`" is an Entra ID first sign-in (#505): its pairwise `sub`
+exception to "linked by `(iss, sub)`" is an Entra ID first sign-in: its pairwise `sub`
 never equals the `objectId` SCIM provisioning stores, so an unknown `(iss, sub)` whose `tid` is
 the configured tenant and whose `oid` is the subject of a SCIM-written identity under that issuer
 signs in as that account and links the `(iss, sub)` pair. It is still never matched by email.
 
 **JIT provisioning.** A first sign-in with an unknown `(iss, sub)` that no SCIM link names creates the account. It is a
 least-privilege account: it gets the role the mapping below yields and nothing more, and an
-identity that matches no mapping gets no access (deny by default, as in phase 1).
+identity that matches no mapping gets no access (deny by default, as everywhere else).
 
 **Role mapping.** An IdP group or app role maps to a role id (a system role or a custom role),
 held in the encrypted configuration entry `security.sso.role_mapping` (or `OIDC_ROLE_MAPPING` when
@@ -1679,8 +1667,8 @@ that is empty), which an administrator edits in Settings > Single sign-on. The m
 display name:
 
 - Entra ID sends groups as object ids, at most 200 in a token. Above that the groups claim is
-  left out and the token carries the group overage claim (`_claim_names`) instead; that case has
-  to be handled explicitly, never read as "no groups" or as "every group". An app role arrives in
+  left out and the token carries the group overage claim (`_claim_names`) instead; that case is
+  handled explicitly, never read as "no groups" or as "every group". An app role arrives in
   the `roles` claim and has no overage, so app roles are the preferred mapping there.
 - Okta sends a groups claim, filtered in the application's configuration, in the ID token; where
   the flow returns a thin token the groups are read from the userinfo endpoint.
@@ -1689,27 +1677,25 @@ The mapping is applied again on every sign-in. A mapped role change goes through
 governed write as a manual one, so the last-admin invariant and the audit trail apply to it: a
 change at the provider can never leave zero active admins.
 
-**SCIM 2.0 (optional).** Provisioning and deprovisioning pushed by the provider, under its own
-bearer credential: not a user's API key and not a JWT. Deprovisioning deactivates; it does not
+**SCIM 2.0 (optional).** Provisioning and deprovisioning are pushed by the provider, under its
+own bearer credential: not a user's API key and not a JWT. Deprovisioning deactivates; it does not
 erase.
 
-**Local login.** Local password login is kept as the break-glass path, for at least one admin
-account, so a provider outage or a wrong mapping cannot lock the installation out. The last-admin
-invariant already protects that account.
+**Local login.** Local password login is the break-glass path, for at least one admin account, so
+a provider outage or a wrong mapping cannot lock the installation out. The last-admin invariant
+protects that account.
 
-**Sessions.** Authentication is header-only today (`Authorization: Bearer` or `ApiKey`), no
-cookie carries a credential, and the server ships no CSRF protection; the unused CSRF middleware
-was removed in #363 (ticket #362). If phase 2 introduces a cookie session, it must ship with
+**Sessions.** Authentication is header-only (`Authorization: Bearer` or `ApiKey`), no cookie
+carries a credential, and the server has no CSRF protection. A cookie session would need
 session-bound CSRF protection in the same change.
 
-**Seams already in place.**
+**Audit seams.**
 
-- `role_audit_log.auth_method` records how the acting request authenticated. Its values today
-  are `bearer`, `api_key`, since #435 `oidc`, since #470 `scim` and since #524 `migration`
-  (`AuthMethodBearer`, `AuthMethodAPIKey`, `AuthMethodOIDC`, `AuthMethodSCIM`,
-  `AuthMethodMigration` in `internal/service/interfaces.go`); SCIM added a value, not a column.
+- `role_audit_log.auth_method` records how the acting request authenticated. Its values are
+  `bearer`, `api_key`, `oidc`, `scim` and `migration` (`AuthMethodBearer`, `AuthMethodAPIKey`,
+  `AuthMethodOIDC`, `AuthMethodSCIM`, `AuthMethodMigration` in `internal/service/interfaces.go`).
 - `role_audit_log.actor_user_id` is nullable, so a change made by a provisioning client that is
-  not a user is recorded without inventing an account: a SCIM write stores NULL (#470), and so
-  does a data step (#524).
+  not a user is recorded without inventing an account: a SCIM write stores NULL, and so does a
+  data step.
 - Permissions are resolved per request from the user's role, so a role mapped at sign-in needs
   no new enforcement path.

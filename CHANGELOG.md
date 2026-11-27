@@ -94,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Five documentation pages describe current behaviour in the present tense, without delivery
+  history (#796). `docs/AUTHORIZATION.md` drops the phased-plan table and every ticket reference,
+  and its single sign-on section is `## Single sign-on` with a `### Security rules` subsection;
+  `docs/VALIDATION_RELEASE.md` and `docs/DOCUMENTATION_WORKFLOW.md` drop their historical runner
+  sections and open with the current steps (`## Steps in a pull request` for documentation);
+  `docs/SCREENSHOTS.md` drops the capture history, and the screenshot capture steps move to
+  `docs/DEV_TESTING_CI.md` under "Documentation screenshots"; `docs/README.md` is organised into
+  four task routes (use, install and operate, integrate, contribute) with descriptive link labels.
+  The doc tests in `internal/permissions` and `internal/config` pin the new structure.
 - The operations docs have one owner page per topic (#795). `docs/CONFIGURATION.md` is the
   reference for the backend environment variables, the secrets and what rotating them does, the
   public URLs, TLS, trusted proxies, CORS and the build-time `VITE_*` values (the variable table

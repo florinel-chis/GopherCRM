@@ -158,14 +158,7 @@ func TestOperationsOwnerPages(t *testing.T) {
 		}
 		assert.Equal(t, 1, forLines, "%s has one > **For:** header line", rel)
 
-		bullet := "- [" + name + ".md](" + name + ".md)"
-		bullets := 0
-		for _, line := range index {
-			if strings.HasPrefix(line, bullet) {
-				bullets++
-			}
-		}
-		assert.Equal(t, 1, bullets, "docs/README.md has exactly one bullet starting %q", bullet)
+		assertOneLabelledIndexBullet(t, index, name+".md")
 	}
 
 	configuration := readRepositoryFile(t, "docs/CONFIGURATION.md")
@@ -194,6 +187,52 @@ func TestOperationsOwnerPages(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, []string{owner}, holders, "only %s holds %q", owner, phrase)
+	}
+}
+
+// assertOneLabelledIndexBullet checks that the docs index has exactly one
+// bullet whose first link points at page, and that the bullet's label is a
+// description rather than the bare file name.
+func assertOneLabelledIndexBullet(t *testing.T, index []string, page string) {
+	t.Helper()
+	bullet := regexp.MustCompile(`^- \[([^\]]+)\]\(` + regexp.QuoteMeta(page) + `\)`)
+	bullets := 0
+	for _, line := range index {
+		m := bullet.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if m == nil {
+			continue
+		}
+		bullets++
+		assert.NotEqual(t, page, m[1], "docs/README.md: the bullet for %s has a descriptive label, not the file name", page)
+	}
+	assert.Equal(t, 1, bullets, "docs/README.md has exactly one bullet whose first link is (%s)", page)
+}
+
+// docsIndexRoutes are the four task routes of docs/README.md, in order.
+var docsIndexRoutes = []string{
+	"## Use GopherCRM",
+	"## Install and operate",
+	"## Integrate",
+	"## Contribute",
+}
+
+// bareFileLabelBullet matches an index bullet whose label is a file name.
+var bareFileLabelBullet = regexp.MustCompile(`^- \[[^\]]*\.(md|html|yaml|json)\]\(`)
+
+// TestDocsIndexTaskRoutes pins the docs index of #796: four task routes, no
+// pointer to local working papers or history, and descriptive bullet labels.
+func TestDocsIndexTaskRoutes(t *testing.T) {
+	text := readRepositoryFile(t, "docs/README.md")
+	var headings []string
+	for _, line := range docLines(text) {
+		if strings.HasPrefix(line, "## ") {
+			headings = append(headings, line)
+		}
+		assert.False(t, bareFileLabelBullet.MatchString(line), "docs/README.md: bullet label is a bare file name: %q", line)
+	}
+	assert.Equal(t, docsIndexRoutes, headings, "docs/README.md: the ## headings are the four task routes, in order")
+	for _, word := range []string{"docs/plans", "docs/specs", "Historical"} {
+		assert.NotContains(t, text, word, "docs/README.md")
 	}
 }
 
