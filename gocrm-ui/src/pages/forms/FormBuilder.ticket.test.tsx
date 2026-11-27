@@ -106,9 +106,15 @@ const doubleOptInSwitch = () => screen.getByLabelText(DOUBLE_OPT_IN_LABEL);
 const waitForStoredForm = async (name: string) => {
   await waitFor(() => {
     expect(screen.getByLabelText(/^Name/)).toHaveValue(name);
-  });
+  }, { timeout: 15000 });
 };
 
+// Each test renders the whole MUI FormBuilder, and the ticket title field cases
+// add several field cards and open a Select listbox, which alone takes 1-2 s and
+// went past Vitest's 5 s default when the Frontend CI job was contended (CI run
+// 45995160176). The timeouts follow docs/development/testing.md (#403): every
+// test carries an explicit 30 s timeout and every findBy*/waitFor an explicit
+// 15 s one, so the file relies on neither the 5 s test nor the 1 s query default.
 describe('FormBuilder ticket action', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -158,7 +164,7 @@ describe('FormBuilder ticket action', () => {
     expect(screen.getByLabelText(/^Lead owner/)).toBeVisible();
     expect(screen.getByText(REPEAT_LEAD_HELPER)).toBeVisible();
     expect(screen.queryByText(TICKET_HELPER)).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it('selecting the ticket action switches double opt-in on and hides the lead owner', () => {
     render(<FormBuilder />);
@@ -181,7 +187,7 @@ describe('FormBuilder ticket action', () => {
     expect(repeatLeadHelper).not.toBeVisible();
 
     expect(screen.getByText(TICKET_HELPER)).toBeVisible();
-  });
+  }, 30000);
 
   it('sends create_ticket true with double opt-in and no lead owner', async () => {
     render(<FormBuilder />);
@@ -192,7 +198,7 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.create).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({
         create_ticket: true,
@@ -202,7 +208,7 @@ describe('FormBuilder ticket action', () => {
         default_owner_id: 0,
       })
     );
-  });
+  }, 30000);
 
   it('refuses to save a ticket form without double opt-in', async () => {
     render(<FormBuilder />);
@@ -213,13 +219,13 @@ describe('FormBuilder ticket action', () => {
     expect(doubleOptInSwitch()).not.toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: /create form/i }));
 
-    const message = await screen.findByText('A form that creates tickets needs double opt-in');
+    const message = await screen.findByText('A form that creates tickets needs double opt-in', {}, { timeout: 15000 });
     // FormSwitch renders the switch label and its error in one box.
     const switchBox = doubleOptInSwitch().closest('label')?.parentElement;
     expect(switchBox).toBeTruthy();
     expect(switchBox).toContainElement(message);
     expect(formsApi.create).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('refuses to save a stored form that both creates leads and creates tickets', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -232,11 +238,11 @@ describe('FormBuilder ticket action', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
 
-    const message = await screen.findByText('A form cannot both create leads and create tickets');
+    const message = await screen.findByText('A form cannot both create leads and create tickets', {}, { timeout: 15000 });
     const group = screen.getByRole('radiogroup', { name: 'Submission action' });
     expect(group.parentElement).toContainElement(message);
     expect(formsApi.update).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('loads a stored ticket form and saves the flag unchanged', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -252,7 +258,7 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.update).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.update).toHaveBeenCalledWith(
       5,
       expect.objectContaining({
@@ -262,7 +268,7 @@ describe('FormBuilder ticket action', () => {
         default_owner_id: 0,
       })
     );
-  });
+  }, 30000);
 
   it('selecting no action sends create_lead and create_ticket false', async () => {
     render(<FormBuilder />);
@@ -284,7 +290,7 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.create).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({
         create_lead: false,
@@ -293,7 +299,7 @@ describe('FormBuilder ticket action', () => {
         double_opt_in: true,
       })
     );
-  });
+  }, 30000);
 
   it('disables the action choice for the support role', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role: 'support' })));
@@ -305,7 +311,7 @@ describe('FormBuilder ticket action', () => {
     expect(radio('Create nothing')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Create Form' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Update Form' })).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it('labels double opt-in for leads and tickets alike', () => {
     render(<FormBuilder />);
@@ -314,7 +320,7 @@ describe('FormBuilder ticket action', () => {
     expect(
       screen.queryByLabelText('Require email confirmation before the lead is created')
     ).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it('requires a lead owner when an edited ticket form switches to lead', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -327,18 +333,18 @@ describe('FormBuilder ticket action', () => {
     expect(screen.getByTestId('lead-action-settings')).toHaveStyle({ display: 'block' });
     fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
 
-    const message = await screen.findByText('Choose the owner for the leads this form creates');
+    const message = await screen.findByText('Choose the owner for the leads this form creates', {}, { timeout: 15000 });
     const ownerControl = screen.getByLabelText(/^Lead owner/).closest('.MuiFormControl-root');
     expect(ownerControl).toBeTruthy();
     expect(ownerControl).toContainElement(message);
     expect(formsApi.update).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   // #804: the ticket title field.
   const titleFieldSelect = () => screen.getByLabelText(/^Ticket title field/);
   const openTitleFieldOptions = async () => {
     fireEvent.mouseDown(titleFieldSelect());
-    return within(await screen.findByRole('listbox'));
+    return within(await screen.findByRole('listbox', {}, { timeout: 15000 }));
   };
   const titledForm = (overrides?: Partial<Form>) =>
     storedForm({
@@ -378,7 +384,7 @@ describe('FormBuilder ticket action', () => {
     fireEvent.click(listbox.getByRole('option', { name: 'Subject (subject)' }));
     fireEvent.click(radio('Create nothing'));
     expect(screen.getByTestId('ticket-action-settings')).toHaveStyle({ display: 'none' });
-  });
+  }, 30000);
 
   it('sends the chosen ticket title field on create', async () => {
     render(<FormBuilder />);
@@ -395,11 +401,11 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.create).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({ create_ticket: true, ticket_title_field: 'topic' })
     );
-  });
+  }, 30000);
 
   it('keeps a stored ticket title field when an unchanged form is saved', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -412,12 +418,12 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.update).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.update).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ create_ticket: true, ticket_title_field: 'topic' })
     );
-  });
+  }, 30000);
 
   it('sends an empty ticket title field when the lead action is chosen', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -431,12 +437,12 @@ describe('FormBuilder ticket action', () => {
 
     await waitFor(() => {
       expect(formsApi.update).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 15000 });
     expect(formsApi.update).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ create_lead: true, create_ticket: false, ticket_title_field: '' })
     );
-  });
+  }, 30000);
 
   it('blocks saving a ticket title field whose field was renamed', async () => {
     mockUseParams.mockReturnValue({ id: '5' });
@@ -448,10 +454,10 @@ describe('FormBuilder ticket action', () => {
     fireEvent.change(screen.getByLabelText(/^Field 2 name/), { target: { value: 'category' } });
     fireEvent.click(screen.getByRole('button', { name: 'Update Form' }));
 
-    const message = await screen.findByText('Choose a text or dropdown field of this form, or none');
+    const message = await screen.findByText('Choose a text or dropdown field of this form, or none', {}, { timeout: 15000 });
     const control = titleFieldSelect().closest('.MuiFormControl-root');
     expect(control).toBeTruthy();
     expect(control).toContainElement(message);
     expect(formsApi.update).not.toHaveBeenCalled();
-  });
+  }, 30000);
 });

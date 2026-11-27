@@ -166,6 +166,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     customer, and that a task rendered from `deal.title` keeps that text after an erasure
     (accepted limitation).
 
+### Fixed
+
+- `gocrm-ui/src/pages/forms/FormBuilder.ticket.test.tsx` no longer relies on Vitest's 5 s test
+  default or Testing Library's 1 s query default (#811). Each test renders the whole MUI form
+  builder, and the ticket title field cases add field cards and open a dropdown, which took
+  longer than 5 s when the Frontend CI job was contended. Every test now carries an explicit
+  30 s timeout and every `findBy*`/`waitFor` call an explicit 15 s one, as #403 did for
+  `FormBuilder.test.tsx`. Tests only.
+
 ## [1.4.0] - 2026-11-24
 
 ### Added

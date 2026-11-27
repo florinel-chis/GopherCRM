@@ -485,14 +485,15 @@ whole suite.
     files no longer depend on the runner's 5 s test default or the 1 s query default: with the
     runner default forced to 1 ms (`--testTimeout=1`) all 63 of their tests pass, where 36 failed
     before.
+  - #811 gave `src/pages/forms/FormBuilder.ticket.test.tsx` the same explicit test and query
+    timeouts after one of its tests timed out in the Frontend CI job.
 - **The check that was run:** ten consecutive runs of the three files next to one CPU-bound busy
   process per core (10 on a 10-core machine), started and stopped by the test command itself:
   63 of 63 passed in all ten runs. That load is the bound set for the check; it is not claimed
   to reproduce the original timeouts.
 - **What remains:** the sibling files (`MainLayout.branding.test.tsx`,
-  `MainLayout.permissions.test.tsx`, `routes/index.permissions.test.tsx`,
-  `FormBuilder.ticket.test.tsx`) and the rest of the suite keep the default timeouts and rely on
-  the worker cap. A machine loaded well beyond one busy process per core can still time them
+  `MainLayout.permissions.test.tsx` and `routes/index.permissions.test.tsx`) and the rest of the
+  suite keep the default timeouts and rely on the worker cap. A machine loaded well beyond one busy process per core can still time them
   out; give a file that does so the same explicit timeouts.
 
 ### Documentation screenshots
