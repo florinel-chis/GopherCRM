@@ -5,6 +5,8 @@ answers. Start with one of the three paths below. If you already know your role,
 
 ## Start here
 
+- **What can it do**: [CAPABILITIES.md](CAPABILITIES.md) describes, in plain language, what
+  GopherCRM does in each area, from leads and deals to forms, automation and privacy.
 - **Try it locally**: run the SQLite stack in
   [DOCKER.md](DOCKER.md#sqlite-flavor-no-database-server), a complete Compose stack with no database
   server, or follow [SETUP.md](SETUP.md) to run the backend and the frontend from source.
@@ -90,8 +92,8 @@ answers. Start with one of the three paths below. If you already know your role,
 - [../api/index.html](../api/index.html): the OpenAPI reference, readable offline in a browser.
 - [../api/swagger.yaml](../api/swagger.yaml) and [../api/swagger.json](../api/swagger.json): the
   same Swagger 2.0 specification as YAML and JSON.
-- [FEATURES.md](FEATURES.md): every user-facing feature, its test coverage, known gaps and
-  issues.
+- [FEATURES.md](FEATURES.md): the test-coverage matrix for contributors: every feature, its tests,
+  known gaps and issues.
 - [datamodel.md](datamodel.md): the tables the migrations and the SQLite schema step create, with
   the rules the backend applies to them.
 - [SCREENSHOTS.md](SCREENSHOTS.md): reference images of every user-facing screen.

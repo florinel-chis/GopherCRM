@@ -2,9 +2,9 @@
 
 > **For:** Anyone checking what is implemented and how it is tested. Part of the [documentation index](README.md).
 
-> **Last updated:** 2026-11-23: coverage and status of rows 1.4, 1.6, 1.12, 2.1 and 8.1–8.3, the seven webhook entities in the 10d introduction, gaps G11, G13, G15 and G35, and the count tables (E2E recounted, the others marked as not recounted). Before that, 2026-10-31 for task list and form frontend coverage (rows 6.1, 6.2) and resolved gaps G12, G33 and G36.
+> **Last updated:** 2026-11-27: the plain list of features moved to [CAPABILITIES.md](CAPABILITIES.md), and the long cells of 80 table rows moved into notes under their tables (no row, test citation or heading removed). Before that, 2026-11-23: coverage and status of rows 1.4, 1.6, 1.12, 2.1 and 8.1–8.3, the seven webhook entities in the 10d introduction, gaps G11, G13, G15 and G35, and the count tables (E2E recounted, the others marked as not recounted). Before that, 2026-10-31 for task list and form frontend coverage (rows 6.1, 6.2) and resolved gaps G12, G33 and G36.
 > **Baseline audit:** 2026-08-05; historical suite totals below have not been recounted.
-> **Purpose:** Track all user-facing features, their test coverage, known gaps, and issues.
+> **Purpose:** The feature-to-test coverage matrix for contributors: every user-facing feature, its tests, known gaps and issues. For a plain list of what GopherCRM can do, read [CAPABILITIES.md](CAPABILITIES.md).
 > **Convention:** Each feature is described from the user's perspective. Backend and frontend are on the same row.
 
 The baseline rows were checked against the code and tests during the original audit;
@@ -104,24 +104,688 @@ Status meanings:
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 1.1 | **User Registration** | User fills form (name, email, password), account created, redirected to dashboard. **Always creates a `customer`** — a client-supplied role is ignored | `registration.spec.ts`: 15 tests (valid registration, validation errors, email format, password strength, duplicate email, network error, Enter key submit, loading state, visibility toggle) | `auth_handler_test.go`: 5 tests (RoleInjection_ForcedToCustomer, NoRole_DefaultsToCustomer, DuplicateEmail_Conflict, WeakPassword_BadRequest, Success); `user_service_test.go`: TestRegister_Success, TestRegister_UserExists, TestRegister_SoftDeletedUserExists | `AuthContext.test.tsx`: handles registration; `Register.validation.test.tsx`: 7 password-policy tests | `auth_integration_test.go`: TestRegisterEndpoint; `soft_delete_email_reuse_test.go`: TestRegisterRejectsEmailOfSoftDeletedUser, TestRegisterHandlerReturns409ForSoftDeletedEmail, TestRegisterHandlerReturns409ForLiveDuplicateEmail | **covered** | -- |
 | 1.2 | **User Login** | User enters email/password, receives JWT, redirected to dashboard | `login.spec.ts`: 11 tests (render, success, wrong password, unknown email, empty fields, invalid email format, visibility toggle, navigate to registration, Enter key, protected route access, unauthenticated redirect) | `auth_service_test.go`: `TestAuthService_Login` with subtests (successful login, invalid email, wrong password, inactive user) | `AuthContext.test.tsx`: handles login successfully | `auth_integration_test.go`: TestLoginEndpoint; `user_test.go`: TestUserLogin | **covered** | -- |
-| 1.3 | **Session Refresh** | `/auth/refresh` rotates refresh tokens and returns a new access token; a token already exchanged for a successor and presented again is refused with the same 401 and revokes every refresh token of its session (its family, the successors included) in a committed transaction, audited as `token_reuse` with the owner's user id; a request that only lost the claim to a concurrent rotation is refused and ends nothing (#547). The rotation is one transaction: locking owner re-check, conditional single-use claim of the presented token, successor insert and JWT signing; a failure rolls the claim back and concurrent refreshes of one token commit exactly one successor (#103). The owner row is locked before the claim (users before refresh_tokens, #116). Only an invalid token is the generic 401; an operational failure is a retryable `503 SESSION_REFRESH_UNAVAILABLE`. The web client shares one refresh per session among all 401s, settles every waiter on success, failure or a 15 s deadline, replays each request once and only under the session it was sent with, ends the session only on a 400/401 from refresh and keeps the tokens on a timeout, network error or 5xx (#115). Across tabs, refreshes and password changes run under the Web Lock `gophercrm-session` (an in-tab lock without `navigator.locks`) and re-read the stored session after acquiring it, adopting a successor another tab already stored; a losing refresh's 400/401 ends the session only while storage still holds the token it presented, and the lock wait counts toward the 15 s deadline (#184) | -- | `auth_session_test.go`: rotation, lost claim, expiry, replay, inactive/missing-owner and post-claim failure cases; `auth_refresh_rotation_regression_test.go`: `TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}` on real databases (#547: reuse ends the family, also after expiry and for an inactive owner, the successor refused afterwards, logout-revoked, contained and family-less tokens end nothing, a lost claim ends nothing on MySQL, a reuse held after its lookups ends a successor minted meanwhile); `auth_change_password_regression_test.go`: `TestRefreshRotationLocksOwnerBeforeClaimSQLite`; `refresh_token_repository_test.go`: conditional claim and unconditional logout revocation, the revoked-row lookup, the later-row check and the family revocation (an empty family id never matches, #547); `auth_handler_test.go`: `TestRefresh_OperationalFailure_Retryable503` | `client.refresh.test.ts`: the real interceptors through an injected adapter — shared refresh with replay of GET and POST, failed refresh, missing refresh token, 401 on a replay, never-answering refresh (fake timers), 503 keeps tokens, logout and sign-in to another account during a refresh, a request of an ended session never replayed; `client.crossTab.test.ts`: two clients over shared storage and one lock — one refresh for both tabs in both response orders, adoption of a stored successor, a lost refresh without a shared lock, expiry, password change after and during another tab's rotation, single lock acquisition, sign-out while another tab holds the lock, lock-wait deadline; `sessionLock.test.ts` | `auth_session_integration_test.go`: session lifecycle | **partial** | No browser test drives the interceptor or two tabs; other tabs notice a sign-in or sign-out only on their next request; on plain HTTP (no Web Locks) tabs are not serialised |
-| 1.4 | **Logout** | `/auth/logout` revokes every refresh token of the user (no body) or the presented one, and in the same transaction increments `users.token_version`, which ends every access token issued before it (Bearer and API-key callers alike, #236); the users row is locked before any refresh-token row. The client drops its stored tokens at once, waits for a refresh already on the wire and renews privately when its access token has expired so the revocation is still authenticated | `sso.spec.ts` S16 (#634): single sign-on logout passes through the issuer's end-session endpoint, lands on `/login` and the old refresh token answers 401; `settings.spec.ts` "changes the password and the new one works on the next login" logs out through the account menu and asserts `/login`; `registration.spec.ts` logs out through `DashboardPage.logout()` before registering again | `auth_session_test.go`: logout cases; `auth_access_token_revocation_test.go`: `TestAccessTokenRevokedByLogout{SQLite,MySQL}`, `TestLogoutLocksOwnerBeforeRefreshTokens{SQLite,MySQL}`, `TestLogoutRequiresSessionStore` | `AuthContext.test.tsx` (immediate sign-out while the revocation is pending), `client.refresh.test.ts` (logout during an in-flight refresh, logout with an expired access token), `client.test.ts` | `auth_session_integration_test.go`: session lifecycle; `auth_access_token_revocation_test.go`: `TestAccessTokenRevocationAPISQLite` | **partial** | Only the single sign-on logout (S16) asserts in the browser that the old refresh token is refused; the password-session logouts assert at most the return to `/login` (G11). An access token replaced by a refresh rotation stays valid until expiry when no logout follows |
+| 1.3 | **Session Refresh** | `/auth/refresh` rotates refresh tokens and returns a new access token (more in the notes) | -- | `auth_session_test.go`, `auth_refresh_rotation_regression_test.go`, `auth_change_password_regression_test.go`, `refresh_token_repository_test.go` and 1 more file (details in the notes) | `client.refresh.test.ts`, `client.crossTab.test.ts`, `sessionLock.test.ts` (details in the notes) | `auth_session_integration_test.go`: session lifecycle | **partial** | No browser test drives the interceptor or two tabs (more in the notes) |
+| 1.4 | **Logout** | `/auth/logout` revokes every refresh token of the user (no body) or the presented one, and in the same transaction increments `users.token_version` … (more in the notes) | `sso.spec.ts`, `settings.spec.ts`, `registration.spec.ts` (details in the notes) | `auth_session_test.go`, `auth_access_token_revocation_test.go` (details in the notes) | `AuthContext.test.tsx`, `client.refresh.test.ts`, `client.test.ts` (details in the notes) | `auth_session_integration_test.go`: session lifecycle; `auth_access_token_revocation_test.go`: `TestAccessTokenRevocationAPISQLite` | **partial** | Only the single sign-on logout (S16) asserts in the browser that the old refresh token is refused (more in the notes) |
 | 1.5 | **CSRF Protection** | Closed (#362). Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does not apply. Any future cookie session must ship with session-bound CSRF protection (see #261). | -- | -- | -- | `auth_integration_test.go`: `TestProtectedRoute_CookieOnlyCredentialIsRejected` (a valid access token sent only in cookies answers 401; the same token as a Bearer header answers 200) | **covered** | The middleware, token codec and cookie helpers that were never installed have been removed; nothing in the server issues or reads a cookie |
 | 1.6 | **API Key Auth** | CLI tools authenticate via `Authorization: ApiKey gcrm_xxx`. Keys hashed with HMAC-SHA256 (legacy SHA256 fallback) | -- | `apikey_handler_test.go`: 37 suite tests; `auth_service_test.go`: TestAuthService_ValidateAPIKey with subtests incl. *key of an erased user is rejected* and *key of a deactivated user is rejected*; `crypto_test.go`: 5 table-driven tests | -- | `apikey_integration_test.go`: TestAPIKeyAuthentication; `erasure_test.go`: TestAPIKeyOfAnErasedUserCannotAuthenticate, TestAPIKeyOfADeactivatedUserCannotAuthenticate | **covered** | -- |
 | 1.7 | **Account Lockout** | Account locked for 15 min after 5 failed login attempts; expiry starts a fresh failure window, including at the exact boundary | -- | `auth_service_test.go`; `auth_lockout_test.go`: deterministic before/at/after expiry, five new failures, active lock and successful reset; `auth_login_failed_attempts_test.go` (`TestLoginFailedAttemptsConcurrent{SQLite,MySQL}`): parallel failures each counted, lock at five | -- | `auth_session_integration_test.go`: identical public failures and persisted expiry/reset through real HTTP + SQLite | **covered** | Expiry is tested with an instance-local clock, without sleeping |
 | 1.8 | **Password Complexity** | Min 10 chars with uppercase, lowercase, digit and special char, and at most 72 bytes (the bcrypt limit): register, `POST /users`, change-password and reset confirm answer 400 `password must be at most 72 bytes long` before the service is called (#397) | `registration.spec.ts`: validates password requirements | `password_test.go`: TestValidatePasswordComplexity (8 cases), TestValidateNewPassword (6 cases, byte length); `auth_handler_test.go`: TestRegister_WeakPassword_BadRequest; `auth_password_length_test.go`: TestPasswordLengthLimit (the four routes) | `Register.validation.test.tsx`: 7 tests, including the regression that `Password1` used to be accepted | -- | **covered** | The frontend zod schema now mirrors `internal/utils/password.go` |
-| 1.9 | **Token Storage** | The session is one record under `gophercrm_session` (session id, access token, refresh token or null, account, persistence choice), in `sessionStorage` unless "remember me" is chosen, in which case `localStorage` (#184). It is read whole from one storage (sessionStorage first), so a session without a refresh token never takes one from the other storage; a new sign-in removes everything from both storages and writes a record with a fresh id. The legacy keys `gophercrm_token` / `gophercrm_refresh_token` are written after every record as mirrors and never read while a record exists; a record whose `gophercrm_token` mirror is removed is no session. Malformed records are removed; a legacy two-key session is migrated once under a deterministic `legacy-<sha256>` id. A single sign-on session's record also holds `idToken`, the ID token of the sign-in, kept through refreshes and password changes and sent as `id_token_hint` at logout; a record without it still parses (#634) | -- | -- | `client.sessionRecord.test.ts`: record shape, the `idToken` of an SSO session through a refresh and a password change and handed to the logout (#634), no fall-through, sessionStorage precedence, mirrors, migration, orphan refresh token, digest id, no migration beside a record, mirror removal, malformed records, clear and rotation, a read between the record and mirror writes; `client.test.ts`: persist/non-persist and cleanup; `client.refresh.test.ts`: "startSession removes a predecessor refresh token when the response omits one", "never pairs an access token with a refresh token from the other storage" | -- | **covered** | Frontend-only behaviour; no E2E test asserts token lifetime across a tab close |
-| 1.10 | **Password reset** | `/forgot-password` requests a reset email; `/reset-password?token=...` validates the new password and confirms the reset, then offers sign-in. Confirmation validates and hashes before writing, then claims the token, writes the password, clears the lockout, increments `users.token_version` (ending every earlier access token, #236), revokes every refresh token and revokes every API key of the account (#526) in one transaction (#102). While `security.sso.allow_password` is off (the default, #457), an account linked to single sign-on (a linked OpenID Connect identity) is issued no token and its token is refused with the generic 400 (#444); with it on, such an account resets like a local one. Since #554 the request is answered at once: a background queue (one worker, up to 100 waiting requests) issues the token, mails the link and writes the audit row; a login email change (own profile, admin edit, SCIM replace or patch) spends the account's unused reset tokens in the same write, so an earlier link stops working, while other profile edits keep it | -- | `auth_session_test.go`: request/confirm reset cases; `auth_password_reset_regression_test.go`: `TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}` on real databases (weak/unhashable passwords, unknown/spent/expired tokens, expiry between lookup and claim, inactive/erased/missing owners, owner deactivated or soft-deleted between lookup and owner check, injected update and revocation failures with same-token retry, competing confirmations); `auth_reset_owner_race_test.go`: `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL` (owner disabled by a second connection after the token lookup under REPEATABLE READ must be refused, not reactivated); `password_reset_token_repository_test.go`: conditional claim; `auth_password_reset_sso_test.go`: `TestPasswordResetSSOAccount{SQLite,MySQL}` (no policy wired, so off: request and confirm refused for an account with a `user_identities` row, password-account controls), `TestSSOAccountPasswordPolicy{SQLite,MySQL}` (#457: reset request, confirm and login for a linked and an unlinked account with the setting off, unset and on, and a password set while on refused once off); `cmd/auth_password_reset_sso_wiring_test.go`: `TestPasswordResetSSOAccountWired`, `TestSSOPasswordPolicyWired`; `auth_password_reset_queue_test.go`: `TestPasswordResetQueue` (#554: answer before the issue, submission order, full and stopped queue refused and audited, request facts on the audit row, drain on stop, a panicking item, no email in the logs); `auth_password_reset_queue_handler_test.go`: `TestRequestPasswordResetQueued`; `cmd/password_reset_runtime_test.go`: `TestPasswordResetQueueProductionWiring` (the 200 within 2 s while the SMTP relay holds the delivery, then the mail and one unused token); `auth_reset_email_change_test.go`: `TestResetLinkEmailChange{SQLite,MySQL}` (own, admin, SCIM replace and patch email changes end the link; name-only and unchanged-email edits keep it; confirm-then-change and change-then-new-request); `user_repository_test.go`: `TestUpdateFieldsEmailSpendsResetTokens` | `ForgotPassword.test.tsx`, `ResetPassword.test.tsx`: validation, submission, confirmation, request failure and missing token | `auth_session_integration_test.go`: `TestPasswordResetRoundTrip`; `auth_access_token_revocation_test.go`: `TestAccessTokenRevocationAPISQLite` (the API key is refused after the reset) | **partial** | Browser reset journey has no E2E test; production delivery requires SMTP configuration |
-| 1.11 | **Password change** | `/settings/profile` changes the password with the current one. One transaction: locking owner read, the verified hash re-checked, the current refresh token claimed, the new hash written, `users.token_version` incremented, every other refresh token and every API key of the account revoked (#526, an API-key caller's own key included) and a replacement session issued; any failure before the commit rolls all of it back (a failed COMMIT is ambiguous and answered 500). The page stores the replacement pair in the storage the session already used; every access token issued before the change, the caller's own included, is refused from then on (#236), and only the renewed one works. A presented token that is not a live session of the caller is `409 SESSION_STALE`; API-key requests never receive session credentials (#116) | `settings.spec.ts`: "changes the password and the new one works on the next login" (renewed pair stored, pre-change refresh token rejected), "rejects a wrong current password with the server message" | `auth_change_password_regression_test.go`: `TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}` (MySQL concurrency on a schema built by the real migrations); `auth_session_test.go`: `TestAuthService_ChangePassword`; `auth_credential_revocation_test.go`: `TestCredentialRevocation{SQLite,MySQL}`; `auth_handler_test.go`: `TestChangePassword_*` | `Profile.test.tsx` (renewed and not-renewed copy, 409), `client.refresh.test.ts` (`ApiClient.changePassword`: storage choice, waiting for an in-flight refresh, expired access token renewed and body rebuilt, 409 surfaced, late answer after sign-out; another tab signing in another account or signing out: nothing sent, written or revoked as the wrong account) | `auth_session_integration_test.go`: `TestChangePasswordRenewsCurrentSession`, `TestChangePasswordWithAPIKeyNeverIssuesSession` | **covered** | None for logins racing the change (#336) |
-| 1.12 | **OpenID Connect sign-in, backend (#435)** | `POST /auth/oidc/start` returns the issuer's authorization URL (code flow, PKCE S256, state, nonce, redirect URI `APP_BASE_URL/auth/callback`; one single-use `oidc_login_attempts` row holding the HMAC of the state, ten minutes); `POST /auth/oidc/callback` `{code, state}` spends the attempt, exchanges the code, verifies the ID token (signature, `iss`, `aud`, `exp`, nonce) and returns the login token pair. Identity = exact `(iss, sub)` in `user_identities`; a subject with surrounding whitespace is refused; for an Entra ID issuer an unknown `(iss, sub)` whose `tid` equals the configured issuer's tenant segment byte for byte and whose `oid` is the subject of a `source` `scim` identity under that issuer signs in as that SCIM-created account (refused when it is deactivated or erased) and links `(iss, sub)` in the same transaction; anything else falls through to provisioning, never by email (#505); first-match role mapping on `groups`/`roles`; a group overage (`groups` in `_claim_names`) is ignored without a `groups` mapping, resolved for an Entra ID issuer through Microsoft Graph `getMemberObjects` (security groups, delegated `User.Read` added to the start scope, one 5 s budget, at most `OIDC_GRAPH_MAX_PAGES` pages, any failure refused as `groups_unavailable`, #450) and refused for any other issuer; with a `groups` mapping, an ID token without a `groups` claim and no Entra overage, the groups are read from the issuer's userinfo endpoint (#451: one GET with the exchange's access token, 5 s, no redirects or proxy, 1 MiB, JSON only; the userinfo `sub` must equal the token's or `userinfo_subject_mismatch`; only `groups` is read; any other failure `groups_unavailable`); JIT provisioning needs an email no account (erased included) holds in any case and takes `given_name`/`family_name`, or `name` split at the first whitespace when both are absent (#453); the attempt's PKCE verifier and nonce are blanked once it is used or found expired, attempts older than a day are pruned by the stale bulk-operation sweep, and every `oidc_sign_in` log line carries `request_id` and `attempt_id` (#453), the refusal, 503 and success lines also `audit_id`, the id of the sign-in audit row (#454, row 1.14); the mapped role is re-applied through the governed write (last-admin rule, audit `auth_method` `oidc`); `email_verified` is not required or read; while `security.sso.allow_password` is off (the default, #457), a linked account is refused password reset (#444) and password login (the generic 401); with it on it may set and use a password, which keeps working after the identity provider removes the person, so offboarding must also deactivate the account. 404 when SSO is off, 503 `SSO_UNAVAILABLE` for an unconfigured or unreachable issuer, 401 for every refusal. A 200 start sets the sign-in cookie `gophercrm_oidc_state` (the state; `HttpOnly`, `SameSite=Lax`, `Max-Age=600`, `Path=<API_PREFIX>/auth/oidc`, sent only over HTTPS when `APP_BASE_URL` is https); the callback spends the attempt and then refuses a missing cookie as `binding_missing` and another sign-in's as `binding_mismatch`, so a sign-in finishes only in the browser that started it, and a 200 clears the cookie; the SPA and the API must be on the same site (#528); a single sign-on refresh session can be rotated, and renewed by a password change, only until `session_started_at + 24` hours, with its refresh tokens expiring then, while password sessions keep `REFRESH_TOKEN_EXPIRY_DAYS` (#548). Sign-out (#634): the callback also returns `id_token`; the refresh token records `provider_session_hash` (the keyed hash of the issuer and the ID token's `sid`, copied by rotation and the password-change renewal); `POST /auth/logout` with `{id_token_hint}` answers `end_session_url` (the discovered `end_session_endpoint` plus `id_token_hint`, `post_logout_redirect_uri=APP_BASE_URL/login` and `client_id`) only after the revocation, only for a hint that verifies for the configured issuer and client (expiry not checked) and whose `(iss, sub)` is linked to the caller, within 5 s, never failing the logout; the unauthenticated `GET /auth/oidc/frontchannel-logout?sid=&iss=` (strict tier, `iss` optional but exact when sent, `Cache-Control: no-cache, no-store`, no frame headers) logs out every account with a live session under that `sid`, all its sessions, with one `logout` audit row each | `sso.spec.ts` (#446, against the local test issuer `scripts/e2e/oidc-issuer`): first sign-in and JIT provisioning, role mapping and its re-application, no matching claim, the last-admin rule, an email taken by a local account in another letter case, a deactivated account, single-use callback and a tampered state, break-glass password login, and `allow_password` governing the reset mail; S13 (#528): a callback opened in a fresh browser or in one that started its own sign-in is refused and audited; S16 (#634): logout passes through the issuer's end-session endpoint, which accepts the hint and the exact `post_logout_redirect_uri`, lands on `/login` and the old refresh token is refused | `auth_oidc_signout_test.go`: `TestRefreshProviderSession`, `TestFrontChannelLogout`, `TestFrontChannelLogoutMySQL`, `TestEndSessionURLHost` (#634); `internal/idkit/sso`: `TestCallbackProviderSession`, `TestEndSessionURL`, `TestFrontChannelLogout` (#634); `auth_oidc_logout_test.go`: `TestLogoutEndSession`, `TestFrontChannelLogout` (#634); `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired_SignOut` (#634); `cmd/migrate/refresh_token_provider_session_migration_test.go`: `TestRefreshTokenProviderSessionMigrationFiles`, `TestRefreshTokenProviderSessionMigration` (#634); `auth_oidc_test.go`: `TestOIDCSignInSQLite`, `TestOIDCSignInMySQL` (one shared table of 70 top-level subtests against an in-process TLS issuer that checks PKCE and the redirect URI and serves a fake Microsoft Graph and a fake userinfo endpoint; #453 added `log_correlation`, `attempt_cleared_when_used`, `attempt_cleared_when_expired`, `attempt_claim_lost_after_read`, `attempts_pruned_after_a_day`, `names_split_from_name`, `names_absent`; #505 added the eleven `scim_oid_*` subtests: the link through a real SCIM create, five one-input fall-throughs (another tenant, the tenant in another letter case, no `oid`, a non-Entra issuer, an `oid` matching a sign-in's row), email alone, deactivated, erased and two concurrent links; #528 added `binding_missing`, `binding_mismatch` and `start_cookie_secure`; #579 added `sign_in_records_session`; #463 added `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal` and `audit_id_on_refusal_log`; `TestOIDCSignInMySQL` alone also runs `last_admin_race/after_handover`, outside the shared table: one subtest whose name contains a slash, so the MySQL root runs 71 top-level subtests (the 70 table cases plus `last_admin_race/after_handover`) and the SQLite root runs 70 top-level subtests (#513, MySQL/MariaDB only: the sign-in of the admin a concurrent SCIM group handover just promoted, mapped to sales, is refused `last_admin`)), `auth_sso_session_lifetime_test.go`: `TestSSOSessionLifetimeSQLite`, `TestSSOSessionLifetimeMySQL` (#548: rotation within and past 24 hours, a row without a start, password sessions unchanged, the capped successor, and the password change within and past the limit; `sign_in_records_session` asserts the capped expiry), `auth_last_admin_guard_test.go`: `TestLastAdminGuard` (#513, #638: the one last-admin guard counts the locked rows of the accounts a write touches and judges the state after it); `auth_governed_last_admin_test.go`: `TestGovernedLastAdminAfterHandoverMySQL` (#513, the governed self-deactivation behind `/users` racing the same handover), `TestOIDCClaimExpiredClearFails`, `TestOIDCLimitsMatchModels`, `TestOIDCGraphDefaults`; `internal/idkit/oidc`: `TestOIDCProfileNames`, `TestOIDCHTTPClient`, `TestOIDCSubjectAndClaimRules`, `TestStrictStringArray`, `TestErrors`, `TestAuthRequest`, `TestClientAssertion`; `internal/idkit/entra`: `TestOIDCEntraTenant`, `TestOIDCResolveEntraGroups`, `TestEntraIssuerAndNextLink`, `TestEntraLinkHint`, `TestEntraGroupResolverLimits`; `auth_oidc_handler_test.go`: `TestOIDCHandler` (incl. `request_id_reaches_service` and the sign-in cookie set, passed on and cleared, #528); `bulk_operation_recovery_runtime_test.go`: `TestBulkOperationRecoveryOIDCAttemptPruning`; `cmd/bulk_recovery_runtime_test.go`: `TestBulkOperationRecoveryProductionWiring` (the boot sweep prunes day-old attempts); `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired`; `auth_password_reset_sso_test.go`: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestSSOAccountPasswordPolicy{SQLite,MySQL}`; `cmd/auth_password_reset_sso_wiring_test.go`: `TestPasswordResetSSOAccountWired`, `TestSSOPasswordPolicyWired`; `cmd/migrate/user_identities_migration_test.go`: `TestUserIdentitiesMigrationFiles`, `TestUserIdentitiesMigration`; `cmd/migrate/user_identity_source_migration_test.go`: `TestUserIdentitySourceMigrationFiles`, `TestUserIdentitySourceMigration`; `models/user_identity_source_upgrade_test.go`: `TestUserIdentitySourceSQLiteUpgrade` (#505) | -- | `TestOIDCRoutesWired` (the production router) | **covered** | The SPA half is row 1.13 (#436). SCIM is rows 1.15 to 1.20. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435) |
-| 1.13 | **OpenID Connect sign-in, SPA (#436)** | `GET /auth/registration` also returns `sso_enabled` (the effective switch; false when it cannot be read). The login page shows "Sign in with single sign-on" only while it is true; the button calls `POST /auth/oidc/start` and goes to the returned authorization URL, a failed start shows "Single sign-on is unavailable. Sign in with your password." The public `/auth/callback` page reads `code`/`state` once, removes them from the address with a replace navigation, posts them once to `POST /auth/oidc/callback` and stores the session in sessionStorage, with the returned ID token; every failure shows one generic message with a link to `/login`. Logout of such a session posts `{id_token_hint}` and, when the answer carries `end_session_url`, sends the browser there (the provider returns it to `/login`); a password session posts no body and goes to `/login` as before (#634). Settings > Single sign-on (`/settings/sso`, `settings.sso_manage`) edits `GET`/`PUT /settings/sso` with a write-only client secret (kept, replaced or cleared), a client certificate and its write-only private key (shown only as set, with thumbprint and expiry; used for a signed client assertion instead of the secret while set, #633), the ordered role mapping and the "Allow password sign-in and password reset for accounts linked to single sign-on" switch (`allow_password`, #457) with an always-shown offboarding warning | `login.spec.ts`: "hides the single sign-on button when single sign-on is disabled"; `sso.spec.ts` (#446): the settings screen saved by an admin (secret shown only as set, refused to sales), the browser round trip login page → issuer → `/auth/callback` → app with the admin and sales navigation, and the generic refusal with its link back to `/login` | `auth_registration_test.go`: `TestRegistrationStatus_*` (incl. `TestRegistrationStatus_SSOEnabled`, `TestRegistrationStatus_SSOReadErrorReportsDisabled`); `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired` (asserts `sso_enabled` through the production router) | `Login.test.tsx` (button shown/hidden/missing field/failed probe, start, failed start); `AuthCallback.test.tsx` (under StrictMode: one POST, REPLACE without query, sessionStorage-only session, the ID token kept in the record, 401/503/missing parameters/`error`); `AuthContext.test.tsx` (the ID token stored, the hint sent and `end_session_url` followed, a password logout without one, #634); `client.test.ts` (`authApi.logout` body and answer, #634); `MainLayout.test.tsx` (no `/login` navigation while leaving for the provider, #634); `SSOSettings.test.tsx` (secret never rendered, absent/typed/cleared secret, mapping order, added row, unknown role id and failed role list, the `allow_password` switch and its offboarding warning); `routes/index.test.tsx`, `routes/index.permissions.test.tsx`, `layouts/MainLayout.permissions.test.tsx` | -- | **covered** | The browser tests use the local test issuer; a live Entra ID or Okta check stays manual. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#spa-sign-in-and-settings-436) |
-| 1.14 | **Sign-in audit log (#454, #455, #466, #468, #470, #471, #550, #551, #553)** | One pseudonymous `auth_audit_log` row per successful password sign-in, single sign-on callback and successful refresh that passes request validation, per successful SCIM user create, replace or patch (#470, #471, method `scim`, outcome `success`, the account's user id; a refused write writes none), per password change, password reset request, reset completion and logout that reaches the service (#550, methods `password_change` with `invalid_credentials`, `session_stale`, `account_inactive` or `account_erased`; `reset_request` with success and the account's user id, `account_unknown` and no user id, `account_inactive`, `account_erased` or `sso_account`, the same 200 in every case, written by the password reset queue's worker after the answer (#554), and `unavailable` with no user id for a request the full or stopped queue drops; `reset_confirm` with success, `token_invalid` (no user id for an unknown, spent or expired token), `account_inactive`, `account_erased` or `sso_account`; `logout` with success or `internal_error`), per API key creation, revocation and refused re-enable of a revoked key (#551, methods `api_key_create` and `api_key_revoke` with success, `api_key_enable` with `key_revoked`; the caller's user id and the key's id in `api_key_id`, never the key, its prefix or its name; a rename, a read and any other refusal write none), and one row per method, reason, `user_id`, client network and UTC minute for refused `ApiKey` credentials (#466), refused password sign-ins and refreshes, and refused SCIM authentications (#468, #553: method `scim`, reasons `token_missing`, `token_invalid`, `token_revoked`, no user id), whose `attempts` counts them (one upsert on a unique internal `aggregate_key`; the row keeps the first refusal's request id, user-agent family and `created_at`): method, outcome, a stable reason code, the user id when the account was found, the claimed attempt id, the request id (only when it matches `^[A-Za-z0-9._:-]{1,64}$`), an HMAC `subject_ref` of a single sign-on identity refused after the ID token verified, the `roles`/`groups` values the mapping used, the client's `/24` or `/48` network and a fixed-vocabulary user-agent family. No email, name, subject, token, code, state, nonce, password, full IP or full user agent. Written after the sign-in's transaction; a failed write is logged once (`audit_write_failed`) and changes no answer. Bearer failures, 400s and `POST /auth/oidc/start` write nothing. The moderate tier runs before authentication on protected routes (#466), so a throttled request looks up no key and writes no row; password, refresh, single sign-on and reset rows are bounded by the strict `/auth` tier, password change and logout rows by the authenticated tier. Rows older than `AUTH_AUDIT_RETENTION_DAYS` (environment only, default 90, at most 36500) are pruned by the stale bulk-operation sweep; erasure leaves them. Read through `GET /audit/sign-ins` (#455, guarded by `audit.sign_ins_view`, admin only among the system roles): newest first (`created_at`, then `id`, descending), `offset`/`limit` pagination, filters `method` (twelve methods), `outcome`, `reason` (exact, case-sensitive, 44 codes), `user_id`, `from` (inclusive) and `to` (exclusive); an unknown value, a bad `user_id` or date, or `from` not before `to` is 400 `VALIDATION_ERROR` keyed by the parameter. Rows carry the stored columns only. Settings > Sign-in audit (`/settings/sign-in-audit`) shows them with the same filters | `sign-in-audit.spec.ts` (#455): the admin login and a refused unknown-email login are listed, Outcome = refused narrows to `invalid_credentials`; a sales user has no nav entry | `auth_audit_test.go`: `TestAuthAuditOutcomes{SQLite,MySQL}` (every password, refresh and API-key reason with its `user_id`, including `token_reuse` and a log line without token, hash or family id (#547); #550: the password change, reset request, reset completion and logout outcomes, including a lost token claim and a used stored row naming the owner; #551: `api_key_change_rows`), `TestAuthAuditOIDCReasonCoverage` (all 25 `oidcRefuse`/`oidcRefuseWith` codes, taken from the registry constants the writer scan finds, the three 503 codes, `sso_disabled`, `internal_error`, and `audit_id` on the log line), `TestAuthAuditPrivacy{SQLite,MySQL}`, `TestAuthAuditSubjectReference`, `TestAuthAuditWriteFailure`, `TestAuthAuditPrune{SQLite,MySQL}`, `TestAuthAuditClaimValues`, `TestAuthAuditUnavailableRefresh`; `auth_audit_aggregate_test.go`: `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}` (#466: 500 refusals of one /24 in one minute are one row with `attempts` 500, minute and network boundaries, IPv6 /48, reason and user split; #553: `password_and_refresh_refusals_share_a_row`, `scim_refusals_share_a_row`, `success_rows_stay_one_each`; concurrent upserts, SQLite upgrade of a #454 table); `auth_oidc_test.go`: `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused` checks the audit row; `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`); `request_context_test.go`: `TestClientNetwork`, `TestUserAgentFamily`, `TestClientInfoContext`, `TestSafeRequestID`; `auth_audit_apikey_test.go`: `TestAuthAuditAPIKeyChanges` (#551: one row for a 201, a revoking 200 and the 409 for a revoked key, the race where the rename finds the key revoked, no row for a rename, reads and other refusals, no key material in any column, unchanged answers without the audit writer or when the write fails); `auth_audit_handler_test.go`: `TestAuthHandlerAudit` (#550: one record per change-password, reset, confirm and logout request that reaches the service, unchanged answers, none for a 400, identical reset-request bodies); `middleware/auth_test.go`: `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`; `bulk_operation_recovery_runtime_test.go`: `TestBulkOperationRecoveryAuthAuditPruning`; `config_test.go`: `TestLoadAuthAuditRetentionDays`; `cmd/bulk_recovery_runtime_test.go`: `TestBulkOperationRecoveryProductionWiring` (boot sweep removes a 91-day-old row); `cmd/migrate/auth_audit_log_migration_test.go`: `TestAuthAuditLogMigrationFiles`, `TestAuthAuditLogMigration`; `cmd/migrate/auth_audit_log_attempts_migration_test.go`: `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration` (#466); `cmd/migrate/auth_audit_log_api_key_id_migration_test.go`: `TestAuthAuditLogAPIKeyIDMigrationFiles`, `TestAuthAuditLogAPIKeyIDMigration` (#551, migration `20261129120006_auth_audit_log_api_key_id`); `auth_audit_list_test.go`: `TestAuthAuditList{SQLite,MySQL}` (order with an older higher id, every filter, `from`/`to` boundaries, pagination), `TestAuthAuditReasonVocabulary` (44 codes, twelve methods, two outcomes from the registry in `auth_audit_vocabulary.go`, swagger enums equal the Go sets); `auth_audit_vocabulary_test.go`: `TestAuthAuditWritersUseRegisteredValues` (#549: every writer site uses a registered constant, every declared constant is registered and written, self-checks on snippets); `auth_audit_log_handler_test.go`: `TestAuthAuditLogHandler` (rows and meta, filters passed, every registered method, outcome and reason accepted, ten 400s, 403 for sales/support/customer/a custom role without the key, 200 with only the key) | `signInAudit.test.ts` (option lists equal the swagger enums, only set filters sent); `SignInAudit.test.tsx` (rows with `formatDate` and the Attempts column, filters reset to offset 0, empty state, API error); `index.permissions.test.tsx`, `MainLayout.permissions.test.tsx` (route and nav entry only with `audit.sign_ins_view`) | `cmd/auth_audit_wiring_test.go`: `TestAuthAuditWired` (the production router; #553: refused logins and refreshes carry an `aggregate_key` and two identical refused logins count `attempts` 2; #547: a reused refresh token is 401 with a `token_reuse` row; #550: change-password, reset request for a known and an unknown email, confirm with an unknown token, logout; #551: an API key create, revoke and refused re-enable, each with `api_key_id`); `TestAuthAuditAPIKeyFailuresBounded` (#466: 250 bogus keys from one /24 get 401 or 429, at most one row per minute, `attempts` equal to the 401s, a valid key writes nothing); `TestSignInAuditRouteWired` (admin Bearer and admin `ApiKey` 200 newest first, sales `ApiKey` 403) | **covered** | No CSV export and no sort parameter. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log) |
-| 1.15 | **SCIM 2.0 provider tokens and discovery (#468, #490)** | `/scim/v2` outside the API prefix, authenticated by SCIM provider tokens sent as `Authorization: Bearer` (scheme case-insensitive, token not trimmed). A token is `scim_` + 64 hex characters, shown once; `scim_tokens` stores only its HMAC under `API_KEY_SECRET` (`hmac$` form), with `last_used_at` (best-effort) and `revoked_at` (migration `20261126120000_add_scim_tokens`). Admin API guarded by `settings.scim_manage` (admin-only: no custom role can hold it, #524): `GET /settings/scim/tokens` (newest first), `POST` (`{name}`, 1 to 100 characters; 201 `{token, scim_token}`), `DELETE /settings/scim/tokens/:id` (idempotent revoke; 400 bad id, 404 unknown). The SPA screen Settings > SCIM tokens (`/settings/scim-tokens`, #490), routed and shown in the navigation only with `settings.scim_manage`, lists the tokens (revoked ones kept, their revoke action disabled), creates one and shows it once with a copy button, and revokes behind a confirmation. A user's JWT or API key is refused on `/scim/v2`, and a SCIM token is refused on the API. Every refusal is the same 401 in the RFC 7644 error shape (`application/scim+json`) and is counted in the sign-in audit row of its reason, client network and UTC minute (method `scim`, `token_missing`/`token_invalid`/`token_revoked`; #553); since #555 an accepted token is counted per token (the SCIM token limit, `SCIM_RATE_LIMIT_PER_MINUTE`/`SCIM_RATE_LIMIT_BURST`, default 1500/min, burst 150, maximum 6000/1000) and a refusal per client address (the SCIM refusal limit, 10/min, burst 5), and a request over either is answered 429 in the same shape with no audit row. With a valid token, `GET /scim/v2/ServiceProviderConfig`, `/Schemas` (core User: `userName`, `name`, `emails`, `active`; since #506 core Group: `displayName`, `members`) and `/ResourceTypes` (User at `/Users`, Group at `/Groups`), `meta.location` under `PUBLIC_BASE_URL` | `settings-scim-tokens.spec.ts` (#490): the admin opens the screen from the navigation, creates a token shown once (`scim_` + 64 hex, equal to the POST answer), gets 200 on `/scim/v2/ServiceProviderConfig` with it, revokes it through the confirmation (row kept with a revoked date and a disabled action), and the token then gets 401 | `scim_auth_test.go`: `TestSCIMAuth` (each reason: 401, SCIM body and content type, one audit record; no token in the log, nor in the throttle lines), `TestSCIMRateLimits` (#555, #635: a 1650-request cycle from one address, per-token counting, refusals per address of any method, accepted requests never spend the refusal budget, the switches, defaults and caps); `scim_token_handler_test.go`: `TestSCIMTokenHandler` (201/200/404/400, 403 for sales/support/customer/a custom role without the key, 2xx with only the key); `scim_handler_test.go`: `TestSCIMDiscoveryDocuments` (RFC 7643 shapes, every §7 characteristic); `internal/idkit/scim`: `TestWriteError`, `TestDiscoveryLocations`; `scim_token_test.go`: `TestSCIMTokenSchemaSQLite` | `scimTokens.test.ts` (methods, URLs and body); `SCIMTokens.test.tsx` (dates through `formatDate` with the fallback, revoked row disabled, empty and error states, the token shown once and gone from the DOM, the query and mutation caches and storage after Done, a blank name and a server 400, revoke only after Confirm); `index.permissions.test.tsx` and `MainLayout.permissions.test.tsx` (route and navigation entry only with `settings.scim_manage`) | `auth_scim_token_test.go`: `TestSCIMTokenStore{SQLite,MySQL}` (HMAC stored, no column holds the plaintext, list without hash, idempotent revoke, every reason, case and padding refused); `cmd/scim_wiring_test.go`: `TestSCIMRoutesWired` (no header, unknown token, revoked token, admin JWT, admin API key: 401, each adding 1 to the `attempts` of its reason's `scim` row; valid token 200 on all three; SCIM token 401 on `/api/v1/users`; no token or hash logged), `TestSCIMStrictTierWired` (sixth refusal 429, no audit row, a valid token from that address still 200, an unrouted `OPTIONS` 404 with no audit row), `TestSCIMTokenTierWired` (#555, #635: 100 rapid requests 200 with the defaults; with a configured burst of 3 the fourth is 429 from another address while a second token is 200); `cmd/migrate/scim_tokens_migration_test.go`: `TestSCIMTokensMigration{Files,}` | **covered** | The Users read is row 1.16, the Groups row 1.20. No `/Schemas/{id}` or `/ResourceTypes/{id}` yet; an unknown `/scim/v2` path gets the router's default 404. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning) |
-| 1.16 | **SCIM 2.0 user read (#469)** | Behind the same rate limits and SCIM token: `GET /scim/v2/Users/{id}` (200 with a core User resource, or the SCIM 404 `User not found` for a malformed id, an unknown, erased or customer account, or one not linked to the issuer) and `GET /scim/v2/Users` (a ListResponse, id ascending, `Resources` always an array). Since #529 only managed accounts are served: live, not `customer` (staff and `custom`), with a `user_identities` row whose issuer equals the effective SSO issuer byte for byte (`source` `scim` or `oidc`), applied in SQL so `totalResults` counts only them; an account created locally (such as the local administrator), one linked only under another issuer or a trailing-space issuer, and every account when no issuer is set, are absent and 404; a deactivated one has `active` false. Resource: `id`, `userName` and one primary `work` email (the email), `name.givenName`/`familyName`, `active`, `meta` (`created`/`lastModified` RFC 3339 UTC, `location` under `PUBLIC_BASE_URL`), and `externalId`: the subject of the lowest-id `user_identities` row whose issuer equals the effective SSO issuer byte for byte (omitted without one). Paging: `startIndex` 1-based (below 1 is 1), `count` default and cap 100, negative 0, 0 only the total; a non-integer is 400 `invalidValue`. The only filter is `userName eq "<value>"` (attribute optionally URN-prefixed, attribute and operator case-insensitive, value a JSON string); anything else is 400 `invalidFilter`. Candidates come from `LOWER(email) = LOWER(?)` and each is judged in Go with ASCII-only case folding, so padded, accented and Unicode-fold variants (U+017F, U+212A) that `utf8mb4_unicode_ci` returns are refused. `attributes`/`excludedAttributes` are ignored | - | `scim_user_handler_test.go`: `TestSCIMUserHandler` (paging defaults, clamping and `invalidValue`, every refused filter with the exact body and no service call, the 404 shape, `"Resources":[]`, the SCIM 500), `TestSCIMUserData` (the conversion of the CRM user to the SCIM User resource); `internal/idkit/scim`: `TestParseUserFilter`, `TestUserNameMatches` (its long-s and Kelvin rows fail with `strings.EqualFold`), `TestParsePaging`, `TestUserResource`, `TestWriteErrorType` | - | `auth_scim_users_test.go`: `TestSCIMUsersSQLite`, `TestSCIMUsersMySQL` (one table on the real repository and service, MySQL 8 and MariaDB: exact, ASCII case, unknown, pad, accent, long-s and Kelvin variants with the collation's candidate asserted, customer, erasure through the real path by id, list and former email, deactivated, paging windows and the 100 cap, externalId under the issuer, lowest id; #529: a local admin, an account without identity, another issuer and a trailing-space issuer are not listed, counted, filtered or read, an empty issuer serves none, an `oidc`-linked account is served); `cmd/scim_wiring_test.go`: `TestSCIMUsersWired` (Entra and Okta shapes with `externalId` from the wired SSO settings, unknown/customer/erased/local-admin names, the unfiltered total without the local admin, 404 for the erased, customer and local admin ids, `invalidFilter` for `externalId eq`, 401 without a token) | **covered** | Create and replace are row 1.17, patch row 1.18, delete row 1.19, the Groups row 1.20; still later slices are `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths. The SCIM token limit (row 1.15) bounds a provider's sync per token. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-read-469) |
-| 1.17 | **SCIM 2.0 user create and replace (#470)** | Behind the same rate limits and SCIM token: `POST /scim/v2/Users` (201, `Location` = `meta.location`) and `PUT /scim/v2/Users/{id}` (200), any Content-Type. The body is read up to 64 KiB and must be one JSON object; it reads `userName`, `externalId`, `name.givenName`/`familyName`, `active` (JSON boolean) and `roles[].value`, ignores everything else (a sent password is never used); a malformed, oversized or wrongly typed body is 400 `invalidSyntax` without a service call. The role comes from the first SSO mapping entry with claim `roles` whose value equals a sent value exactly; no match, a missing role row or the `customer` role is 400 `invalidValue`. A create writes the user (unusable random password, active unless `active` false), its `user_identities` row (effective SSO issuer, `externalId` as subject, `source` `scim`, so a later OIDC sign-in with that `sub`, or an Entra ID first sign-in whose `oid` is that `externalId` and whose `tid` is the configured tenant (#505), uses the account) and a `user_role_changed` audit row (`auth_method` `scim`, `actor_user_id` NULL) in one governed transaction (`admin set → users → roles → user_identities`). An address another account holds (live or erased, any letter case; on MySQL/MariaDB also padded and accented variants) or a linked `externalId` is 409 `uniqueness`; a bad `externalId`, an empty or long `userName`, a name part over 100 characters, no issuer or a non-address `userName` is 400 `invalidValue`. Replace overwrites name, email and role (an absent name clears, an absent `active` keeps; `active` false ends every session of the account since #471, row 1.18), ignores `externalId`, writes the audit row only on a role change, answers 404 for an unknown, erased, customer or malformed id or an account not linked to the issuer (#529, nothing written), 409 for a taken address (a local account's address included, on create too) and 400 `invalidValue` when the last active admin would lose the role or be deactivated. Each success writes one `auth_audit_log` success row with method `scim` after the commit; a refusal writes nothing. Error details never echo a value | - | `scim_user_handler_test.go`: `TestSCIMUserWriteHandler` (201 with `Location`, 200, every `invalidSyntax` case with no service call, each sentinel's status and `scimType`, no submitted value in an error body); `internal/idkit/scim`: `TestWriteErrorTypeWriteTypes` | - | `auth_scim_user_writes_test.go`: `TestSCIMUserWritesSQLite`, `TestSCIMUserWritesMySQL` (MySQL 8 and MariaDB; `last_admin_race/after_handover` (#513, MySQL/MariaDB only): a replace to sales of the admin a concurrent SCIM group handover just promoted is refused and one active admin stays; create incl. a custom role, duplicate email, padded/accented variants on MySQL, identity taken, missing externalId, unmapped role incl. a mapping to customer and to no role row, replace role change/keep/deactivate/not found/email taken, a local admin's replace refused as not found and its address refused on create with the row, sessions and audit tables unchanged (#529), last admin, and an OIDC sign-in reusing the SCIM-created account; the create stores `source` `scim` (#505); every refusal leaves the four tables unchanged); `cmd/scim_wiring_test.go`: `TestSCIMUserWritesWired` (the production router, audit rows with `scim` and a NULL actor) | **covered** | PUT takes `active` as a JSON boolean only (PATCH, row 1.18, also takes Entra's string); DELETE is row 1.19; `roles` is accepted but not served or advertised. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470) |
-| 1.18 | **SCIM 2.0 user patch (#471)** | Behind the same rate limits and SCIM token: `PATCH /scim/v2/Users/{id}` (200 with the resource) applies an RFC 7644 PatchOp, body one JSON object up to 64 KiB with a non-empty `Operations` array. `add`, `replace` and `remove` (op in any ASCII case) on `active` (JSON boolean or `"true"`/`"false"` in any ASCII case), `userName`, `name`, `name.givenName`, `name.familyName`, `emails` (primary, then work, then a sole entry), `emails[type eq "work"].value` and `roles`, with a path or path-less (an object of those attributes, Okta and Entra's value-object form); paths match with ASCII-only folding, no trimming, no URN prefix. Last write wins; a `userName` wins over `emails`. A role `value` that is one JSON object with a string `value` member, sent as text (Entra ID's form without `aadOptscim062020`), stands for that inner string (#629). Attributes GopherCRM does not store (`externalId`, `displayName`, `nickName`, `title`, `preferredLanguage`, `name.formatted` and the other unstored name parts, `phoneNumbers`, `addresses` and the other multi-valued ones, the enterprise extension URN and its attributes) are skipped on add, replace and remove and change nothing (#629). Any other path or key (`password`, `groups`, a core URN prefix) is 400 `invalidPath`, `remove` without a path 400 `noTarget`, a malformed body or empty `Operations` 400 `invalidSyntax`, a wrongly typed value or a `remove` of `active`, `userName`, `emails` or `roles` 400 `invalidValue`. Only an account linked to the issuer is patched (#529; any other id is 404 and nothing is written). Touched attributes get PUT's checks; `roles` resolves through the SSO mapping, an untouched role is kept without an audit row. One governed transaction (`admin set → users → roles → refresh_tokens`) on the locked row: `active` false (also on PUT) writes `token_version` + 1 and revokes every refresh token of the account, so its sessions end at once; `active` true brings none back. The last active admin cannot be demoted or deactivated (400 `invalidValue`). A role change writes `user_role_changed` (`scim`, NULL actor), every success one `auth_audit_log` success row with method `scim`; a refusal writes nothing. Error details never echo a path or value | - | `scim_user_handler_test.go`: `TestSCIMUserPatchHandler` (each parse refusal's status, `scimType` and fixed detail with no service call and no echo, accepted forms, service refusals); `internal/idkit/scim`: `TestParsePatch` (accepted Entra and Okta forms incl. Microsoft's documented role and multi-attribute bodies with and without the flag, skipped unstored attributes, precedence, every refusal kind incl. U+212A and U+017F paths) | - | `auth_scim_user_patch_test.go`: `TestSCIMUserPatchSQLite`, `TestSCIMUserPatchMySQL` (MySQL 8 and MariaDB: `last_admin_race/after_handover` (#513, MySQL/MariaDB only): an `active` false patch of the admin a concurrent handover just promoted is refused with token_version and sessions unchanged; Entra and Okta deactivation, sessions end with every refresh row revoked before any refresh call, reactivation keeps old tokens refused, last admin in three forms with token_version and sessions unchanged, role change and its audit rows, name and emails, userName wins, not found, a local admin's userName and `active` false patches and an other-issuer account's `active` false patch refused as not found with nothing written (#529), refusals incl. a failed revocation after the users write roll back everything, not wired, and since #629 Microsoft's flag-less multi-attribute body with `externalId` and the identity link unchanged, a patch of only unstored attributes changing no column, a role sent as JSON text); `auth_scim_user_writes_test.go`: `replace deactivates` (token_version + 1, refresh tokens revoked); `cmd/scim_wiring_test.go`: `TestSCIMUserPatchWired` (a local admin's PATCH 404 with its row and session unchanged, password sign-ins, Entra deactivation, 401 on `/users/me` and `/auth/refresh`, Okta reactivation, old token still 401, new sign-in 200); `internal/config`: `TestConcurrencyDocSCIMUserPatch` | **covered** | DELETE is row 1.19, the Groups row 1.20; the default Entra ID and Okta attribute mappings can stay, the unstored attributes they send are skipped. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471) |
-| 1.19 | **SCIM 2.0 user delete (#504)** | Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers 204 with an empty body (the request body is not read) and deactivates a managed account (linked to the issuer, #529) as `active` false does: in one governed transaction (`admin set → users → refresh_tokens`, no `roles` lock) it sets `is_active` false and `token_version` + 1 and revokes every refresh token, so every session ends at once. It never erases: email, names, role, `role_id`, the `user_identities` link and a NULL `deleted_at` stay. A repeat on an inactive account answers 204 and writes nothing (no generation bump, no revocation, no audit row). The last active admin is 400 `invalidValue`; a malformed, unknown, erased or customer id, or an account not linked to the issuer, the SCIM 404 `User not found`. A deactivation writes one `user_deactivated` `role_audit_log` row (`scim`, NULL actor, #552) in the transaction and one `auth_audit_log` success row with method `scim` after the commit; a refusal writes nothing | - | `scim_user_handler_test.go`: `TestSCIMUserDeleteHandler` (204 and empty body through `SetupSCIMRoutes`, the raw id reaches the service, 404, last-admin 400 `invalidValue`, 500 without echo) | - | `auth_scim_user_delete_test.go`: `TestSCIMUserDeleteSQLite`, `TestSCIMUserDeleteMySQL` (MySQL 8 and MariaDB: `last_admin_race/after_handover` (#513, MySQL/MariaDB only): a delete of the admin a concurrent handover just promoted is refused with token_version and sessions unchanged; deactivates with the profile, role, identity and NULL `deleted_at` kept and every refresh row revoked before any refresh call, idempotent repeat with no new row, last admin unchanged, second admin, not found for `abc`, `0`, unknown, customer and erased ids, a local admin not found with nothing written (#529), not wired); `cmd/scim_wiring_test.go`: `TestSCIMUserDeleteWired` (401 without a header and with an unknown token leave the user active, a local admin's DELETE 404 with its row unchanged, 204, 401 on `/users/me` and `/auth/refresh`, repeat 204 without an audit row, SCIM 404); `internal/config`: `TestConcurrencyDocSCIMUserPatch` | **covered** | The Groups are row 1.20; erasure stays the administrator's `DELETE /users/{id}`. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504) |
-| 1.20 | **SCIM 2.0 Groups (#506)** | Behind the same rate limits and SCIM token: the groups are the distinct `groups`-claim values of the effective SSO role mapping (roles rows are not groups), ordered by bytes; the id is the unpadded base64url of the value and `displayName` the value. `GET /scim/v2/Groups` (ListResponse, `startIndex`/`count` as for Users; the only filter `displayName eq "<value>"`, URN prefix allowed, compared byte for byte; anything else 400 `invalidFilter`) and `GET /scim/v2/Groups/{id}` (members = managed accounts, id ascending: never erased, customer or not linked to the issuer, #529); an id that does not decode or a value the mapping no longer holds is the SCIM 404 `Group not found`. `PATCH /scim/v2/Groups/{id}` applies `add`/`replace` (path `members` or path-less `{members}`) and `remove` (`members[value eq "<id>"]`, or path `members` with a list or none = all); `displayName` or another path 400 `invalidPath`, remove without a path `noTarget`, a non-string member value or a member id that is no managed account (a local account included) 400 `invalidValue` (a deactivated account may be added); a leftover row of an account that is not managed is only deleted by a remove or replace, with no role change, audit row or last-admin effect. One governed transaction (`admin set → users → roles → scim_group_members → refresh_tokens → api_keys → role_audit_log`) writes the memberships and recomputes each added or removed managed member's role with the sign-in's first-match rule on the groups claim (a mapping to a missing or customer role is `invalidValue`), with a `user_role_changed` row (`scim`, NULL actor) per change and a `user_deactivated` row the same way per member it deactivates (#552), and after the commit one `auth_audit_log` success row per member whose membership changed. Since #530 an active member left in no mapped group is deactivated (role kept, every access token, refresh token and API key ended; an inactive one gets no `users` write), and a role that lacks a permission the old one had ends the member's sessions (`token_version` + 1, refresh tokens revoked; API keys keep working with the new role). Only a result with no active admin is refused, 400 `mutability`, a deactivated account counting as none (a handover to another active account passes; a deactivated replacement is refused). A successful patch answers 204 with no body. `POST /scim/v2/Groups` (#630) answers 201 with the existing group (and `Location`) when the body's `externalId` or, failing that, `displayName` equals a current `groups` value byte for byte, writing nothing; any other value, a non-string value or neither key is 400 `invalidValue`, a non-empty `members` 400 `invalidValue`, a malformed body 400 `invalidSyntax`. Both GETs honour `excludedAttributes=members`. `DELETE /scim/v2/Groups/{id}` answers a SCIM 405 with `Allow: GET, PATCH`; `PUT` is unrouted. Table `scim_group_members` (`group_value` `utf8mb4_bin`, unique per group and user, FK to users RESTRICT; migration `20261129120000_add_scim_group_members`) | - | `scim_group_handler_test.go`: `TestSCIMGroupHandler` (list, filter and paging, `excludedAttributes=members`, refusals with no service call, 404, the 204 patch with Microsoft's Add and Remove bodies, the create with Microsoft's body and its refusals, `last_admin_mutability` and the two-sentinel order, the DELETE 405 with `Allow`, a 500 whose log holds no group id, name or body); `scim_handler_test.go`: `TestSCIMDiscoveryDocuments` (Group schema and resource type); `internal/idkit/scim`: `TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter`, `TestSCIMParseGroupPatch`, `TestSCIMParseGroupCreate`, `TestSCIMExcludesMembers`; `scim_group_member_test.go`: `TestSCIMGroupMemberSchemaSQLite` | - | `auth_scim_groups_test.go`: `TestSCIMGroupsSQLite`, `TestSCIMGroupsMySQL` (MySQL 8 and MariaDB: list, filter, create, removed values, add to admin with audit rows, recompute on remove, removing the only group deactivates and ends every credential, an inactive account's removal writes no `users` change, a lowered role ends sessions and keeps the API key, a raised role ends nothing, remove all deactivates every member left in no mapped group, `last_admin` (remove, empty replace, remove all), `last_admin_deactivation`, `handover_replace`, `handover_deactivates_old_admin`, `handover_add_remove`, `replace_to_inactive`, unwired credential stores, invalid, customer and erased members, a customer mapping, `last_admin_race/a_first`, `/b_first`, `/concurrent`; #529: a local account's stored row is not listed, an add or replace naming it is `invalidValue` with nothing written, and a remove of its row while it is the only active admin deletes only the row); `cmd/scim_wiring_test.go`: `TestSCIMGroupsWired` (a local admin added as a member is 400 `invalidValue`; Microsoft Entra ID's group lookup, create, repeated create, member add and reads); `cmd/credential_revocation_wiring_test.go`: `TestCredentialRevocationProductionWiring` (`scim_group_removal`, `scim_group_lowered_role`); `cmd/migrate/scim_group_members_migration_test.go`: `TestSCIMGroupMembersMigration{Files,}`; `internal/config`: `TestConcurrencyDocSCIMGroupPatch` | **covered** | A group patch maps the groups claim and a Users write the roles claim, so the last write sets the role; a mapping edit recomputes no role until the person's next group patch; the Users writes keep `invalidValue` for their last-admin refusal. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#groups-506) |
+| 1.9 | **Token Storage** | The session is one record under `gophercrm_session` (session id, access token, refresh token or null, account, persistence choice), in … (more in the notes) | -- | -- | `client.sessionRecord.test.ts`, `client.test.ts`, `client.refresh.test.ts` (details in the notes) | -- | **covered** | Frontend-only behaviour; no E2E test asserts token lifetime across a tab close |
+| 1.10 | **Password reset** | `/forgot-password` requests a reset email (more in the notes) | -- | `auth_session_test.go`, `auth_password_reset_regression_test.go`, `auth_reset_owner_race_test.go`, `password_reset_token_repository_test.go` and 7 more files (details in the notes) | `ForgotPassword.test.tsx`, `ResetPassword.test.tsx`: validation, submission, confirmation, request failure and missing token | `auth_session_integration_test.go`, `auth_access_token_revocation_test.go` (details in the notes) | **partial** | Browser reset journey has no E2E test; production delivery requires SMTP configuration |
+| 1.11 | **Password change** | `/settings/profile` changes the password with the current one (more in the notes) | `settings.spec.ts` (details in the notes) | `auth_change_password_regression_test.go`, `auth_session_test.go`, `auth_credential_revocation_test.go`, `auth_handler_test.go` (details in the notes) | `Profile.test.tsx`, `client.refresh.test.ts` (details in the notes) | `auth_session_integration_test.go`: `TestChangePasswordRenewsCurrentSession`, `TestChangePasswordWithAPIKeyNeverIssuesSession` | **covered** | None for logins racing the change (#336) |
+| 1.12 | **OpenID Connect sign-in, backend (#435)** | `POST /auth/oidc/start` returns the issuer's authorization URL … (more in the notes) | `sso.spec.ts` (details in the notes) | `auth_oidc_signout_test.go`, `auth_oidc_logout_test.go`, `cmd/auth_oidc_wiring_test.go` and 13 more files (details in the notes) | -- | `TestOIDCRoutesWired` (the production router) | **covered** | The SPA half is row 1.13 (#436). SCIM is rows 1.15 to 1.20. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435) |
+| 1.13 | **OpenID Connect sign-in, SPA (#436)** | `GET /auth/registration` also returns `sso_enabled` (the effective switch; false when it cannot be read) (more in the notes) | `login.spec.ts`, `sso.spec.ts` (details in the notes) | `auth_registration_test.go`, `cmd/auth_oidc_wiring_test.go` (details in the notes) | `Login.test.tsx`, `AuthCallback.test.tsx`, `AuthContext.test.tsx`, `client.test.ts`, `MainLayout.test.tsx`, `SSOSettings.test.tsx` and 3 more files (details in the notes) | -- | **covered** | The browser tests use the local test issuer (more in the notes) |
+| 1.14 | **Sign-in audit log (#454, #455, #466, #468, #470, #471, #550, #551, #553)** | One pseudonymous `auth_audit_log` row per successful password sign-in, single sign-on callback and successful refresh that passes request validation … (more in the notes) | `sign-in-audit.spec.ts` (details in the notes) | `auth_audit_test.go`, `auth_audit_aggregate_test.go`, `auth_oidc_test.go`, `request_context_test.go`, `auth_audit_apikey_test.go` and 12 more files (details in the notes) | `signInAudit.test.ts`, `SignInAudit.test.tsx`, `index.permissions.test.tsx`, `MainLayout.permissions.test.tsx` (details in the notes) | `cmd/auth_audit_wiring_test.go` (details in the notes) | **covered** | No CSV export and no sort parameter. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log) |
+| 1.15 | **SCIM 2.0 provider tokens and discovery (#468, #490)** | `/scim/v2` outside the API prefix, authenticated by SCIM provider tokens sent as `Authorization: Bearer` (scheme case-insensitive, token not trimmed) (more in the notes) | `settings-scim-tokens.spec.ts` (details in the notes) | `scim_auth_test.go`, `scim_token_handler_test.go`, `scim_handler_test.go`, `scim_token_test.go` (details in the notes) | `scimTokens.test.ts`, `SCIMTokens.test.tsx`, `index.permissions.test.tsx`, `MainLayout.permissions.test.tsx` (details in the notes) | `auth_scim_token_test.go`, `cmd/scim_wiring_test.go`, `cmd/migrate/scim_tokens_migration_test.go` (details in the notes) | **covered** | The Users read is row 1.16, the Groups row 1.20 (more in the notes) |
+| 1.16 | **SCIM 2.0 user read (#469)** | Behind the same rate limits and SCIM token: `GET /scim/v2/Users/{id}` … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_users_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | Create and replace are row 1.17, patch row 1.18, delete row 1.19, the Groups row 1.20 (more in the notes) |
+| 1.17 | **SCIM 2.0 user create and replace (#470)** | Behind the same rate limits and SCIM token: `POST /scim/v2/Users` (201, `Location` = `meta.location`) and `PUT /scim/v2/Users/{id}` (200), any Content-Type (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_writes_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | PUT takes `active` as a JSON boolean only (PATCH, row 1.18, also takes Entra's string) (more in the notes) |
+| 1.18 | **SCIM 2.0 user patch (#471)** | Behind the same rate limits and SCIM token: `PATCH /scim/v2/Users/{id}` (200 with the resource) applies an RFC 7644 PatchOp, body one JSON object up … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_patch_test.go`, `auth_scim_user_writes_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | DELETE is row 1.19, the Groups row 1.20 (more in the notes) |
+| 1.19 | **SCIM 2.0 user delete (#504)** | Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers 204 with an empty body (the request body is not read) and deactivates … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_delete_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | The Groups are row 1.20; erasure stays the administrator's `DELETE /users/{id}`. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504) |
+| 1.20 | **SCIM 2.0 Groups (#506)** | Behind the same rate limits and SCIM token: the groups are the distinct `groups`-claim values of the effective SSO role mapping (roles rows are not groups), ordered by bytes (more in the notes) | - | `scim_group_handler_test.go`, `scim_handler_test.go`, `scim_group_member_test.go` (details in the notes) | - | `auth_scim_groups_test.go`, `cmd/scim_wiring_test.go`, `cmd/credential_revocation_wiring_test.go` and 1 more file (details in the notes) | **covered** | A group patch maps the groups claim and a Users write the roles claim, so the last write sets the role (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **1.3** **Session Refresh**
+  - Description: `/auth/refresh` rotates refresh tokens and returns a new access token; a token
+    already exchanged for a successor and presented again is refused with the same 401 and revokes
+    every refresh token of its session (its family, the successors included) in a committed
+    transaction, audited as `token_reuse` with the owner's user id; a request that only lost the
+    claim to a concurrent rotation is refused and ends nothing (#547). The rotation is one
+    transaction: locking owner re-check, conditional single-use claim of the presented token,
+    successor insert and JWT signing; a failure rolls the claim back and concurrent refreshes of one
+    token commit exactly one successor (#103). The owner row is locked before the claim (users
+    before refresh_tokens, #116). Only an invalid token is the generic 401; an operational failure
+    is a retryable `503 SESSION_REFRESH_UNAVAILABLE`. The web client shares one refresh per session
+    among all 401s, settles every waiter on success, failure or a 15 s deadline, replays each
+    request once and only under the session it was sent with, ends the session only on a 400/401
+    from refresh and keeps the tokens on a timeout, network error or 5xx (#115). Across tabs,
+    refreshes and password changes run under the Web Lock `gophercrm-session` (an in-tab lock
+    without `navigator.locks`) and re-read the stored session after acquiring it, adopting a
+    successor another tab already stored; a losing refresh's 400/401 ends the session only while
+    storage still holds the token it presented, and the lock wait counts toward the 15 s deadline
+    (#184).
+  - Unit Tests (Backend): `auth_session_test.go`: rotation, lost claim, expiry, replay,
+    inactive/missing-owner and post-claim failure cases; `auth_refresh_rotation_regression_test.go`:
+    `TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}` on real databases (#547:
+    reuse ends the family, also after expiry and for an inactive owner, the successor refused
+    afterwards, logout-revoked, contained and family-less tokens end nothing, a lost claim ends
+    nothing on MySQL, a reuse held after its lookups ends a successor minted meanwhile);
+    `auth_change_password_regression_test.go`: `TestRefreshRotationLocksOwnerBeforeClaimSQLite`;
+    `refresh_token_repository_test.go`: conditional claim and unconditional logout revocation, the
+    revoked-row lookup, the later-row check and the family revocation (an empty family id never
+    matches, #547); `auth_handler_test.go`: `TestRefresh_OperationalFailure_Retryable503`.
+  - Unit Tests (Frontend): `client.refresh.test.ts`: the real interceptors through an injected
+    adapter — shared refresh with replay of GET and POST, failed refresh, missing refresh token, 401
+    on a replay, never-answering refresh (fake timers), 503 keeps tokens, logout and sign-in to
+    another account during a refresh, a request of an ended session never replayed;
+    `client.crossTab.test.ts`: two clients over shared storage and one lock — one refresh for both
+    tabs in both response orders, adoption of a stored successor, a lost refresh without a shared
+    lock, expiry, password change after and during another tab's rotation, single lock acquisition,
+    sign-out while another tab holds the lock, lock-wait deadline; `sessionLock.test.ts`.
+  - Known Issues: No browser test drives the interceptor or two tabs; other tabs notice a sign-in or
+    sign-out only on their next request; on plain HTTP (no Web Locks) tabs are not serialised.
+- **1.4** **Logout**
+  - Description: `/auth/logout` revokes every refresh token of the user (no body) or the presented
+    one, and in the same transaction increments `users.token_version`, which ends every access token
+    issued before it (Bearer and API-key callers alike, #236); the users row is locked before any
+    refresh-token row. The client drops its stored tokens at once, waits for a refresh already on
+    the wire and renews privately when its access token has expired so the revocation is still
+    authenticated.
+  - E2E Tests: `sso.spec.ts` S16 (#634): single sign-on logout passes through the issuer's
+    end-session endpoint, lands on `/login` and the old refresh token answers 401;
+    `settings.spec.ts` "changes the password and the new one works on the next login" logs out
+    through the account menu and asserts `/login`; `registration.spec.ts` logs out through
+    `DashboardPage.logout()` before registering again.
+  - Unit Tests (Backend): `auth_session_test.go`: logout cases;
+    `auth_access_token_revocation_test.go`: `TestAccessTokenRevokedByLogout{SQLite,MySQL}`,
+    `TestLogoutLocksOwnerBeforeRefreshTokens{SQLite,MySQL}`, `TestLogoutRequiresSessionStore`.
+  - Unit Tests (Frontend): `AuthContext.test.tsx` (immediate sign-out while the revocation is
+    pending), `client.refresh.test.ts` (logout during an in-flight refresh, logout with an expired
+    access token), `client.test.ts`.
+  - Known Issues: Only the single sign-on logout (S16) asserts in the browser that the old refresh
+    token is refused; the password-session logouts assert at most the return to `/login` (G11). An
+    access token replaced by a refresh rotation stays valid until expiry when no logout follows.
+- **1.9** **Token Storage**
+  - Description: The session is one record under `gophercrm_session` (session id, access token,
+    refresh token or null, account, persistence choice), in `sessionStorage` unless "remember me" is
+    chosen, in which case `localStorage` (#184). It is read whole from one storage (sessionStorage
+    first), so a session without a refresh token never takes one from the other storage; a new
+    sign-in removes everything from both storages and writes a record with a fresh id. The legacy
+    keys `gophercrm_token` / `gophercrm_refresh_token` are written after every record as mirrors and
+    never read while a record exists; a record whose `gophercrm_token` mirror is removed is no
+    session. Malformed records are removed; a legacy two-key session is migrated once under a
+    deterministic `legacy-<sha256>` id. A single sign-on session's record also holds `idToken`, the
+    ID token of the sign-in, kept through refreshes and password changes and sent as `id_token_hint`
+    at logout; a record without it still parses (#634).
+  - Unit Tests (Frontend): `client.sessionRecord.test.ts`: record shape, the `idToken` of an SSO
+    session through a refresh and a password change and handed to the logout (#634), no
+    fall-through, sessionStorage precedence, mirrors, migration, orphan refresh token, digest id, no
+    migration beside a record, mirror removal, malformed records, clear and rotation, a read between
+    the record and mirror writes; `client.test.ts`: persist/non-persist and cleanup;
+    `client.refresh.test.ts`: "startSession removes a predecessor refresh token when the response
+    omits one", "never pairs an access token with a refresh token from the other storage".
+- **1.10** **Password reset**
+  - Description: `/forgot-password` requests a reset email; `/reset-password?token=...` validates
+    the new password and confirms the reset, then offers sign-in. Confirmation validates and hashes
+    before writing, then claims the token, writes the password, clears the lockout, increments
+    `users.token_version` (ending every earlier access token, #236), revokes every refresh token and
+    revokes every API key of the account (#526) in one transaction (#102). While
+    `security.sso.allow_password` is off (the default, #457), an account linked to single sign-on (a
+    linked OpenID Connect identity) is issued no token and its token is refused with the generic 400
+    (#444); with it on, such an account resets like a local one. Since #554 the request is answered
+    at once: a background queue (one worker, up to 100 waiting requests) issues the token, mails the
+    link and writes the audit row; a login email change (own profile, admin edit, SCIM replace or
+    patch) spends the account's unused reset tokens in the same write, so an earlier link stops
+    working, while other profile edits keep it.
+  - Unit Tests (Backend): `auth_session_test.go`: request/confirm reset cases;
+    `auth_password_reset_regression_test.go`:
+    `TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}` on real databases
+    (weak/unhashable passwords, unknown/spent/expired tokens, expiry between lookup and claim,
+    inactive/erased/missing owners, owner deactivated or soft-deleted between lookup and owner
+    check, injected update and revocation failures with same-token retry, competing confirmations);
+    `auth_reset_owner_race_test.go`: `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL` (owner
+    disabled by a second connection after the token lookup under REPEATABLE READ must be refused,
+    not reactivated); `password_reset_token_repository_test.go`: conditional claim;
+    `auth_password_reset_sso_test.go`: `TestPasswordResetSSOAccount{SQLite,MySQL}` (no policy wired,
+    so off: request and confirm refused for an account with a `user_identities` row,
+    password-account controls), `TestSSOAccountPasswordPolicy{SQLite,MySQL}` (#457: reset request,
+    confirm and login for a linked and an unlinked account with the setting off, unset and on, and a
+    password set while on refused once off); `cmd/auth_password_reset_sso_wiring_test.go`:
+    `TestPasswordResetSSOAccountWired`, `TestSSOPasswordPolicyWired`;
+    `auth_password_reset_queue_test.go`: `TestPasswordResetQueue` (#554: answer before the issue,
+    submission order, full and stopped queue refused and audited, request facts on the audit row,
+    drain on stop, a panicking item, no email in the logs);
+    `auth_password_reset_queue_handler_test.go`: `TestRequestPasswordResetQueued`;
+    `cmd/password_reset_runtime_test.go`: `TestPasswordResetQueueProductionWiring` (the 200 within 2
+    s while the SMTP relay holds the delivery, then the mail and one unused token);
+    `auth_reset_email_change_test.go`: `TestResetLinkEmailChange{SQLite,MySQL}` (own, admin, SCIM
+    replace and patch email changes end the link; name-only and unchanged-email edits keep it;
+    confirm-then-change and change-then-new-request); `user_repository_test.go`:
+    `TestUpdateFieldsEmailSpendsResetTokens`.
+  - Integration Tests: `auth_session_integration_test.go`: `TestPasswordResetRoundTrip`;
+    `auth_access_token_revocation_test.go`: `TestAccessTokenRevocationAPISQLite` (the API key is
+    refused after the reset).
+- **1.11** **Password change**
+  - Description: `/settings/profile` changes the password with the current one. One transaction:
+    locking owner read, the verified hash re-checked, the current refresh token claimed, the new
+    hash written, `users.token_version` incremented, every other refresh token and every API key of
+    the account revoked (#526, an API-key caller's own key included) and a replacement session
+    issued; any failure before the commit rolls all of it back (a failed COMMIT is ambiguous and
+    answered 500). The page stores the replacement pair in the storage the session already used;
+    every access token issued before the change, the caller's own included, is refused from then on
+    (#236), and only the renewed one works. A presented token that is not a live session of the
+    caller is `409 SESSION_STALE`; API-key requests never receive session credentials (#116).
+  - E2E Tests: `settings.spec.ts`: "changes the password and the new one works on the next login"
+    (renewed pair stored, pre-change refresh token rejected), "rejects a wrong current password with
+    the server message".
+  - Unit Tests (Backend): `auth_change_password_regression_test.go`:
+    `TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}` (MySQL
+    concurrency on a schema built by the real migrations); `auth_session_test.go`:
+    `TestAuthService_ChangePassword`; `auth_credential_revocation_test.go`:
+    `TestCredentialRevocation{SQLite,MySQL}`; `auth_handler_test.go`: `TestChangePassword_*`.
+  - Unit Tests (Frontend): `Profile.test.tsx` (renewed and not-renewed copy, 409),
+    `client.refresh.test.ts` (`ApiClient.changePassword`: storage choice, waiting for an in-flight
+    refresh, expired access token renewed and body rebuilt, 409 surfaced, late answer after
+    sign-out; another tab signing in another account or signing out: nothing sent, written or
+    revoked as the wrong account).
+- **1.12** **OpenID Connect sign-in, backend (#435)**
+  - Description: `POST /auth/oidc/start` returns the issuer's authorization URL (code flow, PKCE
+    S256, state, nonce, redirect URI `APP_BASE_URL/auth/callback`; one single-use
+    `oidc_login_attempts` row holding the HMAC of the state, ten minutes);
+    `POST /auth/oidc/callback` `{code, state}` spends the attempt, exchanges the code, verifies the
+    ID token (signature, `iss`, `aud`, `exp`, nonce) and returns the login token pair. Identity =
+    exact `(iss, sub)` in `user_identities`; a subject with surrounding whitespace is refused; for
+    an Entra ID issuer an unknown `(iss, sub)` whose `tid` equals the configured issuer's tenant
+    segment byte for byte and whose `oid` is the subject of a `source` `scim` identity under that
+    issuer signs in as that SCIM-created account (refused when it is deactivated or erased) and
+    links `(iss, sub)` in the same transaction; anything else falls through to provisioning, never
+    by email (#505); first-match role mapping on `groups`/`roles`; a group overage (`groups` in
+    `_claim_names`) is ignored without a `groups` mapping, resolved for an Entra ID issuer through
+    Microsoft Graph `getMemberObjects` (security groups, delegated `User.Read` added to the start
+    scope, one 5 s budget, at most `OIDC_GRAPH_MAX_PAGES` pages, any failure refused as
+    `groups_unavailable`, #450) and refused for any other issuer; with a `groups` mapping, an ID
+    token without a `groups` claim and no Entra overage, the groups are read from the issuer's
+    userinfo endpoint (#451: one GET with the exchange's access token, 5 s, no redirects or proxy, 1
+    MiB, JSON only; the userinfo `sub` must equal the token's or `userinfo_subject_mismatch`; only
+    `groups` is read; any other failure `groups_unavailable`); JIT provisioning needs an email no
+    account (erased included) holds in any case and takes `given_name`/`family_name`, or `name`
+    split at the first whitespace when both are absent (#453); the attempt's PKCE verifier and nonce
+    are blanked once it is used or found expired, attempts older than a day are pruned by the stale
+    bulk-operation sweep, and every `oidc_sign_in` log line carries `request_id` and `attempt_id`
+    (#453), the refusal, 503 and success lines also `audit_id`, the id of the sign-in audit row
+    (#454, row 1.14); the mapped role is re-applied through the governed write (last-admin rule,
+    audit `auth_method` `oidc`); `email_verified` is not required or read; while
+    `security.sso.allow_password` is off (the default, #457), a linked account is refused password
+    reset (#444) and password login (the generic 401); with it on it may set and use a password,
+    which keeps working after the identity provider removes the person, so offboarding must also
+    deactivate the account. 404 when SSO is off, 503 `SSO_UNAVAILABLE` for an unconfigured or
+    unreachable issuer, 401 for every refusal. A 200 start sets the sign-in cookie
+    `gophercrm_oidc_state` (the state; `HttpOnly`, `SameSite=Lax`, `Max-Age=600`,
+    `Path=<API_PREFIX>/auth/oidc`, sent only over HTTPS when `APP_BASE_URL` is https); the callback
+    spends the attempt and then refuses a missing cookie as `binding_missing` and another sign-in's
+    as `binding_mismatch`, so a sign-in finishes only in the browser that started it, and a 200
+    clears the cookie; the SPA and the API must be on the same site (#528); a single sign-on refresh
+    session can be rotated, and renewed by a password change, only until `session_started_at + 24`
+    hours, with its refresh tokens expiring then, while password sessions keep
+    `REFRESH_TOKEN_EXPIRY_DAYS` (#548). Sign-out (#634): the callback also returns `id_token`; the
+    refresh token records `provider_session_hash` (the keyed hash of the issuer and the ID token's
+    `sid`, copied by rotation and the password-change renewal); `POST /auth/logout` with
+    `{id_token_hint}` answers `end_session_url` (the discovered `end_session_endpoint` plus
+    `id_token_hint`, `post_logout_redirect_uri=APP_BASE_URL/login` and `client_id`) only after the
+    revocation, only for a hint that verifies for the configured issuer and client (expiry not
+    checked) and whose `(iss, sub)` is linked to the caller, within 5 s, never failing the logout;
+    the unauthenticated `GET /auth/oidc/frontchannel-logout?sid=&iss=` (strict tier, `iss` optional
+    but exact when sent, `Cache-Control: no-cache, no-store`, no frame headers) logs out every
+    account with a live session under that `sid`, all its sessions, with one `logout` audit row
+    each.
+  - E2E Tests: `sso.spec.ts` (#446, against the local test issuer `scripts/e2e/oidc-issuer`): first
+    sign-in and JIT provisioning, role mapping and its re-application, no matching claim, the
+    last-admin rule, an email taken by a local account in another letter case, a deactivated
+    account, single-use callback and a tampered state, break-glass password login, and
+    `allow_password` governing the reset mail; S13 (#528): a callback opened in a fresh browser or
+    in one that started its own sign-in is refused and audited; S16 (#634): logout passes through
+    the issuer's end-session endpoint, which accepts the hint and the exact
+    `post_logout_redirect_uri`, lands on `/login` and the old refresh token is refused.
+  - Unit Tests (Backend): `auth_oidc_signout_test.go`: `TestRefreshProviderSession`,
+    `TestFrontChannelLogout`, `TestFrontChannelLogoutMySQL`, `TestEndSessionURLHost` (#634);
+    `internal/idkit/sso`: `TestCallbackProviderSession`, `TestEndSessionURL`,
+    `TestFrontChannelLogout` (#634); `auth_oidc_logout_test.go`: `TestLogoutEndSession`,
+    `TestFrontChannelLogout` (#634); `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired_SignOut`
+    (#634); `cmd/migrate/refresh_token_provider_session_migration_test.go`:
+    `TestRefreshTokenProviderSessionMigrationFiles`, `TestRefreshTokenProviderSessionMigration`
+    (#634); `auth_oidc_test.go`: `TestOIDCSignInSQLite`, `TestOIDCSignInMySQL` (one shared table of
+    70 top-level subtests against an in-process TLS issuer that checks PKCE and the redirect URI and
+    serves a fake Microsoft Graph and a fake userinfo endpoint; #453 added `log_correlation`,
+    `attempt_cleared_when_used`, `attempt_cleared_when_expired`, `attempt_claim_lost_after_read`,
+    `attempts_pruned_after_a_day`, `names_split_from_name`, `names_absent`; #505 added the eleven
+    `scim_oid_*` subtests: the link through a real SCIM create, five one-input fall-throughs
+    (another tenant, the tenant in another letter case, no `oid`, a non-Entra issuer, an `oid`
+    matching a sign-in's row), email alone, deactivated, erased and two concurrent links; #528 added
+    `binding_missing`, `binding_mismatch` and `start_cookie_secure`; #579 added
+    `sign_in_records_session`; #463 added `audit_success_row`, `audit_refusal_row`,
+    `audit_linked_user_refusal` and `audit_id_on_refusal_log`; `TestOIDCSignInMySQL` alone also runs
+    `last_admin_race/after_handover`, outside the shared table: one subtest whose name contains a
+    slash, so the MySQL root runs 71 top-level subtests (the 70 table cases plus
+    `last_admin_race/after_handover`) and the SQLite root runs 70 top-level subtests (#513,
+    MySQL/MariaDB only: the sign-in of the admin a concurrent SCIM group handover just promoted,
+    mapped to sales, is refused `last_admin`)), `auth_sso_session_lifetime_test.go`:
+    `TestSSOSessionLifetimeSQLite`, `TestSSOSessionLifetimeMySQL` (#548: rotation within and past 24
+    hours, a row without a start, password sessions unchanged, the capped successor, and the
+    password change within and past the limit; `sign_in_records_session` asserts the capped expiry),
+    `auth_last_admin_guard_test.go`: `TestLastAdminGuard` (#513, #638: the one last-admin guard
+    counts the locked rows of the accounts a write touches and judges the state after it);
+    `auth_governed_last_admin_test.go`: `TestGovernedLastAdminAfterHandoverMySQL` (#513, the
+    governed self-deactivation behind `/users` racing the same handover),
+    `TestOIDCClaimExpiredClearFails`, `TestOIDCLimitsMatchModels`, `TestOIDCGraphDefaults`;
+    `internal/idkit/oidc`: `TestOIDCProfileNames`, `TestOIDCHTTPClient`,
+    `TestOIDCSubjectAndClaimRules`, `TestStrictStringArray`, `TestErrors`, `TestAuthRequest`,
+    `TestClientAssertion`; `internal/idkit/entra`: `TestOIDCEntraTenant`,
+    `TestOIDCResolveEntraGroups`, `TestEntraIssuerAndNextLink`, `TestEntraLinkHint`,
+    `TestEntraGroupResolverLimits`; `auth_oidc_handler_test.go`: `TestOIDCHandler` (incl.
+    `request_id_reaches_service` and the sign-in cookie set, passed on and cleared, #528);
+    `bulk_operation_recovery_runtime_test.go`: `TestBulkOperationRecoveryOIDCAttemptPruning`;
+    `cmd/bulk_recovery_runtime_test.go`: `TestBulkOperationRecoveryProductionWiring` (the boot sweep
+    prunes day-old attempts); `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired`;
+    `auth_password_reset_sso_test.go`: `TestPasswordResetSSOAccount{SQLite,MySQL}`,
+    `TestSSOAccountPasswordPolicy{SQLite,MySQL}`; `cmd/auth_password_reset_sso_wiring_test.go`:
+    `TestPasswordResetSSOAccountWired`, `TestSSOPasswordPolicyWired`;
+    `cmd/migrate/user_identities_migration_test.go`: `TestUserIdentitiesMigrationFiles`,
+    `TestUserIdentitiesMigration`; `cmd/migrate/user_identity_source_migration_test.go`:
+    `TestUserIdentitySourceMigrationFiles`, `TestUserIdentitySourceMigration`;
+    `models/user_identity_source_upgrade_test.go`: `TestUserIdentitySourceSQLiteUpgrade` (#505).
+- **1.13** **OpenID Connect sign-in, SPA (#436)**
+  - Description: `GET /auth/registration` also returns `sso_enabled` (the effective switch; false
+    when it cannot be read). The login page shows "Sign in with single sign-on" only while it is
+    true; the button calls `POST /auth/oidc/start` and goes to the returned authorization URL, a
+    failed start shows "Single sign-on is unavailable. Sign in with your password." The public
+    `/auth/callback` page reads `code`/`state` once, removes them from the address with a replace
+    navigation, posts them once to `POST /auth/oidc/callback` and stores the session in
+    sessionStorage, with the returned ID token; every failure shows one generic message with a link
+    to `/login`. Logout of such a session posts `{id_token_hint}` and, when the answer carries
+    `end_session_url`, sends the browser there (the provider returns it to `/login`); a password
+    session posts no body and goes to `/login` as before (#634). Settings > Single sign-on
+    (`/settings/sso`, `settings.sso_manage`) edits `GET`/`PUT /settings/sso` with a write-only
+    client secret (kept, replaced or cleared), a client certificate and its write-only private key
+    (shown only as set, with thumbprint and expiry; used for a signed client assertion instead of
+    the secret while set, #633), the ordered role mapping and the "Allow password sign-in and
+    password reset for accounts linked to single sign-on" switch (`allow_password`, #457) with an
+    always-shown offboarding warning.
+  - E2E Tests: `login.spec.ts`: "hides the single sign-on button when single sign-on is disabled";
+    `sso.spec.ts` (#446): the settings screen saved by an admin (secret shown only as set, refused
+    to sales), the browser round trip login page → issuer → `/auth/callback` → app with the admin
+    and sales navigation, and the generic refusal with its link back to `/login`.
+  - Unit Tests (Backend): `auth_registration_test.go`: `TestRegistrationStatus_*` (incl.
+    `TestRegistrationStatus_SSOEnabled`, `TestRegistrationStatus_SSOReadErrorReportsDisabled`);
+    `cmd/auth_oidc_wiring_test.go`: `TestOIDCRoutesWired` (asserts `sso_enabled` through the
+    production router).
+  - Unit Tests (Frontend): `Login.test.tsx` (button shown/hidden/missing field/failed probe, start,
+    failed start); `AuthCallback.test.tsx` (under StrictMode: one POST, REPLACE without query,
+    sessionStorage-only session, the ID token kept in the record, 401/503/missing
+    parameters/`error`); `AuthContext.test.tsx` (the ID token stored, the hint sent and
+    `end_session_url` followed, a password logout without one, #634); `client.test.ts`
+    (`authApi.logout` body and answer, #634); `MainLayout.test.tsx` (no `/login` navigation while
+    leaving for the provider, #634); `SSOSettings.test.tsx` (secret never rendered,
+    absent/typed/cleared secret, mapping order, added row, unknown role id and failed role list, the
+    `allow_password` switch and its offboarding warning); `routes/index.test.tsx`,
+    `routes/index.permissions.test.tsx`, `layouts/MainLayout.permissions.test.tsx`.
+  - Known Issues: The browser tests use the local test issuer; a live Entra ID or Okta check stays
+    manual. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#spa-sign-in-and-settings-436).
+- **1.14** **Sign-in audit log (#454, #455, #466, #468, #470, #471, #550, #551, #553)**
+  - Description: One pseudonymous `auth_audit_log` row per successful password sign-in, single
+    sign-on callback and successful refresh that passes request validation, per successful SCIM user
+    create, replace or patch (#470, #471, method `scim`, outcome `success`, the account's user id; a
+    refused write writes none), per password change, password reset request, reset completion and
+    logout that reaches the service (#550, methods `password_change` with `invalid_credentials`,
+    `session_stale`, `account_inactive` or `account_erased`; `reset_request` with success and the
+    account's user id, `account_unknown` and no user id, `account_inactive`, `account_erased` or
+    `sso_account`, the same 200 in every case, written by the password reset queue's worker after
+    the answer (#554), and `unavailable` with no user id for a request the full or stopped queue
+    drops; `reset_confirm` with success, `token_invalid` (no user id for an unknown, spent or
+    expired token), `account_inactive`, `account_erased` or `sso_account`; `logout` with success or
+    `internal_error`), per API key creation, revocation and refused re-enable of a revoked key
+    (#551, methods `api_key_create` and `api_key_revoke` with success, `api_key_enable` with
+    `key_revoked`; the caller's user id and the key's id in `api_key_id`, never the key, its prefix
+    or its name; a rename, a read and any other refusal write none), and one row per method, reason,
+    `user_id`, client network and UTC minute for refused `ApiKey` credentials (#466), refused
+    password sign-ins and refreshes, and refused SCIM authentications (#468, #553: method `scim`,
+    reasons `token_missing`, `token_invalid`, `token_revoked`, no user id), whose `attempts` counts
+    them (one upsert on a unique internal `aggregate_key`; the row keeps the first refusal's request
+    id, user-agent family and `created_at`): method, outcome, a stable reason code, the user id when
+    the account was found, the claimed attempt id, the request id (only when it matches
+    `^[A-Za-z0-9._:-]{1,64}$`), an HMAC `subject_ref` of a single sign-on identity refused after the
+    ID token verified, the `roles`/`groups` values the mapping used, the client's `/24` or `/48`
+    network and a fixed-vocabulary user-agent family. No email, name, subject, token, code, state,
+    nonce, password, full IP or full user agent. Written after the sign-in's transaction; a failed
+    write is logged once (`audit_write_failed`) and changes no answer. Bearer failures, 400s and
+    `POST /auth/oidc/start` write nothing. The moderate tier runs before authentication on protected
+    routes (#466), so a throttled request looks up no key and writes no row; password, refresh,
+    single sign-on and reset rows are bounded by the strict `/auth` tier, password change and logout
+    rows by the authenticated tier. Rows older than `AUTH_AUDIT_RETENTION_DAYS` (environment only,
+    default 90, at most 36500) are pruned by the stale bulk-operation sweep; erasure leaves them.
+    Read through `GET /audit/sign-ins` (#455, guarded by `audit.sign_ins_view`, admin only among the
+    system roles): newest first (`created_at`, then `id`, descending), `offset`/`limit` pagination,
+    filters `method` (twelve methods), `outcome`, `reason` (exact, case-sensitive, 44 codes),
+    `user_id`, `from` (inclusive) and `to` (exclusive); an unknown value, a bad `user_id` or date,
+    or `from` not before `to` is 400 `VALIDATION_ERROR` keyed by the parameter. Rows carry the
+    stored columns only. Settings > Sign-in audit (`/settings/sign-in-audit`) shows them with the
+    same filters.
+  - E2E Tests: `sign-in-audit.spec.ts` (#455): the admin login and a refused unknown-email login are
+    listed, Outcome = refused narrows to `invalid_credentials`; a sales user has no nav entry.
+  - Unit Tests (Backend): `auth_audit_test.go`: `TestAuthAuditOutcomes{SQLite,MySQL}` (every
+    password, refresh and API-key reason with its `user_id`, including `token_reuse` and a log line
+    without token, hash or family id (#547); #550: the password change, reset request, reset
+    completion and logout outcomes, including a lost token claim and a used stored row naming the
+    owner; #551: `api_key_change_rows`), `TestAuthAuditOIDCReasonCoverage` (all 25
+    `oidcRefuse`/`oidcRefuseWith` codes, taken from the registry constants the writer scan finds,
+    the three 503 codes, `sso_disabled`, `internal_error`, and `audit_id` on the log line),
+    `TestAuthAuditPrivacy{SQLite,MySQL}`, `TestAuthAuditSubjectReference`,
+    `TestAuthAuditWriteFailure`, `TestAuthAuditPrune{SQLite,MySQL}`, `TestAuthAuditClaimValues`,
+    `TestAuthAuditUnavailableRefresh`; `auth_audit_aggregate_test.go`:
+    `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}` (#466: 500 refusals of one /24 in one minute are
+    one row with `attempts` 500, minute and network boundaries, IPv6 /48, reason and user split; #553:
+    `password_and_refresh_refusals_share_a_row`, `scim_refusals_share_a_row`,
+    `success_rows_stay_one_each`; concurrent upserts, SQLite upgrade of a #454 table);
+    `auth_oidc_test.go`: `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused` checks the audit row;
+    `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`,
+    `audit_id_on_refusal_log`); `request_context_test.go`: `TestClientNetwork`,
+    `TestUserAgentFamily`, `TestClientInfoContext`, `TestSafeRequestID`;
+    `auth_audit_apikey_test.go`: `TestAuthAuditAPIKeyChanges` (#551: one row for a 201, a revoking
+    200 and the 409 for a revoked key, the race where the rename finds the key revoked, no row for a
+    rename, reads and other refusals, no key material in any column, unchanged answers without the
+    audit writer or when the write fails); `auth_audit_handler_test.go`: `TestAuthHandlerAudit`
+    (#550: one record per change-password, reset, confirm and logout request that reaches the
+    service, unchanged answers, none for a 400, identical reset-request bodies);
+    `middleware/auth_test.go`: `TestAuth_RecordsAPIKeyFailure`,
+    `TestAuth_DoesNotRecordBearerFailure`; `bulk_operation_recovery_runtime_test.go`:
+    `TestBulkOperationRecoveryAuthAuditPruning`; `config_test.go`: `TestLoadAuthAuditRetentionDays`;
+    `cmd/bulk_recovery_runtime_test.go`: `TestBulkOperationRecoveryProductionWiring` (boot sweep
+    removes a 91-day-old row); `cmd/migrate/auth_audit_log_migration_test.go`:
+    `TestAuthAuditLogMigrationFiles`, `TestAuthAuditLogMigration`;
+    `cmd/migrate/auth_audit_log_attempts_migration_test.go`:
+    `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration` (#466);
+    `cmd/migrate/auth_audit_log_api_key_id_migration_test.go`:
+    `TestAuthAuditLogAPIKeyIDMigrationFiles`, `TestAuthAuditLogAPIKeyIDMigration` (#551, migration
+    `20261129120006_auth_audit_log_api_key_id`); `auth_audit_list_test.go`:
+    `TestAuthAuditList{SQLite,MySQL}` (order with an older higher id, every filter, `from`/`to`
+    boundaries, pagination), `TestAuthAuditReasonVocabulary` (44 codes, twelve methods, two outcomes
+    from the registry in `auth_audit_vocabulary.go`, swagger enums equal the Go sets);
+    `auth_audit_vocabulary_test.go`: `TestAuthAuditWritersUseRegisteredValues` (#549: every writer
+    site uses a registered constant, every declared constant is registered and written, self-checks
+    on snippets); `auth_audit_log_handler_test.go`: `TestAuthAuditLogHandler` (rows and meta,
+    filters passed, every registered method, outcome and reason accepted, ten 400s, 403 for
+    sales/support/customer/a custom role without the key, 200 with only the key).
+  - Unit Tests (Frontend): `signInAudit.test.ts` (option lists equal the swagger enums, only set
+    filters sent); `SignInAudit.test.tsx` (rows with `formatDate` and the Attempts column, filters
+    reset to offset 0, empty state, API error); `index.permissions.test.tsx`,
+    `MainLayout.permissions.test.tsx` (route and nav entry only with `audit.sign_ins_view`).
+  - Integration Tests: `cmd/auth_audit_wiring_test.go`: `TestAuthAuditWired` (the production router; #553:
+    refused logins and refreshes carry an `aggregate_key` and two identical refused logins count
+    `attempts` 2; #547: a reused refresh token is 401 with a `token_reuse` row; #550:
+    change-password, reset request for a known and an unknown email, confirm with an unknown token,
+    logout; #551: an API key create, revoke and refused re-enable, each with `api_key_id`);
+    `TestAuthAuditAPIKeyFailuresBounded` (#466: 250 bogus keys from one /24 get 401 or 429, at most
+    one row per minute, `attempts` equal to the 401s, a valid key writes nothing);
+    `TestSignInAuditRouteWired` (admin Bearer and admin `ApiKey` 200 newest first, sales `ApiKey`
+    403).
+- **1.15** **SCIM 2.0 provider tokens and discovery (#468, #490)**
+  - Description: `/scim/v2` outside the API prefix, authenticated by SCIM provider tokens sent as
+    `Authorization: Bearer` (scheme case-insensitive, token not trimmed). A token is `scim_` + 64
+    hex characters, shown once; `scim_tokens` stores only its HMAC under `API_KEY_SECRET` (`hmac$`
+    form), with `last_used_at` (best-effort) and `revoked_at` (migration
+    `20261126120000_add_scim_tokens`). Admin API guarded by `settings.scim_manage` (admin-only: no
+    custom role can hold it, #524): `GET /settings/scim/tokens` (newest first), `POST` (`{name}`, 1
+    to 100 characters; 201 `{token, scim_token}`), `DELETE /settings/scim/tokens/:id` (idempotent
+    revoke; 400 bad id, 404 unknown). The SPA screen Settings > SCIM tokens
+    (`/settings/scim-tokens`, #490), routed and shown in the navigation only with
+    `settings.scim_manage`, lists the tokens (revoked ones kept, their revoke action disabled),
+    creates one and shows it once with a copy button, and revokes behind a confirmation. A user's
+    JWT or API key is refused on `/scim/v2`, and a SCIM token is refused on the API. Every refusal
+    is the same 401 in the RFC 7644 error shape (`application/scim+json`) and is counted in the
+    sign-in audit row of its reason, client network and UTC minute (method `scim`,
+    `token_missing`/`token_invalid`/`token_revoked`; #553); since #555 an accepted token is counted
+    per token (the SCIM token limit, `SCIM_RATE_LIMIT_PER_MINUTE`/`SCIM_RATE_LIMIT_BURST`, default
+    1500/min, burst 150, maximum 6000/1000) and a refusal per client address (the SCIM refusal
+    limit, 10/min, burst 5), and a request over either is answered 429 in the same shape with no
+    audit row. With a valid token, `GET /scim/v2/ServiceProviderConfig`, `/Schemas` (core User:
+    `userName`, `name`, `emails`, `active`; since #506 core Group: `displayName`, `members`) and
+    `/ResourceTypes` (User at `/Users`, Group at `/Groups`), `meta.location` under
+    `PUBLIC_BASE_URL`.
+  - E2E Tests: `settings-scim-tokens.spec.ts` (#490): the admin opens the screen from the
+    navigation, creates a token shown once (`scim_` + 64 hex, equal to the POST answer), gets 200 on
+    `/scim/v2/ServiceProviderConfig` with it, revokes it through the confirmation (row kept with a
+    revoked date and a disabled action), and the token then gets 401.
+  - Unit Tests (Backend): `scim_auth_test.go`: `TestSCIMAuth` (each reason: 401, SCIM body and
+    content type, one audit record; no token in the log, nor in the throttle lines),
+    `TestSCIMRateLimits` (#555, #635: a 1650-request cycle from one address, per-token counting,
+    refusals per address of any method, accepted requests never spend the refusal budget, the
+    switches, defaults and caps); `scim_token_handler_test.go`: `TestSCIMTokenHandler`
+    (201/200/404/400, 403 for sales/support/customer/a custom role without the key, 2xx with only
+    the key); `scim_handler_test.go`: `TestSCIMDiscoveryDocuments` (RFC 7643 shapes, every §7
+    characteristic); `internal/idkit/scim`: `TestWriteError`, `TestDiscoveryLocations`;
+    `scim_token_test.go`: `TestSCIMTokenSchemaSQLite`.
+  - Unit Tests (Frontend): `scimTokens.test.ts` (methods, URLs and body); `SCIMTokens.test.tsx`
+    (dates through `formatDate` with the fallback, revoked row disabled, empty and error states, the
+    token shown once and gone from the DOM, the query and mutation caches and storage after Done, a
+    blank name and a server 400, revoke only after Confirm); `index.permissions.test.tsx` and
+    `MainLayout.permissions.test.tsx` (route and navigation entry only with `settings.scim_manage`).
+  - Integration Tests: `auth_scim_token_test.go`: `TestSCIMTokenStore{SQLite,MySQL}` (HMAC stored,
+    no column holds the plaintext, list without hash, idempotent revoke, every reason, case and
+    padding refused); `cmd/scim_wiring_test.go`: `TestSCIMRoutesWired` (no header, unknown token,
+    revoked token, admin JWT, admin API key: 401, each adding 1 to the `attempts` of its reason's
+    `scim` row; valid token 200 on all three; SCIM token 401 on `/api/v1/users`; no token or hash
+    logged), `TestSCIMStrictTierWired` (sixth refusal 429, no audit row, a valid token from that
+    address still 200, an unrouted `OPTIONS` 404 with no audit row), `TestSCIMTokenTierWired` (#555, #635:
+    100 rapid requests 200 with the defaults; with a configured burst of 3 the fourth is 429 from
+    another address while a second token is 200); `cmd/migrate/scim_tokens_migration_test.go`:
+    `TestSCIMTokensMigration{Files,}`.
+  - Known Issues: The Users read is row 1.16, the Groups row 1.20. No `/Schemas/{id}` or
+    `/ResourceTypes/{id}` yet; an unknown `/scim/v2` path gets the router's default 404. Guide:
+    [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
+- **1.16** **SCIM 2.0 user read (#469)**
+  - Description: Behind the same rate limits and SCIM token: `GET /scim/v2/Users/{id}` (200 with a
+    core User resource, or the SCIM 404 `User not found` for a malformed id, an unknown, erased or
+    customer account, or one not linked to the issuer) and `GET /scim/v2/Users` (a ListResponse, id
+    ascending, `Resources` always an array). Since #529 only managed accounts are served: live, not
+    `customer` (staff and `custom`), with a `user_identities` row whose issuer equals the effective
+    SSO issuer byte for byte (`source` `scim` or `oidc`), applied in SQL so `totalResults` counts
+    only them; an account created locally (such as the local administrator), one linked only under
+    another issuer or a trailing-space issuer, and every account when no issuer is set, are absent
+    and 404; a deactivated one has `active` false. Resource: `id`, `userName` and one primary `work`
+    email (the email), `name.givenName`/`familyName`, `active`, `meta` (`created`/`lastModified` RFC
+    3339 UTC, `location` under `PUBLIC_BASE_URL`), and `externalId`: the subject of the lowest-id
+    `user_identities` row whose issuer equals the effective SSO issuer byte for byte (omitted
+    without one). Paging: `startIndex` 1-based (below 1 is 1), `count` default and cap 100, negative
+    0, 0 only the total; a non-integer is 400 `invalidValue`. The only filter is
+    `userName eq "<value>"` (attribute optionally URN-prefixed, attribute and operator
+    case-insensitive, value a JSON string); anything else is 400 `invalidFilter`. Candidates come
+    from `LOWER(email) = LOWER(?)` and each is judged in Go with ASCII-only case folding, so padded,
+    accented and Unicode-fold variants (U+017F, U+212A) that `utf8mb4_unicode_ci` returns are
+    refused. `attributes`/`excludedAttributes` are ignored.
+  - Unit Tests (Backend): `scim_user_handler_test.go`: `TestSCIMUserHandler` (paging defaults,
+    clamping and `invalidValue`, every refused filter with the exact body and no service call, the
+    404 shape, `"Resources":[]`, the SCIM 500), `TestSCIMUserData` (the conversion of the CRM user
+    to the SCIM User resource); `internal/idkit/scim`: `TestParseUserFilter`, `TestUserNameMatches`
+    (its long-s and Kelvin rows fail with `strings.EqualFold`), `TestParsePaging`,
+    `TestUserResource`, `TestWriteErrorType`.
+  - Integration Tests: `auth_scim_users_test.go`: `TestSCIMUsersSQLite`, `TestSCIMUsersMySQL` (one
+    table on the real repository and service, MySQL 8 and MariaDB: exact, ASCII case, unknown, pad,
+    accent, long-s and Kelvin variants with the collation's candidate asserted, customer, erasure
+    through the real path by id, list and former email, deactivated, paging windows and the 100 cap,
+    externalId under the issuer, lowest id; #529: a local admin, an account without identity,
+    another issuer and a trailing-space issuer are not listed, counted, filtered or read, an empty
+    issuer serves none, an `oidc`-linked account is served); `cmd/scim_wiring_test.go`:
+    `TestSCIMUsersWired` (Entra and Okta shapes with `externalId` from the wired SSO settings,
+    unknown/customer/erased/local-admin names, the unfiltered total without the local admin, 404 for
+    the erased, customer and local admin ids, `invalidFilter` for `externalId eq`, 401 without a
+    token).
+  - Known Issues: Create and replace are row 1.17, patch row 1.18, delete row 1.19, the Groups row
+    1.20; still later slices are `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for
+    unknown paths. The SCIM token limit (row 1.15) bounds a provider's sync per token. Guide:
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-read-469).
+- **1.17** **SCIM 2.0 user create and replace (#470)**
+  - Description: Behind the same rate limits and SCIM token: `POST /scim/v2/Users` (201, `Location` =
+    `meta.location`) and `PUT /scim/v2/Users/{id}` (200), any Content-Type. The body is read up to
+    64 KiB and must be one JSON object; it reads `userName`, `externalId`,
+    `name.givenName`/`familyName`, `active` (JSON boolean) and `roles[].value`, ignores everything
+    else (a sent password is never used); a malformed, oversized or wrongly typed body is 400
+    `invalidSyntax` without a service call. The role comes from the first SSO mapping entry with
+    claim `roles` whose value equals a sent value exactly; no match, a missing role row or the
+    `customer` role is 400 `invalidValue`. A create writes the user (unusable random password,
+    active unless `active` false), its `user_identities` row (effective SSO issuer, `externalId` as
+    subject, `source` `scim`, so a later OIDC sign-in with that `sub`, or an Entra ID first sign-in
+    whose `oid` is that `externalId` and whose `tid` is the configured tenant (#505), uses the
+    account) and a `user_role_changed` audit row (`auth_method` `scim`, `actor_user_id` NULL) in one
+    governed transaction (`admin set → users → roles → user_identities`). An address another account
+    holds (live or erased, any letter case; on MySQL/MariaDB also padded and accented variants) or a
+    linked `externalId` is 409 `uniqueness`; a bad `externalId`, an empty or long `userName`, a name
+    part over 100 characters, no issuer or a non-address `userName` is 400 `invalidValue`. Replace
+    overwrites name, email and role (an absent name clears, an absent `active` keeps; `active` false
+    ends every session of the account since #471, row 1.18), ignores `externalId`, writes the audit
+    row only on a role change, answers 404 for an unknown, erased, customer or malformed id or an
+    account not linked to the issuer (#529, nothing written), 409 for a taken address (a local
+    account's address included, on create too) and 400 `invalidValue` when the last active admin
+    would lose the role or be deactivated. Each success writes one `auth_audit_log` success row with
+    method `scim` after the commit; a refusal writes nothing. Error details never echo a value.
+  - Unit Tests (Backend): `scim_user_handler_test.go`: `TestSCIMUserWriteHandler` (201 with
+    `Location`, 200, every `invalidSyntax` case with no service call, each sentinel's status and
+    `scimType`, no submitted value in an error body); `internal/idkit/scim`:
+    `TestWriteErrorTypeWriteTypes`.
+  - Integration Tests: `auth_scim_user_writes_test.go`: `TestSCIMUserWritesSQLite`,
+    `TestSCIMUserWritesMySQL` (MySQL 8 and MariaDB; `last_admin_race/after_handover` (#513,
+    MySQL/MariaDB only): a replace to sales of the admin a concurrent SCIM group handover just
+    promoted is refused and one active admin stays; create incl. a custom role, duplicate email,
+    padded/accented variants on MySQL, identity taken, missing externalId, unmapped role incl. a
+    mapping to customer and to no role row, replace role change/keep/deactivate/not found/email
+    taken, a local admin's replace refused as not found and its address refused on create with the
+    row, sessions and audit tables unchanged (#529), last admin, and an OIDC sign-in reusing the
+    SCIM-created account; the create stores `source` `scim` (#505); every refusal leaves the four
+    tables unchanged); `cmd/scim_wiring_test.go`: `TestSCIMUserWritesWired` (the production router,
+    audit rows with `scim` and a NULL actor).
+  - Known Issues: PUT takes `active` as a JSON boolean only (PATCH, row 1.18, also takes Entra's
+    string); DELETE is row 1.19; `roles` is accepted but not served or advertised. Guide:
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
+- **1.18** **SCIM 2.0 user patch (#471)**
+  - Description: Behind the same rate limits and SCIM token: `PATCH /scim/v2/Users/{id}` (200 with
+    the resource) applies an RFC 7644 PatchOp, body one JSON object up to 64 KiB with a non-empty
+    `Operations` array. `add`, `replace` and `remove` (op in any ASCII case) on `active` (JSON
+    boolean or `"true"`/`"false"` in any ASCII case), `userName`, `name`, `name.givenName`,
+    `name.familyName`, `emails` (primary, then work, then a sole entry),
+    `emails[type eq "work"].value` and `roles`, with a path or path-less (an object of those
+    attributes, Okta and Entra's value-object form); paths match with ASCII-only folding, no
+    trimming, no URN prefix. Last write wins; a `userName` wins over `emails`. A role `value` that
+    is one JSON object with a string `value` member, sent as text (Entra ID's form without
+    `aadOptscim062020`), stands for that inner string (#629). Attributes GopherCRM does not store
+    (`externalId`, `displayName`, `nickName`, `title`, `preferredLanguage`, `name.formatted` and the
+    other unstored name parts, `phoneNumbers`, `addresses` and the other multi-valued ones, the
+    enterprise extension URN and its attributes) are skipped on add, replace and remove and change
+    nothing (#629). Any other path or key (`password`, `groups`, a core URN prefix) is 400
+    `invalidPath`, `remove` without a path 400 `noTarget`, a malformed body or empty `Operations`
+    400 `invalidSyntax`, a wrongly typed value or a `remove` of `active`, `userName`, `emails` or
+    `roles` 400 `invalidValue`. Only an account linked to the issuer is patched (#529; any other id
+    is 404 and nothing is written). Touched attributes get PUT's checks; `roles` resolves through
+    the SSO mapping, an untouched role is kept without an audit row. One governed transaction
+    (`admin set → users → roles → refresh_tokens`) on the locked row: `active` false (also on PUT)
+    writes `token_version` + 1 and revokes every refresh token of the account, so its sessions end
+    at once; `active` true brings none back. The last active admin cannot be demoted or deactivated
+    (400 `invalidValue`). A role change writes `user_role_changed` (`scim`, NULL actor), every
+    success one `auth_audit_log` success row with method `scim`; a refusal writes nothing. Error
+    details never echo a path or value.
+  - Unit Tests (Backend): `scim_user_handler_test.go`: `TestSCIMUserPatchHandler` (each parse
+    refusal's status, `scimType` and fixed detail with no service call and no echo, accepted forms,
+    service refusals); `internal/idkit/scim`: `TestParsePatch` (accepted Entra and Okta forms incl.
+    Microsoft's documented role and multi-attribute bodies with and without the flag, skipped
+    unstored attributes, precedence, every refusal kind incl. U+212A and U+017F paths).
+  - Integration Tests: `auth_scim_user_patch_test.go`: `TestSCIMUserPatchSQLite`,
+    `TestSCIMUserPatchMySQL` (MySQL 8 and MariaDB: `last_admin_race/after_handover` (#513,
+    MySQL/MariaDB only): an `active` false patch of the admin a concurrent handover just promoted is
+    refused with token_version and sessions unchanged; Entra and Okta deactivation, sessions end
+    with every refresh row revoked before any refresh call, reactivation keeps old tokens refused,
+    last admin in three forms with token_version and sessions unchanged, role change and its audit
+    rows, name and emails, userName wins, not found, a local admin's userName and `active` false
+    patches and an other-issuer account's `active` false patch refused as not found with nothing
+    written (#529), refusals incl. a failed revocation after the users write roll back everything,
+    not wired, and since #629 Microsoft's flag-less multi-attribute body with `externalId` and the
+    identity link unchanged, a patch of only unstored attributes changing no column, a role sent as
+    JSON text); `auth_scim_user_writes_test.go`: `replace deactivates` (token_version + 1, refresh
+    tokens revoked); `cmd/scim_wiring_test.go`: `TestSCIMUserPatchWired` (a local admin's PATCH 404
+    with its row and session unchanged, password sign-ins, Entra deactivation, 401 on `/users/me`
+    and `/auth/refresh`, Okta reactivation, old token still 401, new sign-in 200);
+    `internal/config`: `TestConcurrencyDocSCIMUserPatch`.
+  - Known Issues: DELETE is row 1.19, the Groups row 1.20; the default Entra ID and Okta attribute
+    mappings can stay, the unstored attributes they send are skipped. Guide:
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
+- **1.19** **SCIM 2.0 user delete (#504)**
+  - Description: Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers
+    204 with an empty body (the request body is not read) and deactivates a managed account (linked
+    to the issuer, #529) as `active` false does: in one governed transaction
+    (`admin set → users → refresh_tokens`, no `roles` lock) it sets `is_active` false and
+    `token_version` + 1 and revokes every refresh token, so every session ends at once. It never
+    erases: email, names, role, `role_id`, the `user_identities` link and a NULL `deleted_at` stay.
+    A repeat on an inactive account answers 204 and writes nothing (no generation bump, no
+    revocation, no audit row). The last active admin is 400 `invalidValue`; a malformed, unknown,
+    erased or customer id, or an account not linked to the issuer, the SCIM 404 `User not found`. A
+    deactivation writes one `user_deactivated` `role_audit_log` row (`scim`, NULL actor, #552) in
+    the transaction and one `auth_audit_log` success row with method `scim` after the commit; a
+    refusal writes nothing.
+  - Unit Tests (Backend): `scim_user_handler_test.go`: `TestSCIMUserDeleteHandler` (204 and empty
+    body through `SetupSCIMRoutes`, the raw id reaches the service, 404, last-admin 400
+    `invalidValue`, 500 without echo).
+  - Integration Tests: `auth_scim_user_delete_test.go`: `TestSCIMUserDeleteSQLite`,
+    `TestSCIMUserDeleteMySQL` (MySQL 8 and MariaDB: `last_admin_race/after_handover` (#513,
+    MySQL/MariaDB only): a delete of the admin a concurrent handover just promoted is refused with
+    token_version and sessions unchanged; deactivates with the profile, role, identity and NULL
+    `deleted_at` kept and every refresh row revoked before any refresh call, idempotent repeat with
+    no new row, last admin unchanged, second admin, not found for `abc`, `0`, unknown, customer and
+    erased ids, a local admin not found with nothing written (#529), not wired);
+    `cmd/scim_wiring_test.go`: `TestSCIMUserDeleteWired` (401 without a header and with an unknown
+    token leave the user active, a local admin's DELETE 404 with its row unchanged, 204, 401 on
+    `/users/me` and `/auth/refresh`, repeat 204 without an audit row, SCIM 404); `internal/config`:
+    `TestConcurrencyDocSCIMUserPatch`.
+- **1.20** **SCIM 2.0 Groups (#506)**
+  - Description: Behind the same rate limits and SCIM token: the groups are the distinct
+    `groups`-claim values of the effective SSO role mapping (roles rows are not groups), ordered by
+    bytes; the id is the unpadded base64url of the value and `displayName` the value.
+    `GET /scim/v2/Groups` (ListResponse, `startIndex`/`count` as for Users; the only filter
+    `displayName eq "<value>"`, URN prefix allowed, compared byte for byte; anything else 400
+    `invalidFilter`) and `GET /scim/v2/Groups/{id}` (members = managed accounts, id ascending: never
+    erased, customer or not linked to the issuer, #529); an id that does not decode or a value the
+    mapping no longer holds is the SCIM 404 `Group not found`. `PATCH /scim/v2/Groups/{id}` applies
+    `add`/`replace` (path `members` or path-less `{members}`) and `remove`
+    (`members[value eq "<id>"]`, or path `members` with a list or none = all); `displayName` or
+    another path 400 `invalidPath`, remove without a path `noTarget`, a non-string member value or a
+    member id that is no managed account (a local account included) 400 `invalidValue` (a
+    deactivated account may be added); a leftover row of an account that is not managed is only
+    deleted by a remove or replace, with no role change, audit row or last-admin effect. One
+    governed transaction
+    (`admin set → users → roles → scim_group_members → refresh_tokens → api_keys → role_audit_log`)
+    writes the memberships and recomputes each added or removed managed member's role with the
+    sign-in's first-match rule on the groups claim (a mapping to a missing or customer role is
+    `invalidValue`), with a `user_role_changed` row (`scim`, NULL actor) per change and a
+    `user_deactivated` row the same way per member it deactivates (#552), and after the commit one
+    `auth_audit_log` success row per member whose membership changed. Since #530 an active member
+    left in no mapped group is deactivated (role kept, every access token, refresh token and API key
+    ended; an inactive one gets no `users` write), and a role that lacks a permission the old one
+    had ends the member's sessions (`token_version` + 1, refresh tokens revoked; API keys keep
+    working with the new role). Only a result with no active admin is refused, 400 `mutability`, a
+    deactivated account counting as none (a handover to another active account passes; a deactivated
+    replacement is refused). A successful patch answers 204 with no body. `POST /scim/v2/Groups`
+    (#630) answers 201 with the existing group (and `Location`) when the body's `externalId` or,
+    failing that, `displayName` equals a current `groups` value byte for byte, writing nothing; any
+    other value, a non-string value or neither key is 400 `invalidValue`, a non-empty `members` 400
+    `invalidValue`, a malformed body 400 `invalidSyntax`. Both GETs honour
+    `excludedAttributes=members`. `DELETE /scim/v2/Groups/{id}` answers a SCIM 405 with
+    `Allow: GET, PATCH`; `PUT` is unrouted. Table `scim_group_members` (`group_value` `utf8mb4_bin`,
+    unique per group and user, FK to users RESTRICT; migration
+    `20261129120000_add_scim_group_members`).
+  - Unit Tests (Backend): `scim_group_handler_test.go`: `TestSCIMGroupHandler` (list, filter and
+    paging, `excludedAttributes=members`, refusals with no service call, 404, the 204 patch with
+    Microsoft's Add and Remove bodies, the create with Microsoft's body and its refusals,
+    `last_admin_mutability` and the two-sentinel order, the DELETE 405 with `Allow`, a 500 whose log
+    holds no group id, name or body); `scim_handler_test.go`: `TestSCIMDiscoveryDocuments` (Group
+    schema and resource type); `internal/idkit/scim`: `TestSCIMGroupResource`, `TestSCIMGroupID`,
+    `TestSCIMParseGroupFilter`, `TestSCIMParseGroupPatch`, `TestSCIMParseGroupCreate`,
+    `TestSCIMExcludesMembers`; `scim_group_member_test.go`: `TestSCIMGroupMemberSchemaSQLite`.
+  - Integration Tests: `auth_scim_groups_test.go`: `TestSCIMGroupsSQLite`, `TestSCIMGroupsMySQL`
+    (MySQL 8 and MariaDB: list, filter, create, removed values, add to admin with audit rows,
+    recompute on remove, removing the only group deactivates and ends every credential, an inactive
+    account's removal writes no `users` change, a lowered role ends sessions and keeps the API key,
+    a raised role ends nothing, remove all deactivates every member left in no mapped group,
+    `last_admin` (remove, empty replace, remove all), `last_admin_deactivation`, `handover_replace`,
+    `handover_deactivates_old_admin`, `handover_add_remove`, `replace_to_inactive`, unwired
+    credential stores, invalid, customer and erased members, a customer mapping,
+    `last_admin_race/a_first`, `/b_first`, `/concurrent`; #529: a local account's stored row is not
+    listed, an add or replace naming it is `invalidValue` with nothing written, and a remove of its
+    row while it is the only active admin deletes only the row); `cmd/scim_wiring_test.go`:
+    `TestSCIMGroupsWired` (a local admin added as a member is 400 `invalidValue`; Microsoft Entra
+    ID's group lookup, create, repeated create, member add and reads);
+    `cmd/credential_revocation_wiring_test.go`: `TestCredentialRevocationProductionWiring`
+    (`scim_group_removal`, `scim_group_lowered_role`);
+    `cmd/migrate/scim_group_members_migration_test.go`: `TestSCIMGroupMembersMigration{Files,}`;
+    `internal/config`: `TestConcurrencyDocSCIMGroupPatch`.
+  - Known Issues: A group patch maps the groups claim and a Users write the roles claim, so the last
+    write sets the role; a mapping edit recomputes no role until the person's next group patch; the
+    Users writes keep `invalidValue` for their last-admin refusal. Guide:
+    [AUTHORIZATION.md](AUTHORIZATION.md#groups-506).
 
 ---
 
@@ -131,8 +795,45 @@ Status meanings:
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 2.1 | **Dashboard Stats** | Shows total leads, customers, open tickets, pending tasks, conversion rate | -- (the dashboard is reached only incidentally after sign-in; the `admin-entity-suite.spec.ts` navigation test visits Leads, Customers, Tickets, Tasks and Users) | `dashboard_handler_test.go`: `TestGetStats_*` (role guard, and values from mocked service counts) | -- | `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}` (subtest "aggregate statistics stay system-wide" asserts `total_leads` and `open_tickets` against seeded rows); `TestCustomRoleScope{SQLite,MySQL}` (asserts `total_leads`, `open_tickets` and `pending_tasks` for a custom role) | **partial** | `total_customers` and `conversion_rate` are asserted only against mocked counts (G15) |
 | 2.2 | **Quick Actions** | Dashboard has buttons to create leads, customers, etc. | -- | -- | -- | -- | **untested** | No tests for quick action navigation |
-| 2.3 | **Pipeline by stage (2026-09)** | "Pipeline by stage" chart from `GET /dashboard/pipeline` → `stages`: all five deal stages in order with `count` and per-currency `amount_cents` and `weighted_cents` (round half up of Σ amount × probability / 100, once per stage and currency); the chart plots the open stages in the default currency (`deals.default_currency`) and lists every other currency per stage in an "Other currencies" table under it, never converted or summed; a failed request shows "Pipeline could not be loaded" rather than an empty chart. Admin sees all deals, sales its own; support and customer get **403** (support passes the dashboard guard and is refused in the handler: no deal access) | -- (`admin-deals-board.spec.ts` does not open the chart; the tile is covered in 2.4) | `dashboard_handler_test.go`: TestGetPipeline_RoleMatrix, TestGetPipeline_ResponseShape, TestGetPipeline_ServiceErrors; `deal_service_test.go`: TestDealService_DashboardPipeline, TestBuildDealPipelineStages_Layout, TestWeightedCents_RoundsHalfUpOnce | `PipelineChart.test.tsx`: 6 tests (default-currency total and the "Other currencies" table, configured currency, no table for one currency, empty state, error state, board link); `Dashboard.test.tsx` deal widgets: shown for admin and sales, configured default currency, empty states, error state, and "shows no deal widgets and makes no pipeline request for the %s role" (support, customer) | `deal_pipeline_integration_test.go`: TestDashboardPipeline, TestRolesAndBadFilters | **partial** | Support gets 403 here while `/dashboard/new-leads` answers support with an empty list; the page does not request the widget for support or customer (`canViewDeals` in `Dashboard.tsx`, pinned by the Vitest case above). The chart has no e2e; role cases have no e2e (no role-login helper) |
-| 2.4 | **Won this month (2026-09)** | "Won this month" tile from `GET /dashboard/pipeline` → `won_this_month`: count and amounts per currency of the deals in the `won` stage whose `closed_at` is in [first instant of the current UTC month, first instant of the next); the month is computed in Go and passed as bound parameters (no date functions); sales counts its own | `admin-deals-board.spec.ts`: "the dashboard "Won this month" tile counts a deal moved to Won on the board" (the count grows by one; the amounts are not asserted) | `deal_service_test.go`: TestUTCMonthBounds, TestDealService_DashboardPipeline | `WonThisMonthTile.test.tsx`: 4 tests (count and one total per currency, zero with the empty-state line, loading placeholder, error state); `Dashboard.test.tsx` deal widgets | `deal_repository_test.go`: TestDealRepository_WonBetweenMonthBoundaries; `deal_pipeline_integration_test.go`: TestDashboardPipeline, TestWonThisMonthFollowsTheStage | **partial** | The month is UTC, not the viewer's zone: a deal won at 01:00 on the 1st in UTC+3 counts for the previous month |
+| 2.3 | **Pipeline by stage (2026-09)** | "Pipeline by stage" chart from `GET /dashboard/pipeline` → `stages`: all five deal stages in order with `count` and per-currency `amount_cents` and … (more in the notes) | -- (`admin-deals-board.spec.ts` does not open the chart; the tile is covered in 2.4) | `dashboard_handler_test.go`, `deal_service_test.go` (details in the notes) | `PipelineChart.test.tsx`, `Dashboard.test.tsx` (details in the notes) | `deal_pipeline_integration_test.go`: TestDashboardPipeline, TestRolesAndBadFilters | **partial** | Support gets 403 here while `/dashboard/new-leads` answers support with an empty list (more in the notes) |
+| 2.4 | **Won this month (2026-09)** | "Won this month" tile from `GET /dashboard/pipeline` → `won_this_month`: count and amounts per currency of the deals in the `won` stage whose … (more in the notes) | `admin-deals-board.spec.ts` (details in the notes) | `deal_service_test.go`: TestUTCMonthBounds, TestDealService_DashboardPipeline | `WonThisMonthTile.test.tsx`, `Dashboard.test.tsx` (details in the notes) | `deal_repository_test.go`, `deal_pipeline_integration_test.go` (details in the notes) | **partial** | The month is UTC, not the viewer's zone: a deal won at 01:00 on the 1st in UTC+3 counts for the previous month |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **2.3** **Pipeline by stage (2026-09)**
+  - Description: "Pipeline by stage" chart from `GET /dashboard/pipeline` → `stages`: all five deal
+    stages in order with `count` and per-currency `amount_cents` and `weighted_cents` (round half up
+    of Σ amount × probability / 100, once per stage and currency); the chart plots the open stages
+    in the default currency (`deals.default_currency`) and lists every other currency per stage in
+    an "Other currencies" table under it, never converted or summed; a failed request shows
+    "Pipeline could not be loaded" rather than an empty chart. Admin sees all deals, sales its own;
+    support and customer get **403** (support passes the dashboard guard and is refused in the
+    handler: no deal access).
+  - Unit Tests (Backend): `dashboard_handler_test.go`: TestGetPipeline_RoleMatrix,
+    TestGetPipeline_ResponseShape, TestGetPipeline_ServiceErrors; `deal_service_test.go`:
+    TestDealService_DashboardPipeline, TestBuildDealPipelineStages_Layout,
+    TestWeightedCents_RoundsHalfUpOnce.
+  - Unit Tests (Frontend): `PipelineChart.test.tsx`: 6 tests (default-currency total and the "Other
+    currencies" table, configured currency, no table for one currency, empty state, error state,
+    board link); `Dashboard.test.tsx` deal widgets: shown for admin and sales, configured default
+    currency, empty states, error state, and "shows no deal widgets and makes no pipeline request
+    for the %s role" (support, customer).
+  - Known Issues: Support gets 403 here while `/dashboard/new-leads` answers support with an empty
+    list; the page does not request the widget for support or customer (`canViewDeals` in
+    `Dashboard.tsx`, pinned by the Vitest case above). The chart has no e2e; role cases have no e2e
+    (no role-login helper).
+- **2.4** **Won this month (2026-09)**
+  - Description: "Won this month" tile from `GET /dashboard/pipeline` → `won_this_month`: count and
+    amounts per currency of the deals in the `won` stage whose `closed_at` is in [first instant of
+    the current UTC month, first instant of the next); the month is computed in Go and passed as
+    bound parameters (no date functions); sales counts its own.
+  - E2E Tests: `admin-deals-board.spec.ts`: "the dashboard "Won this month" tile counts a deal moved
+    to Won on the board" (the count grows by one; the amounts are not asserted).
+  - Unit Tests (Frontend): `WonThisMonthTile.test.tsx`: 4 tests (count and one total per currency,
+    zero with the empty-state line, loading placeholder, error state); `Dashboard.test.tsx` deal
+    widgets.
+  - Integration Tests: `deal_repository_test.go`: TestDealRepository_WonBetweenMonthBoundaries;
+    `deal_pipeline_integration_test.go`: TestDashboardPipeline, TestWonThisMonthFollowsTheStage.
 
 ---
 
@@ -140,20 +841,190 @@ Status meanings:
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 3.1 | **View Leads List** | Table shows leads with company, contact, email, phone, status, classification, source, created date | `admin-leads.spec.ts`: admin can view leads list page; `leads-sorting-search.spec.ts`: should load leads page with data | `lead_handler_test.go`: TestList_AdminViewsAll, TestList_SalesViewsOwn, TestList_SupportUserSeesOnlyOwnLeads (+ search/sort/classification variants) | `LeadList.test.tsx`: renders lead list with data, shows loading state initially; `routes/index.test.tsx` "lead and customer creation routes" (support and customer redirected from every `/leads` route, admin and sales render, loading-then-authenticated transitions) | `lead_integration_test.go`: TestListLeads_AdminSeesAll, TestListLeads_SalesSeesOnlyOwn | **covered** | The whole `/leads` group is gated to admin+sales by `RequireRole` in `routes.go`, so the support/customer handler tests exercise a path the router does not reach. Since #120 the SPA routes carry the same admin+sales guard; the role redirect is Vitest-only (no role-login e2e helper) |
+| 3.1 | **View Leads List** | Table shows leads with company, contact, email, phone, status, classification, source, created date | `admin-leads.spec.ts`: admin can view leads list page; `leads-sorting-search.spec.ts`: should load leads page with data | `lead_handler_test.go`: TestList_AdminViewsAll, TestList_SalesViewsOwn, TestList_SupportUserSeesOnlyOwnLeads (+ search/sort/classification variants) | `LeadList.test.tsx`, `routes/index.test.tsx` (details in the notes) | `lead_integration_test.go`: TestListLeads_AdminSeesAll, TestListLeads_SalesSeesOnlyOwn | **covered** | The whole `/leads` group is gated to admin+sales by `RequireRole` in `routes.go`, so the support/customer handler tests exercise a path the router does not reach (more in the notes) |
 | 3.2 | **Create Lead** | Form with company, contact, email, phone, source, status, notes; admin must specify owner, which must be an active admin or sales user (400 `INVALID_REFERENCE` otherwise) | `admin-leads.spec.ts`: create a new lead, create with all optional fields, validation errors | `lead_handler_test.go`: TestCreate_Success, TestCreate_SalesUserWithOwnerID, TestCreate_AdminRequiresOwnerID; `lead_owner_validation_test.go` (service): TestLeadOwnerCheckRefusedWhenUnwired | `LeadForm.test.tsx`: renders create form, submits with valid data | `lead_integration_test.go`: TestCreateLead_AdminSuccess, TestCreateLead_SalesSuccess, TestCreateLead_SalesCannotAssignToOthers; `test/integration/lead_owner_validation_test.go`: the owner roots of section 3.13 | **covered** | -- |
-| 3.3 | **Edit Lead** | Update any lead field; sales can only edit own leads | `admin-leads.spec.ts`: edit an existing lead; clears the phone and notes of a lead and they stay empty after a reload | `lead_handler_test.go`: TestUpdate_Success, TestUpdate_SalesUserReassign; `lead_clear_fields_test.go`: TestLeadHandlerUpdateClearsOptionalFields, TestLeadHandlerUpdateKeepsOmittedOrNull, TestLeadHandlerUpdateIgnoresEmptyRequiredFields; `internal/service/lead_clear_fields_test.go`: TestLeadServiceUpdateStoresSentEmptyText | `LeadForm.test.tsx`: edit mode, "sends an emptied phone and notes as empty strings"; `leads.test.ts`: "updateLead owner_id" (sends an explicit `owner_id`, omits it otherwise), "updateLead sends empty phone, company and notes as empty strings" | `lead_integration_test.go`: TestUpdateLead_Success; `lead_clear_fields_integration_test.go`: TestLeadUpdateClearsOptionalTextFields, TestLeadUpdateOmittedOrNullFieldsUnchanged, TestLeadUpdateEmptyRequiredFieldsUnchanged; `test/integration/lead_owner_validation_test.go`: TestLeadUpdateUnchangedOwnerNotRevalidatedSQLite, TestLeadOwnerRoleRulesPrecedeOwnerCheckSQLite | **covered** | Only admins may reassign (`owner_id` from sales → 403), and a changed owner must be an active admin or sales user (400 `INVALID_REFERENCE`). The lead form has no owner picker; since #119 the endpoint client forwards `owner_id` when a caller passes it (it used to drop it). Since #398 a sent `""` clears phone, company, position, source, external id or notes, while an omitted key or `null` keeps the stored value; an empty first name, last name, email, status or classification still leaves the stored value unchanged. The form can empty only Phone and Notes (it requires company and source); the email-or-phone rule of create is not re-checked on update |
+| 3.3 | **Edit Lead** | Update any lead field; sales can only edit own leads | `admin-leads.spec.ts`: edit an existing lead; clears the phone and notes of a lead and they stay empty after a reload | `lead_handler_test.go`, `lead_clear_fields_test.go`, `internal/service/lead_clear_fields_test.go` (details in the notes) | `LeadForm.test.tsx`, `leads.test.ts` (details in the notes) | `lead_integration_test.go`, `lead_clear_fields_integration_test.go`, `test/integration/lead_owner_validation_test.go` (details in the notes) | **covered** | Only admins may reassign (`owner_id` from sales → 403), and a changed owner must be an active admin or sales user (400 `INVALID_REFERENCE`) (more in the notes) |
 | 3.4 | **View Lead Detail** | Navigate to lead detail page | `admin-leads.spec.ts`: view lead details | `lead_handler_test.go`: TestGet_Success, TestGet_SalesUserForbidden | -- | `lead_integration_test.go`: TestGetLead_AdminSuccess, TestGetLead_SalesCannotAccessOthers | **covered** | -- |
 | 3.5 | **Delete Lead** | Deletion **erases** the lead's personal data, then soft-deletes the row; cascades to the customer it was converted into and that customer's customer-role login (#108). Only an admin may delete a converted lead; the owning sales user gets 403 and nothing changes | `admin-leads.spec.ts`: delete a lead | `lead_handler_test.go`: TestDelete_Success, TestDelete_ConvertedLeadForbiddenForSales; `lead_service_test.go`: TestDelete_Success, TestDelete_NonAdminUsesUnconvertedErasure, TestDelete_RefusedConvertedLeadIsForbidden, TestDelete_NotFound, TestDelete_LookupFailurePropagates | `LeadList.test.tsx`: handles lead deletion | `lead_integration_test.go`: TestDeleteLead_Success, TestDeleteConvertedLead_SalesOwnerForbiddenAndNothingChanges, TestDeleteUnconvertedLead_SalesOwnerSucceeds, TestDeleteConvertedLead_AdminErasesTheCustomer; `lead_erasure_test.go`: 14 tests | **covered** | Irreversible — see section 12. No E2E for the sales refusal (needs the sales login helper) |
 | 3.6 | **Search Leads** | Type in search box, filters across name, email, company, phone, notes | `admin-leads.spec.ts`: search leads; `leads-sorting-search.spec.ts`: by email, by company, clear search, no results | `lead_handler_test.go`: TestList_SearchByEmail, TestList_SearchWithSort, TestList_SupportUserWithSearchSeesOnlyOwnLeads | `LeadList.test.tsx`: filters leads by search term | -- | **covered** | -- |
 | 3.7 | **Sort Leads** | Click column headers to sort asc/desc | `leads-sorting-search.spec.ts`: sort by Created asc on the first click, toggle sort order, search and sort together | `lead_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByCreatedAtAsc, TestList_SortByInvalidColumn, TestList_SortByInvalidOrder, TestList_SortWithPagination | -- | -- | **partial** | No integration test. Only `created_at` is exercised E2E; other columns untested |
 | 3.8 | **Filter by Status** | Dropdown to filter leads by status (All Statuses, New, Contacted, Qualified, Unqualified, Converted) | `admin-leads.spec.ts`: admin can filter leads by status (#426) | `lead_list_status_filter_test.go`: TestLeadListStatusFilterHandler; `lead_status_valid_test.go`: TestLeadStatusIsValid; `lead_list_filter_test.go` (service): TestLeadServiceListFiltered | `LeadList.test.tsx`: filters leads by status, offers exactly the statuses the API filters on (#426) | `internal/repository/lead_list_filter_test.go`: TestLeadListFilterRepository{SQLite,MySQL} | **covered** | `GET /leads?status=` filters server-side (#426): exact, case-sensitive status, before pagination; combined with search, classification and the sort for admins (#618: these combine without a status too, and a search matches `%`, `_`, `!` and `\` literally), only the caller's own leads for sales; an unknown value is 400 `VALIDATION_ERROR`; `external_id` still overrides it and the export ignores it |
 | 3.9 | **Filter by Classification** | Dropdown to filter by classification (hot_lead, lead, spam, etc.) | -- | `lead_handler_test.go`: TestList_CustomerUserWithClassificationSeesOnlyOwnLeads | -- | -- | **partial** | Backend reads `classification` (`LeadHandler.List` (`internal/handler/lead_handler.go`)) and one handler test now touches it, but no E2E test covers the dropdown |
-| 3.10 | **Convert Lead to Customer** | Convert a lead into a customer record. Since #104 the server enforces the lead-conversion settings before any write: status in `leads.conversion.allowed_statuses` (seeded `qualified`, `contacted`), non-blank `notes` when `leads.conversion.require_notes` is on (400 `VALIDATION_ERROR` with `details.field` `status` or `notes`), and with `leads.conversion.auto_assign_owner` on the lead owner becomes `assigned_to_id` (never `user_id`). The lead's `company_id` is copied when the company is live; a stale link is dropped. A lead that already has a `customer_id` is refused as already converted (400) whatever its status, checked on the locked row; a lead erased mid-request is a 404. Conversion is the only way to reach `converted`: lead create/update and `POST /leads/bulk/status` refuse it (400 `VALIDATION_ERROR`, `details.field` `status`; a converted lead may keep it on edit). The conversion reads the lead with a row lock and a lead update re-reads it under the same lock, so a concurrent status change serialises with the conversion. Since #182 each conversion attempt locks the lead's company row (`FOR UPDATE` by primary key) before the lead, and a company delete locks it before unlinking, so a company deleted while a lead converts never stays linked to the new customer: the delete either waits and unlinks it, or wins and the conversion converts without the link; a lead whose `company_id` keeps changing under the attempt is restarted at most 3 times, then refused with 409 `CONFLICT` (also on `PUT /leads/{id}`). `GET /configurations/ui` exposes the three settings read-only; the UI follows them (#117): Convert on the configured statuses, notes required in the dialog when the setting is on, an owner-assignment hint, refusals shown in the open dialog | `leads-convert-api.spec.ts` (API refusals; the browser dialog requiring notes under saved settings), `customer-website.spec.ts` (qualified leads) | `lead_handler_test.go`: TestConvertToCustomer_Success, _AlreadyConverted, _ConversionRuleRefusals, _LeavesDerivedLinksToTheService, _SalesUserForbidden; `lead_service_test.go`: 4 conversion tests; `lead_conversion_rules_test.go`: TestLeadConversionRules{SQLite,MySQL} (each rule, owner on/off, company link none/live/stale, already converted, a lead that already has a customer, rollback), TestLeadConversionSettingsReadFailureWritesNothing; `lead_status_integrity_test.go`: TestLeadConvertedStatusOnlyByConversion{SQLite,MySQL}, TestLeadConversionStatusRace{SQLite,MySQL}; `lead_conversion_rules_test.go`: TestLeadConversionLogLevels; `lead_handler_test.go`: TestCreate_ConvertedStatusIsRefused, TestUpdate_ConvertedStatusIsAValidationError, TestConvertToCustomer_LogLevelFollowsTheResponse; `bulk_handler_test.go`: TestBulkUpdateLeadStatus_ConvertedIsAValidationError; `configuration_handler_test.go`: TestGetUIConfigurations_CarriesTheLeadConversionContract; `configuration_repository_test.go`: TestInitializeDefaultsCorrectsLeadConversionStatusMetadata; lock order (#182): `company_lock_live_test.go`: TestCompanyRepositoryLockLive{SQLite,MySQL}; `bulk_status_lead_lock_test.go`: TestBulkStatusLeadsLockingRead{SQLite,MySQL}; `company_delete_lock_test.go`: TestCompanyServiceDeleteLocksCompanyFirst, TestCompanyServiceDeleteRacedAfterPreReadSQLite; `lead_company_lock_order_test.go`: TestLeadCompanyRestartDecision, TestLeadCompanyRestartBoundSQLite, TestLeadCompanyLockOrderOutcomesSQLite, TestLeadCompanyLockLogsOmitPersonalData; `lead_company_lock_order_mysql_test.go`: TestLeadConversionVsCompanyDeleteMySQL, TestLeadUpdateVsCompanyDeleteMySQL; `bulk_lead_company_delete_test.go`: TestBulkLeadStatusVsCompanyDeleteMySQL; `lead_company_contended_test.go`: TestLeadCompanyContendedHandlerMapping | `LeadList.rowActions.test.tsx`: the row menu ("More actions for <company>") appears only on convertible leads and converts the chosen lead after a re-sort, by mouse and keyboard; `LeadList.conversion.test.tsx`: menu on the configured statuses, notes required, refusal kept in the open dialog and cleared on close, settings re-read after a status refusal; `LeadDetail.test.tsx`: Convert on the configured statuses, notes required, server notes refusal on the field, already-converted and other refusals in the dialog, owner-assignment hint; `ConvertLeadDialog.test.tsx`: notes rule (also when it arrives after mount), refusal placement, owner hint; `ConfigurationContext.test.tsx`: the conversion settings parsed from `/configurations/ui`, unknown while loading, failed or incomplete; `LeadConversionSettings.test.tsx` (real provider): both pages show the action disabled while loading, a Retry after a failed load, an incomplete list treated as unknown; `LeadDetail.test.tsx` "LeadDetail conversion across leads": no dialog or refusal carried to the next lead, typed input kept over a re-read, no navigation for a late answer; `LeadForm.test.tsx`: does not offer Converted as a status, offers Converted only for a lead that is already converted, keeps Converted as the current status of a converted lead | `lead_integration_test.go`: 3 conversion tests; `lead_conversion_transaction_test.go`: 2 transaction tests | **covered** | The browser path of the rules has one e2e (`leads-convert-api.spec.ts`: a contacted lead converts only with notes when the settings say so); the status refusal and owner assignment are checked in Go and Vitest only. The #182 MySQL roots skip without `TEST_MYSQL_DSN` and run on an `AutoMigrate` schema without foreign keys; lead create, customer and deal writes and form intake still set `company_id` outside the lock order. The status-race root uses a bounded 500 ms window, so on a very slow host it could pass without exercising the race |
+| 3.10 | **Convert Lead to Customer** | Convert a lead into a customer record (more in the notes) | `leads-convert-api.spec.ts` (API refusals; the browser dialog requiring notes under saved settings), `customer-website.spec.ts` (qualified leads) | `lead_handler_test.go`, `lead_service_test.go`, `lead_conversion_rules_test.go`, `lead_status_integrity_test.go`, `bulk_handler_test.go` and 9 more files (details in the notes) | `LeadList.rowActions.test.tsx`, `LeadList.conversion.test.tsx`, `LeadDetail.test.tsx`, `ConvertLeadDialog.test.tsx`, `ConfigurationContext.test.tsx` and 2 more files (details in the notes) | `lead_integration_test.go`: 3 conversion tests; `lead_conversion_transaction_test.go`: 2 transaction tests | **covered** | The browser path of the rules has one e2e (`leads-convert-api.spec.ts`: a contacted lead converts only with notes when the settings say so) (more in the notes) |
 | 3.11 | **Pagination** | Navigate between pages of leads | -- | `lead_handler_test.go`: TestList_SortWithPagination | `LeadList.test.tsx`: handles pagination | -- | **partial** | No dedicated E2E pagination test |
-| 3.12 | **Look up by external id** | `GET /leads?external_id=` (API only, no UI): an equality match on `external_id` that takes precedence over search, classification, sort and paging and returns the normal list shape. `external_id` is not unique: every matching live lead the caller may view is returned, in ascending id order, owner loaded, `total` = their number. Visibility goes through `service.CanViewLead` row by row (admin any lead, sales its own); a lead the caller may not see is left out, never 403/404, so ids cannot be probed. At most the first 100 matching leads by id are read before the visibility filter (`service.LeadExternalIDLookupLimit`). A value over 255 characters (the column width, `service.LeadExternalIDMaxLength`) is 400 `VALIDATION_ERROR` with `details.field` `external_id`; an empty value is ignored | -- | `lead_handler_test.go`: TestList_ExternalID_AdminFindsTheLead, _SharedValueAdminSeesEveryLead, _SharedValueSalesSeesOnlyItsLaterLead, _SalesGetsNothingForAnotherOwnersLead, _OtherRolesGetNothing, _UnknownValueIsAnEmptyList, _NotFoundErrorIsAnEmptyList, _LookupFailureIsAnInternalError, _OverlongValueIsAValidationError, _ColumnWidthInCharactersIsAccepted, _WinsOverSearchSortAndPaging, _EmptyValueKeepsTheNormalList; `lead_service_test.go`: TestListByExternalID_ReadsUpToTheLookupLimit; `lead_external_id_test.go`: TestLeadExternalIDMaxLengthMatchesTheColumn; `lead_repository_test.go`: TestLeadRepository_ListByExternalID | -- | `lead_integration_test.go`: TestListLeads_ByExternalID, TestListLeads_ByExternalIDSharedByTwoOwners, TestListLeads_ByExternalIDTooLong | **covered** | With more than 100 live leads sharing one value, later ones (including a sales user's own) are not returned. On MySQL/MariaDB the match follows the column collation (`utf8mb4_unicode_ci`: case-insensitive, trailing spaces ignored), SQLite compares bytes; the integration and repository tests run on SQLite only |
-| 3.13 | **Lead owner and assignment** | `POST /leads/{id}/assign` (API only, no UI) with `{user_id}`, admin on any lead and sales on its own (`service.CanViewLead` on the locked row); a custom role needs `leads.update`, and `leads.assign_owner` unless `user_id` is the caller itself (403 'You can only assign leads to yourself', #377); and an owner check shared with create and update: an unknown, deactivated, erased, support or customer owner is 400 `INVALID_REFERENCE`, nothing written, no event. An update checks only a changed owner; an assignment always checks the user it names. A converted lead can be assigned | -- | `lead_owner_validation_test.go` (service): TestLeadOwnerCheckRefusedWhenUnwired, TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL, TestLeadAssignIsAtomicSQLite; `cmd/lead_owner_wiring_test.go`: TestLeadOwnerProductionWiring; `cmd/lead_assign_permission_test.go`: TestLeadAssignRequiresAssignOwnerKey | -- | `test/integration/lead_owner_validation_test.go`: TestLeadOwner{Unknown,Deactivated,Erased,WrongRole}Rejected{SQLite,MySQL}, TestLeadOwnerValidAccepted{SQLite,MySQL}, TestLeadAssign{Permissions,SalesHandOff,RevalidatesUnchangedOwner,ConvertedLead}SQLite, TestLeadOwnerLookupFailureIsServerErrorSQLite, TestLeadOwnerRefusalLogsOmitPersonalData | **covered** | Deactivation and erasure share no lock protocol with lead writes (#183). Public form default owners and the automation `assign_owner` step have their own rules. Leads whose owner already left are not repaired. No screen calls `leadsApi.assignLead` |
-| 3.14 | **Export leads as CSV** | Lead list button (#290): admin sees "Export all leads (CSV)", sales "Export my leads (CSV)", support and customer no button (the `/leads` route guard keeps them off the page anyway). It calls `leadsApi.exportLeads()` (`GET /leads/export`, `responseType: 'blob'`, no query parameters), so it ignores the list's search, status, classification and sort, and shows no filter state; the file is saved as `leads-export.csv` through an attached anchor and an object URL revoked on the next tick. The button is disabled while the request is pending; a failure (403, 429, 500, network) shows the fixed snackbar "Could not export leads." and saves no file. `GET /leads/export` (#234): a raw CSV attachment `leads-export.csv` (`text/csv; charset=utf-8`) of exactly the leads the caller may list. Admin: every live lead matching the list's combined filters (#618: search and an exact classification ANDed, in the sort's order or id order; built on the list's own predicate); sales: its own leads in ascending id order, every parameter ignored; support and customer: 403. `external_id` and paging are not read. Columns: id, first_name, last_name, email, phone, company, position, source, status, classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at; timestamps RFC 3339 in UTC; the customer export's `csvSafeField` formula guard on every text cell. One ordered statement whose order ends in `leads.id` (#105), read in full before the first byte; erased leads absent, converted present | -- | `lead_export_test.go` (handler): TestLeadExportHandler, TestLeadExportRecord, TestLeadExportLogsOmitPersonalData; `lead_export_test.go` (service): TestLeadServiceExportScope, TestLeadServiceExportRefusesOtherRoles, TestLeadServiceExportLogsOmitPersonalData; `lead_export_traversal_test.go`: TestLeadExportTraversal{SQLite,MySQL} (>1,000 rows, NULL and empty classification and company, both directions) | `leads.test.ts`: exportLeads requests GET /leads/export as a blob without query parameters; `LeadList.export.test.tsx` "LeadList CSV export": label per role (admin, sales), hidden for support and customer, download as leads-export.csv, ignores the list filters, disabled while in flight, error and no file on 403/429/500 | `tests/lead_export_csv_test.go`: TestLeadExportCSV{SQLite,MySQL}, TestLeadExportRoles{SQLite,MySQL} | **covered** | No E2E spec for the button. The error text is fixed; the server's message in the Blob error body is not decoded. No record cap or streaming: the whole book is held in memory before writing. The MySQL roots skip without `TEST_MYSQL_DSN` |
+| 3.12 | **Look up by external id** | `GET /leads?external_id=` (API only, no UI): an equality match on `external_id` that takes precedence over search, classification, sort and paging and returns the normal list shape (more in the notes) | -- | `lead_handler_test.go`, `lead_service_test.go`, `lead_external_id_test.go`, `lead_repository_test.go` (details in the notes) | -- | `lead_integration_test.go`: TestListLeads_ByExternalID, TestListLeads_ByExternalIDSharedByTwoOwners, TestListLeads_ByExternalIDTooLong | **covered** | With more than 100 live leads sharing one value, later ones (including a sales user's own) are not returned (more in the notes) |
+| 3.13 | **Lead owner and assignment** | `POST /leads/{id}/assign` (API only, no UI) with `{user_id}`, admin on any lead and sales on its own (`service.CanViewLead` on the locked row) (more in the notes) | -- | `lead_owner_validation_test.go`, `cmd/lead_owner_wiring_test.go`, `cmd/lead_assign_permission_test.go` (details in the notes) | -- | `test/integration/lead_owner_validation_test.go` (details in the notes) | **covered** | Deactivation and erasure share no lock protocol with lead writes (#183) (more in the notes) |
+| 3.14 | **Export leads as CSV** | Lead list button (#290): admin sees "Export all leads (CSV)", sales "Export my leads (CSV)", support and customer no button (the `/leads` route guard keeps them off the page anyway) (more in the notes) | -- | `lead_export_test.go`, `lead_export_traversal_test.go` (details in the notes) | `leads.test.ts`, `LeadList.export.test.tsx` (details in the notes) | `tests/lead_export_csv_test.go`: TestLeadExportCSV{SQLite,MySQL}, TestLeadExportRoles{SQLite,MySQL} | **covered** | No E2E spec for the button (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **3.1** **View Leads List**
+  - Unit Tests (Frontend): `LeadList.test.tsx`: renders lead list with data, shows loading state
+    initially; `routes/index.test.tsx` "lead and customer creation routes" (support and customer
+    redirected from every `/leads` route, admin and sales render, loading-then-authenticated
+    transitions).
+  - Known Issues: The whole `/leads` group is gated to admin+sales by `RequireRole` in `routes.go`,
+    so the support/customer handler tests exercise a path the router does not reach. Since #120 the
+    SPA routes carry the same admin+sales guard; the role redirect is Vitest-only (no role-login e2e
+    helper).
+- **3.3** **Edit Lead**
+  - Unit Tests (Backend): `lead_handler_test.go`: TestUpdate_Success, TestUpdate_SalesUserReassign;
+    `lead_clear_fields_test.go`: TestLeadHandlerUpdateClearsOptionalFields,
+    TestLeadHandlerUpdateKeepsOmittedOrNull, TestLeadHandlerUpdateIgnoresEmptyRequiredFields;
+    `internal/service/lead_clear_fields_test.go`: TestLeadServiceUpdateStoresSentEmptyText.
+  - Unit Tests (Frontend): `LeadForm.test.tsx`: edit mode, "sends an emptied phone and notes as
+    empty strings"; `leads.test.ts`: "updateLead owner_id" (sends an explicit `owner_id`, omits it
+    otherwise), "updateLead sends empty phone, company and notes as empty strings".
+  - Integration Tests: `lead_integration_test.go`: TestUpdateLead_Success;
+    `lead_clear_fields_integration_test.go`: TestLeadUpdateClearsOptionalTextFields,
+    TestLeadUpdateOmittedOrNullFieldsUnchanged, TestLeadUpdateEmptyRequiredFieldsUnchanged;
+    `test/integration/lead_owner_validation_test.go`:
+    TestLeadUpdateUnchangedOwnerNotRevalidatedSQLite, TestLeadOwnerRoleRulesPrecedeOwnerCheckSQLite.
+  - Known Issues: Only admins may reassign (`owner_id` from sales → 403), and a changed owner must
+    be an active admin or sales user (400 `INVALID_REFERENCE`). The lead form has no owner picker;
+    since #119 the endpoint client forwards `owner_id` when a caller passes it (it used to drop it).
+    Since #398 a sent `""` clears phone, company, position, source, external id or notes, while an
+    omitted key or `null` keeps the stored value; an empty first name, last name, email, status or
+    classification still leaves the stored value unchanged. The form can empty only Phone and Notes
+    (it requires company and source); the email-or-phone rule of create is not re-checked on update.
+- **3.10** **Convert Lead to Customer**
+  - Description: Convert a lead into a customer record. Since #104 the server enforces the
+    lead-conversion settings before any write: status in `leads.conversion.allowed_statuses` (seeded
+    `qualified`, `contacted`), non-blank `notes` when `leads.conversion.require_notes` is on (400
+    `VALIDATION_ERROR` with `details.field` `status` or `notes`), and with
+    `leads.conversion.auto_assign_owner` on the lead owner becomes `assigned_to_id` (never
+    `user_id`). The lead's `company_id` is copied when the company is live; a stale link is dropped.
+    A lead that already has a `customer_id` is refused as already converted (400) whatever its
+    status, checked on the locked row; a lead erased mid-request is a 404. Conversion is the only
+    way to reach `converted`: lead create/update and `POST /leads/bulk/status` refuse it (400
+    `VALIDATION_ERROR`, `details.field` `status`; a converted lead may keep it on edit). The
+    conversion reads the lead with a row lock and a lead update re-reads it under the same lock, so
+    a concurrent status change serialises with the conversion. Since #182 each conversion attempt
+    locks the lead's company row (`FOR UPDATE` by primary key) before the lead, and a company delete
+    locks it before unlinking, so a company deleted while a lead converts never stays linked to the
+    new customer: the delete either waits and unlinks it, or wins and the conversion converts
+    without the link; a lead whose `company_id` keeps changing under the attempt is restarted at
+    most 3 times, then refused with 409 `CONFLICT` (also on `PUT /leads/{id}`).
+    `GET /configurations/ui` exposes the three settings read-only; the UI follows them (#117):
+    Convert on the configured statuses, notes required in the dialog when the setting is on, an
+    owner-assignment hint, refusals shown in the open dialog.
+  - Unit Tests (Backend): `lead_handler_test.go`: TestConvertToCustomer_Success, _AlreadyConverted,
+    _ConversionRuleRefusals, _LeavesDerivedLinksToTheService, _SalesUserForbidden;
+    `lead_service_test.go`: 4 conversion tests; `lead_conversion_rules_test.go`:
+    TestLeadConversionRules{SQLite,MySQL} (each rule, owner on/off, company link none/live/stale,
+    already converted, a lead that already has a customer, rollback),
+    TestLeadConversionSettingsReadFailureWritesNothing; `lead_status_integrity_test.go`:
+    TestLeadConvertedStatusOnlyByConversion{SQLite,MySQL},
+    TestLeadConversionStatusRace{SQLite,MySQL}; `lead_conversion_rules_test.go`:
+    TestLeadConversionLogLevels; `lead_handler_test.go`: TestCreate_ConvertedStatusIsRefused,
+    TestUpdate_ConvertedStatusIsAValidationError, TestConvertToCustomer_LogLevelFollowsTheResponse;
+    `bulk_handler_test.go`: TestBulkUpdateLeadStatus_ConvertedIsAValidationError;
+    `configuration_handler_test.go`: TestGetUIConfigurations_CarriesTheLeadConversionContract;
+    `configuration_repository_test.go`: TestInitializeDefaultsCorrectsLeadConversionStatusMetadata;
+    lock order (#182): `company_lock_live_test.go`: TestCompanyRepositoryLockLive{SQLite,MySQL};
+    `bulk_status_lead_lock_test.go`: TestBulkStatusLeadsLockingRead{SQLite,MySQL};
+    `company_delete_lock_test.go`: TestCompanyServiceDeleteLocksCompanyFirst,
+    TestCompanyServiceDeleteRacedAfterPreReadSQLite; `lead_company_lock_order_test.go`:
+    TestLeadCompanyRestartDecision, TestLeadCompanyRestartBoundSQLite,
+    TestLeadCompanyLockOrderOutcomesSQLite, TestLeadCompanyLockLogsOmitPersonalData;
+    `lead_company_lock_order_mysql_test.go`: TestLeadConversionVsCompanyDeleteMySQL,
+    TestLeadUpdateVsCompanyDeleteMySQL; `bulk_lead_company_delete_test.go`:
+    TestBulkLeadStatusVsCompanyDeleteMySQL; `lead_company_contended_test.go`:
+    TestLeadCompanyContendedHandlerMapping.
+  - Unit Tests (Frontend): `LeadList.rowActions.test.tsx`: the row menu ("More actions for
+    <company>") appears only on convertible leads and converts the chosen lead after a re-sort, by
+    mouse and keyboard; `LeadList.conversion.test.tsx`: menu on the configured statuses, notes
+    required, refusal kept in the open dialog and cleared on close, settings re-read after a status
+    refusal; `LeadDetail.test.tsx`: Convert on the configured statuses, notes required, server notes
+    refusal on the field, already-converted and other refusals in the dialog, owner-assignment hint;
+    `ConvertLeadDialog.test.tsx`: notes rule (also when it arrives after mount), refusal placement,
+    owner hint; `ConfigurationContext.test.tsx`: the conversion settings parsed from
+    `/configurations/ui`, unknown while loading, failed or incomplete;
+    `LeadConversionSettings.test.tsx` (real provider): both pages show the action disabled while
+    loading, a Retry after a failed load, an incomplete list treated as unknown;
+    `LeadDetail.test.tsx` "LeadDetail conversion across leads": no dialog or refusal carried to the
+    next lead, typed input kept over a re-read, no navigation for a late answer;
+    `LeadForm.test.tsx`: does not offer Converted as a status, offers Converted only for a lead that
+    is already converted, keeps Converted as the current status of a converted lead.
+  - Known Issues: The browser path of the rules has one e2e (`leads-convert-api.spec.ts`: a
+    contacted lead converts only with notes when the settings say so); the status refusal and owner
+    assignment are checked in Go and Vitest only. The #182 MySQL roots skip without `TEST_MYSQL_DSN`
+    and run on an `AutoMigrate` schema without foreign keys; lead create, customer and deal writes
+    and form intake still set `company_id` outside the lock order. The status-race root uses a
+    bounded 500 ms window, so on a very slow host it could pass without exercising the race.
+- **3.12** **Look up by external id**
+  - Description: `GET /leads?external_id=` (API only, no UI): an equality match on `external_id`
+    that takes precedence over search, classification, sort and paging and returns the normal list
+    shape. `external_id` is not unique: every matching live lead the caller may view is returned, in
+    ascending id order, owner loaded, `total` = their number. Visibility goes through
+    `service.CanViewLead` row by row (admin any lead, sales its own); a lead the caller may not see
+    is left out, never 403/404, so ids cannot be probed. At most the first 100 matching leads by id
+    are read before the visibility filter (`service.LeadExternalIDLookupLimit`). A value over 255
+    characters (the column width, `service.LeadExternalIDMaxLength`) is 400 `VALIDATION_ERROR` with
+    `details.field` `external_id`; an empty value is ignored.
+  - Unit Tests (Backend): `lead_handler_test.go`: TestList_ExternalID_AdminFindsTheLead,
+    _SharedValueAdminSeesEveryLead, _SharedValueSalesSeesOnlyItsLaterLead,
+    _SalesGetsNothingForAnotherOwnersLead, _OtherRolesGetNothing, _UnknownValueIsAnEmptyList,
+    _NotFoundErrorIsAnEmptyList, _LookupFailureIsAnInternalError, _OverlongValueIsAValidationError,
+    _ColumnWidthInCharactersIsAccepted, _WinsOverSearchSortAndPaging, _EmptyValueKeepsTheNormalList;
+    `lead_service_test.go`: TestListByExternalID_ReadsUpToTheLookupLimit;
+    `lead_external_id_test.go`: TestLeadExternalIDMaxLengthMatchesTheColumn;
+    `lead_repository_test.go`: TestLeadRepository_ListByExternalID.
+  - Known Issues: With more than 100 live leads sharing one value, later ones (including a sales
+    user's own) are not returned. On MySQL/MariaDB the match follows the column collation
+    (`utf8mb4_unicode_ci`: case-insensitive, trailing spaces ignored), SQLite compares bytes; the
+    integration and repository tests run on SQLite only.
+- **3.13** **Lead owner and assignment**
+  - Description: `POST /leads/{id}/assign` (API only, no UI) with `{user_id}`, admin on any lead and
+    sales on its own (`service.CanViewLead` on the locked row); a custom role needs `leads.update`,
+    and `leads.assign_owner` unless `user_id` is the caller itself (403 'You can only assign leads
+    to yourself', #377); and an owner check shared with create and update: an unknown, deactivated,
+    erased, support or customer owner is 400 `INVALID_REFERENCE`, nothing written, no event. An
+    update checks only a changed owner; an assignment always checks the user it names. A converted
+    lead can be assigned.
+  - Unit Tests (Backend): `lead_owner_validation_test.go` (service):
+    TestLeadOwnerCheckRefusedWhenUnwired, TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL,
+    TestLeadAssignIsAtomicSQLite; `cmd/lead_owner_wiring_test.go`: TestLeadOwnerProductionWiring;
+    `cmd/lead_assign_permission_test.go`: TestLeadAssignRequiresAssignOwnerKey.
+  - Integration Tests: `test/integration/lead_owner_validation_test.go`:
+    TestLeadOwner{Unknown,Deactivated,Erased,WrongRole}Rejected{SQLite,MySQL},
+    TestLeadOwnerValidAccepted{SQLite,MySQL},
+    TestLeadAssign{Permissions,SalesHandOff,RevalidatesUnchangedOwner,ConvertedLead}SQLite,
+    TestLeadOwnerLookupFailureIsServerErrorSQLite, TestLeadOwnerRefusalLogsOmitPersonalData.
+  - Known Issues: Deactivation and erasure share no lock protocol with lead writes (#183). Public
+    form default owners and the automation `assign_owner` step have their own rules. Leads whose
+    owner already left are not repaired. No screen calls `leadsApi.assignLead`.
+- **3.14** **Export leads as CSV**
+  - Description: Lead list button (#290): admin sees "Export all leads (CSV)", sales "Export my
+    leads (CSV)", support and customer no button (the `/leads` route guard keeps them off the page
+    anyway). It calls `leadsApi.exportLeads()` (`GET /leads/export`, `responseType: 'blob'`, no
+    query parameters), so it ignores the list's search, status, classification and sort, and shows
+    no filter state; the file is saved as `leads-export.csv` through an attached anchor and an
+    object URL revoked on the next tick. The button is disabled while the request is pending; a
+    failure (403, 429, 500, network) shows the fixed snackbar "Could not export leads." and saves no
+    file. `GET /leads/export` (#234): a raw CSV attachment `leads-export.csv`
+    (`text/csv; charset=utf-8`) of exactly the leads the caller may list. Admin: every live lead
+    matching the list's combined filters (#618: search and an exact classification ANDed, in the
+    sort's order or id order; built on the list's own predicate); sales: its own leads in ascending
+    id order, every parameter ignored; support and customer: 403. `external_id` and paging are not
+    read. Columns: id, first_name, last_name, email, phone, company, position, source, status,
+    classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at;
+    timestamps RFC 3339 in UTC; the customer export's `csvSafeField` formula guard on every text
+    cell. One ordered statement whose order ends in `leads.id` (#105), read in full before the first
+    byte; erased leads absent, converted present.
+  - Unit Tests (Backend): `lead_export_test.go` (handler): TestLeadExportHandler,
+    TestLeadExportRecord, TestLeadExportLogsOmitPersonalData; `lead_export_test.go` (service):
+    TestLeadServiceExportScope, TestLeadServiceExportRefusesOtherRoles,
+    TestLeadServiceExportLogsOmitPersonalData; `lead_export_traversal_test.go`:
+    TestLeadExportTraversal{SQLite,MySQL} (>1,000 rows, NULL and empty classification and company,
+    both directions).
+  - Unit Tests (Frontend): `leads.test.ts`: exportLeads requests GET /leads/export as a blob without
+    query parameters; `LeadList.export.test.tsx` "LeadList CSV export": label per role (admin,
+    sales), hidden for support and customer, download as leads-export.csv, ignores the list filters,
+    disabled while in flight, error and no file on 403/429/500.
+  - Known Issues: No E2E spec for the button. The error text is fixed; the server's message in the
+    Blob error body is not decoded. No record cap or streaming: the whole book is held in memory
+    before writing. The MySQL roots skip without `TEST_MYSQL_DSN`.
 
 ---
 
@@ -162,14 +1033,72 @@ Status meanings:
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4.1 | **View Customers List** | Table showing customers with company, primary contact, email, phone and customer-since date; per-row menu with "Create Ticket" for admin and support; "Add Customer" for admin and sales | `admin-customers.spec.ts`: admin can view customers list page | `customer_handler_test.go`: TestList_Success, TestList_WithPagination | `CustomerList.test.tsx`: renders list, has no status column, has no total revenue column or revenue sort; `CustomerList.rowActions.test.tsx`: Create Ticket targets the chosen row after a re-sort, menu and Add Customer per role; `CustomerDetail.test.tsx`: shows no total revenue field; `customers.test.ts` "customer read model" | `customer_integration_test.go`: TestListCustomers_AdminSeesAll, _SalesCanSee, _SupportCanSee, _CustomerRoleForbidden | **covered** | -- |
-| 4.2 | **Create Customer** | Form with company (free text and linked Company), contact name, email, phone, website, full address and notes. Industry, employee count, annual revenue and an active switch were removed in #118: the API never stored them (industry and size live on the Company). `/customers/new` is admin+sales in the SPA as on the API (#120) | `admin-customers.spec.ts`: create customer, minimal data, validation errors, duplicate email | `customer_handler_test.go`: TestCreate_Success, TestCreate_DuplicateEmail, TestCreate_ForbiddenForSupportUser, TestCreate_DuplicateEmailDoesNotLeakDriverInternals; `customer_service_test.go`: TestCreate_SoftDeletedCustomerExists | `CustomerForm.test.tsx` "CustomerForm retained fields" (no removed control, exact create payload with and without the optional fields, edit-form load and the update payload with cleared fields — submission only; persistence of cleared fields is pinned by the Go route tests of row 4.3); `customers.test.ts` "customer read model" | `customer_integration_test.go`: TestCreateCustomer_AdminSuccess, _SalesSuccess, _DuplicateEmail, _SupportUserForbidden; `soft_delete_email_reuse_test.go`: TestCustomerCreateRejectsEmailOfSoftDeletedCustomer, TestCreateCustomerHandlerDoesNotLeakDriverErrorForSoftDeletedEmail | **covered** | Duplicate email now returns **409** (previously 400) and no longer leaks driver text |
-| 4.3 | **Edit Customer** | Update customer fields | `admin-customers.spec.ts`: edit an existing customer; clears the notes and city of a customer and they stay empty after a reload (TC-CUST-018) | `customer_handler_test.go`: TestUpdate_Success, TestUpdate_DuplicateEmail, TestUpdate_DuplicateEmailDoesNotLeakDriverInternals; `customer_clear_fields_test.go`: TestCustomerHandlerUpdateClearsOptionalFields, TestCustomerHandlerUpdateKeepsOmittedOrNull | -- | `customer_integration_test.go`: TestUpdateCustomer_AdminSuccess, _DuplicateEmail, _SupportUserForbidden; `customer_clear_fields_integration_test.go`: TestCustomerUpdateClearsOptionalTextFields, TestCustomerUpdateOmittedOrNullFieldsUnchanged, TestCustomerUpdateEmptyRequiredFieldsUnchanged, TestCustomerUpdateClearRoles; `erasure_atomicity_test.go`: TestCustomerUpdateLiveRow{SQLite,MySQL}, TestCustomerUpdateDuplicateEmail{SQLite,MySQL} | **covered** | Since #270 a sent `""` clears phone, company, position, address, city, state, country, postal code or notes, while an omitted key or `null` keeps the stored value; an empty first name, last name or email still leaves the stored value unchanged; website and `company_id` keep their own clear rules |
+| 4.2 | **Create Customer** | Form with company (free text and linked Company), contact name, email, phone, website, full address and notes (more in the notes) | `admin-customers.spec.ts`: create customer, minimal data, validation errors, duplicate email | `customer_handler_test.go`, `customer_service_test.go` (details in the notes) | `CustomerForm.test.tsx`, `customers.test.ts` (details in the notes) | `customer_integration_test.go`, `soft_delete_email_reuse_test.go` (details in the notes) | **covered** | Duplicate email now returns **409** (previously 400) and no longer leaks driver text |
+| 4.3 | **Edit Customer** | Update customer fields | `admin-customers.spec.ts`: edit an existing customer; clears the notes and city of a customer and they stay empty after a reload (TC-CUST-018) | `customer_handler_test.go`, `customer_clear_fields_test.go` (details in the notes) | -- | `customer_integration_test.go`, `customer_clear_fields_integration_test.go`, `erasure_atomicity_test.go` (details in the notes) | **covered** | Since #270 a sent `""` clears phone, company, position, address, city, state, country, postal code or notes, while an omitted key or `null` keeps the stored value (more in the notes) |
 | 4.4 | **Delete Customer** | Admin-only. **Erases** personal data, then soft-deletes; cascades to the lead it was converted from and to its customer-role login (`user_id`; staff accounts are never followed, #108) | `admin-customers.spec.ts`: delete a customer | `customer_handler_test.go`: TestDelete_Success, TestDelete_NotFound, TestDelete_GenuineFailureIsInternalError, TestDelete_ForbiddenForNonAdmin | `CustomerList.test.tsx`: handles customer deletion | `customer_integration_test.go`: TestDeleteCustomer_AdminSuccess, _SalesUserForbidden; `erasure_test.go` + `lead_erasure_test.go` cascade tests | **covered** | Irreversible — see section 12 |
 | 4.5 | **Search Customers** | Search across first_name, last_name, email, company, phone, notes | `admin-customers.spec.ts`: search customers | `customer_handler_test.go`: TestList_SearchByEmail, TestList_SearchWithSort | `CustomerList.test.tsx`: filters customers by search term | -- | **covered** | -- |
 | 4.6 | **Sort Customers** | Click column headers to sort | -- | `customer_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
 | 4.7 | **Pagination** | Navigate customer pages | -- | `customer_handler_test.go`: TestList_WithPagination | -- | `customer_integration_test.go`: TestPagination | **covered** | -- |
 | 4.8 | **Customer website** | Optional HTTP/HTTPS URL, trimmed, at most 255 characters; saved through customer create/edit and lead conversion, returned on reads and appended to CSV exports. Omitted/null on update preserves it; an empty string clears it. Erasure scrubs it | `customer-website.spec.ts`: create/edit/clear after reload and conversion-to-detail navigation | `customer_website_test.go`: validation on routed customer and lead-conversion write paths | `customers.test.ts`, `leads.test.ts`, `CustomerForm.test.tsx`, `ConvertLeadDialog.test.tsx` | `customer_website_integration_test.go`: persistence, invalid writes, conversion, export and erasure; `customer_website_upgrade_test.go`: populated SQLite upgrade; `cmd/migrate/customer_website_test.go`: SQL/AutoMigrate ordering and rollback | **covered** | Previously discarded values cannot be recovered; rolling back the website migration removes saved websites |
-| 4.9 | **Customer external ids** (#212) | Integrators map their own `(source, scope, external_id)` identity to a customer in `customer_external_ids`, unique on the exact, case-sensitive triple (source 1-64, scope 0-128 with '' by default, external_id 1-255 characters; no control characters, no leading or trailing whitespace; `utf8mb4_bin` on MySQL/MariaDB). `POST /customers/{id}/external-ids` (admin, sales; 409 on a triple already mapped, also to another customer) and `DELETE /customers/{id}/external-ids/{mappingId}` (admin, sales; 404 for another customer's mapping). `GET /customers?source=&scope=&external_id=` returns at most one live customer to admin, sales and support. No UI; mappings are not embedded in the customer JSON and cannot be updated in place | -- | `customer_external_id_handler_test.go`: TestCustomerExternalIDHandlerErrorMapping, TestCustomerListExternalIDLookup, TestCustomerExternalIDHandlerLogsOmitValues; `customer_external_id_service_test.go`: TestCustomerExternalIDValidation, TestCustomerExternalIDMaxLengthsMatchTheColumns, TestCustomerExternalIDServiceRefusedWhenUnwired, TestCustomerExternalIDLogsOmitValues; `customer_external_id_race_test.go`: TestCustomerExternalIDCreateRacesErasure{SQLite,MySQL}; `customer_external_id_repository_test.go`: TestCustomerExternalIDRepository{SQLite,MySQL}; `customer_external_id_test.go` (models): TestCustomerExternalIDSchemaSQLite, TestCustomerExternalIDSQLiteUpgrade, TestCustomerExternalIDJSON | -- | `tests/customer_external_id_test.go`: TestCustomerExternalIDAPISQLite; `cmd/customer_external_id_wiring_test.go`: TestCustomerExternalIDProductionWiring; `cmd/migrate/customer_external_ids_migration_test.go`: TestCustomerExternalIDsMigrationFiles, TestCustomerExternalIDsMigration | **covered** | MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in the Database migrations workflow is an operator follow-up. Customer email stays globally unique |
+| 4.9 | **Customer external ids** (#212) | Integrators map their own `(source, scope, external_id)` identity to a customer in `customer_external_ids`, unique on the exact, case-sensitive triple … (more in the notes) | -- | `customer_external_id_handler_test.go`, `customer_external_id_service_test.go`, `customer_external_id_race_test.go` and 2 more files (details in the notes) | -- | `tests/customer_external_id_test.go`, `cmd/customer_external_id_wiring_test.go`, `cmd/migrate/customer_external_ids_migration_test.go` (details in the notes) | **covered** | MySQL roots skip without `TEST_MYSQL_DSN` (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **4.2** **Create Customer**
+  - Description: Form with company (free text and linked Company), contact name, email, phone,
+    website, full address and notes. Industry, employee count, annual revenue and an active switch
+    were removed in #118: the API never stored them (industry and size live on the Company).
+    `/customers/new` is admin+sales in the SPA as on the API (#120).
+  - Unit Tests (Backend): `customer_handler_test.go`: TestCreate_Success, TestCreate_DuplicateEmail,
+    TestCreate_ForbiddenForSupportUser, TestCreate_DuplicateEmailDoesNotLeakDriverInternals;
+    `customer_service_test.go`: TestCreate_SoftDeletedCustomerExists.
+  - Unit Tests (Frontend): `CustomerForm.test.tsx` "CustomerForm retained fields" (no removed
+    control, exact create payload with and without the optional fields, edit-form load and the
+    update payload with cleared fields — submission only; persistence of cleared fields is pinned by
+    the Go route tests of row 4.3); `customers.test.ts` "customer read model".
+  - Integration Tests: `customer_integration_test.go`: TestCreateCustomer_AdminSuccess,
+    _SalesSuccess, _DuplicateEmail, _SupportUserForbidden; `soft_delete_email_reuse_test.go`:
+    TestCustomerCreateRejectsEmailOfSoftDeletedCustomer,
+    TestCreateCustomerHandlerDoesNotLeakDriverErrorForSoftDeletedEmail.
+- **4.3** **Edit Customer**
+  - Unit Tests (Backend): `customer_handler_test.go`: TestUpdate_Success, TestUpdate_DuplicateEmail,
+    TestUpdate_DuplicateEmailDoesNotLeakDriverInternals; `customer_clear_fields_test.go`:
+    TestCustomerHandlerUpdateClearsOptionalFields, TestCustomerHandlerUpdateKeepsOmittedOrNull.
+  - Integration Tests: `customer_integration_test.go`: TestUpdateCustomer_AdminSuccess,
+    _DuplicateEmail, _SupportUserForbidden; `customer_clear_fields_integration_test.go`:
+    TestCustomerUpdateClearsOptionalTextFields, TestCustomerUpdateOmittedOrNullFieldsUnchanged,
+    TestCustomerUpdateEmptyRequiredFieldsUnchanged, TestCustomerUpdateClearRoles;
+    `erasure_atomicity_test.go`: TestCustomerUpdateLiveRow{SQLite,MySQL},
+    TestCustomerUpdateDuplicateEmail{SQLite,MySQL}.
+  - Known Issues: Since #270 a sent `""` clears phone, company, position, address, city, state,
+    country, postal code or notes, while an omitted key or `null` keeps the stored value; an empty
+    first name, last name or email still leaves the stored value unchanged; website and `company_id`
+    keep their own clear rules.
+- **4.9** **Customer external ids** (#212)
+  - Description: Integrators map their own `(source, scope, external_id)` identity to a customer in
+    `customer_external_ids`, unique on the exact, case-sensitive triple (source 1-64, scope 0-128
+    with '' by default, external_id 1-255 characters; no control characters, no leading or trailing
+    whitespace; `utf8mb4_bin` on MySQL/MariaDB). `POST /customers/{id}/external-ids` (admin, sales;
+    409 on a triple already mapped, also to another customer) and
+    `DELETE /customers/{id}/external-ids/{mappingId}` (admin, sales; 404 for another customer's
+    mapping). `GET /customers?source=&scope=&external_id=` returns at most one live customer to
+    admin, sales and support. No UI; mappings are not embedded in the customer JSON and cannot be
+    updated in place.
+  - Unit Tests (Backend): `customer_external_id_handler_test.go`:
+    TestCustomerExternalIDHandlerErrorMapping, TestCustomerListExternalIDLookup,
+    TestCustomerExternalIDHandlerLogsOmitValues; `customer_external_id_service_test.go`:
+    TestCustomerExternalIDValidation, TestCustomerExternalIDMaxLengthsMatchTheColumns,
+    TestCustomerExternalIDServiceRefusedWhenUnwired, TestCustomerExternalIDLogsOmitValues;
+    `customer_external_id_race_test.go`: TestCustomerExternalIDCreateRacesErasure{SQLite,MySQL};
+    `customer_external_id_repository_test.go`: TestCustomerExternalIDRepository{SQLite,MySQL};
+    `customer_external_id_test.go` (models): TestCustomerExternalIDSchemaSQLite,
+    TestCustomerExternalIDSQLiteUpgrade, TestCustomerExternalIDJSON.
+  - Integration Tests: `tests/customer_external_id_test.go`: TestCustomerExternalIDAPISQLite;
+    `cmd/customer_external_id_wiring_test.go`: TestCustomerExternalIDProductionWiring;
+    `cmd/migrate/customer_external_ids_migration_test.go`: TestCustomerExternalIDsMigrationFiles,
+    TestCustomerExternalIDsMigration.
+  - Known Issues: MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in the
+    Database migrations workflow is an operator follow-up. Customer email stays globally unique.
 
 ---
 
@@ -183,12 +1112,24 @@ erased: deleting one clears the links and soft-deletes the row. Catalog cases in
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
 | 4b.1 | **List companies** | `/companies` table with name, domain, industry, owner and live customer/lead counts; `search` over name, domain, industry, city; `sort_by` allowlist (`id, name, domain, industry, created_at, updated_at`, unknown → 400); `page`/`offset`/`limit` with `meta`. `data` is the bare array. Admin, sales, support | `admin-companies.spec.ts`: admin can view the companies list page, admin can search companies | `company_handler_test.go`: TestList_ReturnsTheArrayWithPaginationMeta, TestList_UnknownSortColumnIs400, TestRoleMatrix | `CompanyList.test.tsx`: 12 tests | `company_repository_test.go`: TestCompanyRepository_ListSearchSortAndPaginate, _ListRejectsUnknownSortColumns; `company_integration_test.go`: TestListSearchSortAndPagination, TestRoleMatrix | **covered** | On SQLite, search ignores case for ASCII letters only. Sales/support read access and the customer-role 403 are Go-only (no role-login e2e helper) |
-| 4b.2 | **Create company** | Name required (1–200 chars, trimmed); domain normalised (lower case, scheme/path/`www.` stripped) and unique among live rows → 409; website must be http(s); `employee_range` from a fixed list; every column bounded by its width → 400; `owner_id` validated → 400 `INVALID_REFERENCE`; sales gets itself as owner, admin may pick anyone or nobody. Admin, sales | `admin-companies.spec.ts`: admin can create a company with all fields and sees them on the detail page, validation errors keep the form open, a duplicate domain is refused with the server message on the domain field | `company_handler_test.go`: TestCreate_*, TestRoleMatrix; `company_service_test.go`: TestCreate_*, TestNormalizeCompanyDomain; `company_column_limits_test.go` | `CompanyForm.test.tsx`: create mode (fields, owner picker per role, validation, bounds, payload, 409 and 400 messages) | `company_integration_test.go`: TestCreateNormalisesTheDomainAndRefusesDuplicates, TestSalesOwnerRuleAndOwnLeadsOnly | **covered** | The sales owner rule (self-assigned, 403 for anyone else) is Go-only (no role-login e2e helper); the e2e sends a plain domain, so normalisation is pinned in Go |
+| 4b.2 | **Create company** | Name required (1–200 chars, trimmed) (more in the notes) | `admin-companies.spec.ts` (details in the notes) | `company_handler_test.go`: TestCreate_*, TestRoleMatrix; `company_service_test.go`: TestCreate_*, TestNormalizeCompanyDomain; `company_column_limits_test.go` | `CompanyForm.test.tsx`: create mode (fields, owner picker per role, validation, bounds, payload, 409 and 400 messages) | `company_integration_test.go`: TestCreateNormalisesTheDomainAndRefusesDuplicates, TestSalesOwnerRuleAndOwnLeadsOnly | **covered** | The sales owner rule (self-assigned, 403 for anyone else) is Go-only (no role-login e2e helper); the e2e sends a plain domain, so normalisation is pinned in Go |
 | 4b.3 | **Edit company** | `PUT` replaces the text fields (absent = cleared); `owner_id` absent keeps, `0` clears (admin), value sets (sales: self only); own domain never a duplicate. Admin, sales | `admin-companies.spec.ts`: admin can edit a company | `company_handler_test.go`: TestUpdate_*; `company_service_test.go`: TestUpdate_* | `CompanyForm.test.tsx`: edit mode (load, PUT without `owner_id` when untouched, `owner_id: 0` on clear, new owner, 409) | `company_integration_test.go`: TestCreateNormalisesTheDomainAndRefusesDuplicates | **covered** | PUT semantics differ from the partial-update PUT of customers and leads. The e2e edits the industry only; owner changes and the sales-side owner rules are Vitest and Go only |
 | 4b.4 | **Delete company** | Admin only. One transaction: `company_id = NULL` on leads and customers (soft-deleted rows included), then soft delete; 404 when missing; the domain is free again | `admin-companies.spec.ts`: deleting a company leaves the customer with its text company only | `company_handler_test.go`: TestDelete_SuccessNotFoundAndFailure; `company_service_test.go`: TestCompanyServiceDelete_UnlinksLeadsAndCustomersThenSoftDeletes, _RollsBackTheUnlinksWhenTheDeleteFails | `CompanyList.test.tsx`: delete dialog, confirm, cancel | `company_repository_test.go`: TestCompanyRepository_UnlinkClearsLiveAndSoftDeletedRows; `company_integration_test.go`: TestDeleteUnlinksLeadsAndCustomers | **covered** | Not an erasure: nothing personal is stored. The e2e checks the customer unlink; the lead unlink and the sales/support 403 are Go-only |
 | 4b.5 | **Company detail with customers and leads** | `GET /companies/{id}` with owner and counts; `GET /companies/{id}/customers` (admin, sales, support); `GET /companies/{id}/leads` (admin, sales; sales sees own leads only); both paginated, `data` is the array | `admin-companies.spec.ts`: admin can create a company with all fields and sees them on the detail page, linking a customer to a company shows the link on both detail pages | `company_handler_test.go`: TestListLeads_SalesIsNarrowedToItsOwnLeadsAdminIsNot, TestListCustomers_UnknownCompanyIs404 | `CompanyDetail.test.tsx`: 9 tests | `company_repository_test.go`: TestCompanyRepository_GetByIDPreloadsOwnerAndCounts, _ListLeadsScopesByOwnerAndListCustomersPaginates; `company_integration_test.go`: TestSalesOwnerRuleAndOwnLeadsOnly | **covered** | The e2e sees the leads section empty only; a populated leads section and the sales narrowing are Vitest and Go only (no role-login e2e helper) |
 | 4b.6 | **Link from leads and customers** | `company_id` on lead and customer create/update: unknown or deleted → 400 `INVALID_REFERENCE`; on update absent keeps, `0` clears; `company_record` preloaded on the detail endpoints; the free-text `company` is independent | `admin-companies.spec.ts`: linking a customer to a company shows the link on both detail pages, deleting a company leaves the customer with its text company only; `forms-public-api.spec.ts` (public submissions unaffected) | `company_link_handler_test.go`, `company_link_service_test.go` | `LeadForm.test.tsx` and `CustomerForm.test.tsx` (send, keep, clear with `company_id: 0`, `INVALID_REFERENCE` on the picker), `CompanyAutocomplete.test.tsx`: 7 tests | `company_integration_test.go`: TestLeadAndCustomerCompanyLinkThroughTheAPI | **covered** | The e2e links a customer; the lead link and the clear-on-edit path are Vitest and Go only. The list endpoints of leads and customers do not preload `company_record` (detail only) |
 | 4b.7 | **Erasure keeps the link** | Erasing a lead or customer leaves `company_id` and the company untouched (business link, as `assigned_to_id`); the whole-database sweep covers `companies` | -- | -- | -- | `company_integration_test.go`: TestErasingALinkedCustomerAndLeadKeepsTheCompanyLinkAndTheCompany; `erasure_pii_sweep_test.go` (table list) | **covered** | Notes are free text and may be typed to contain names — the same accepted limitation as ticket subjects |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **4b.2** **Create company**
+  - Description: Name required (1–200 chars, trimmed); domain normalised (lower case,
+    scheme/path/`www.` stripped) and unique among live rows → 409; website must be http(s);
+    `employee_range` from a fixed list; every column bounded by its width → 400; `owner_id`
+    validated → 400 `INVALID_REFERENCE`; sales gets itself as owner, admin may pick anyone or
+    nobody. Admin, sales.
+  - E2E Tests: `admin-companies.spec.ts`: admin can create a company with all fields and sees them
+    on the detail page, validation errors keep the form open, a duplicate domain is refused with the
+    server message on the domain field.
 
 ---
 
@@ -203,16 +1144,172 @@ staff-typed title, notes and lost reason are redacted (4c.8, #245). Catalog case
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 4c.1 | **List deals** | `GET /deals`: `search` over title and notes; server-side filters `stage`, `open=true` (neither won nor lost), `company_id`, `customer_id`, `owner_id` (admin; sales is always narrowed to itself); `sort_by` allowlist (`id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at, updated_at`, unknown → 400); `page`/`offset`/`limit` with `meta`; `data` is the bare array with owner, company, customer and lead preloaded | `admin-deals.spec.ts`: admin can view the deals list page, admin can filter the list by stage | `deal_handler_test.go`: TestList_PassesEveryFilterAndReturnsTheArrayWithMeta, TestList_SalesIsAlwaysNarrowedToItself, TestList_BadFiltersAre400, TestRoleMatrix | `DealList.test.tsx`: 10 tests (columns, server-side search, stage and open filters, sort allowlist, role buttons) | `deal_repository_test.go`: TestDealRepository_ListFiltersSortsAndPaginates, _ListRejectsUnknownSortColumns; `deal_integration_test.go`: TestListFiltersSortAndPagination, TestSalesOwnerRuleAndOwnDealsOnly, TestRoleMatrix | **covered** | On SQLite, search ignores case for ASCII letters only. Sales scoping and the customer/support 403 are Go-only (no role-login e2e helper); the e2e filters by stage on top of a search, the "Open only" toggle and sorting are Vitest and Go only |
-| 4c.2 | **Create deal** | Title required (1–200, trimmed); `stage` defaults to qualification; `amount_cents` 0 to 1000000000000 (10^12 cents, i.e. 10,000,000,000.00, `models.DealAmountCentsMax`, in the binding and the service, so the pipeline sums cannot overflow); `currency` `^[A-Z]{3}$`, default from `deals.default_currency` (seeded `EUR`, admin-editable, exposed on `/configurations/ui`); `probability` 0–100 with per-stage defaults 10/40/70, won pinned to 100 and lost to 0; `expected_close_date` YYYY-MM-DD; `lost_reason` kept only on lost; `company_id`/`customer_id`/`lead_id` optional live rows → 400 `INVALID_REFERENCE` naming the field; `owner_id` defaults to the caller, sales may only name itself (403), admin anyone; first history row (`from_stage` null) in the same transaction | `admin-deals.spec.ts`: admin can create a deal for a company and sees the formatted amount on both detail pages, validation errors keep the form open | `deal_handler_test.go`: TestCreate_*, TestDealStageBindingTagsMatchTheModel, TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage, TestDealAmountBindingTagMatchesTheModel; `deal_service_test.go`: TestCreate_*, TestAmountBound_OnCreateAndUpdate, TestApplyDealTransition, TestDealService_CreateWritesTheDealAndItsFirstHistoryRowTogether, _CurrencyDefaultComesFromConfiguration, _AFailedHistoryWriteRollsBackTheDeal; `deal_test.go` (column limits, stage defaults, date JSON) | `DealForm.test.tsx`: 27 tests (fields, currency default from `/configurations/ui`, validation including the amount bound, payload, dashboard pipeline invalidated after a create, `INVALID_REFERENCE` on the pickers); `ConfigurationSettings.test.tsx`: the `deals` category tab | `deal_integration_test.go`: TestCreateAppliesDefaultsAndValidates, TestDefaultCurrencyFollowsTheConfiguration; `configuration_repository_test.go`: TestInitializeDefaultsKeepsConfiguredValues | **covered** | `lost_reason` is not required by the API when moving to lost (the UI prompts for it). A configured currency that is not three upper-case letters falls back to EUR with a warning. The e2e validation test exercises the form's own checks only; the API 400s are Go |
+| 4c.1 | **List deals** | `GET /deals`: `search` over title and notes (more in the notes) | `admin-deals.spec.ts`: admin can view the deals list page, admin can filter the list by stage | `deal_handler_test.go`: TestList_PassesEveryFilterAndReturnsTheArrayWithMeta, TestList_SalesIsAlwaysNarrowedToItself, TestList_BadFiltersAre400, TestRoleMatrix | `DealList.test.tsx`: 10 tests (columns, server-side search, stage and open filters, sort allowlist, role buttons) | `deal_repository_test.go`, `deal_integration_test.go` (details in the notes) | **covered** | On SQLite, search ignores case for ASCII letters only (more in the notes) |
+| 4c.2 | **Create deal** | Title required (1–200, trimmed) (more in the notes) | `admin-deals.spec.ts`: admin can create a deal for a company and sees the formatted amount on both detail pages, validation errors keep the form open | `deal_handler_test.go`, `deal_service_test.go`, `deal_test.go` (details in the notes) | `DealForm.test.tsx`, `ConfigurationSettings.test.tsx` (details in the notes) | `deal_integration_test.go`, `configuration_repository_test.go` (details in the notes) | **covered** | `lost_reason` is not required by the API when moving to lost (the UI prompts for it) (more in the notes) |
 | 4c.3 | **Edit deal** | `PUT` is the new state of the text fields, amount, stage and date (absent = cleared); links follow the lead rule (absent keeps, `0` clears, value sets); `owner_id` absent keeps (sales: self only); `currency` absent keeps. A stage difference goes through the transition rules and writes a history row; the same stage writes none and applies `probability` only when sent | `admin-deals.spec.ts`: admin can edit the title and amount | `deal_handler_test.go`: TestUpdate_*; `deal_service_test.go`: TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges | `DealForm.test.tsx`: edit mode (load, PUT payload, `company_id: 0` on clear) | `deal_integration_test.go`: TestStageJourneyWithHistory | **covered** | PUT semantics differ from the partial-update PUT of customers and leads (same as companies). The e2e edits title and amount only; the link and stage-on-edit rules are Vitest and Go |
-| 4c.4 | **Stage change with history** | `POST /deals/{id}/stage` `{stage, probability?, lost_reason?}`: probability defaults to the new stage's unless sent (won 100, lost 0 always); `closed_at` set on entering won or lost (won → lost re-stamps it), cleared on entering an open stage; `lost_reason` stored on lost (absent keeps the previous reason), cleared otherwise; same stage → 200 and nothing written; `GET /deals/{id}/history` oldest first with `changed_by` (id, name, email) | `admin-deals.spec.ts`: moving through the open stages grows the history by one row each time, marking a deal lost needs a reason, shows closed_at and the reason, and moving back clears them | `deal_handler_test.go`: TestChangeStage_*, TestHistory_ReturnsTheRowsAsGivenWithTheUser; `deal_service_test.go`: TestApplyDealTransition, TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory, TestChangeStage_SameStageWritesNothing | `DealDetail.test.tsx`: 14 tests (stage select, lost dialog, closed_at and reason, dashboard pipeline invalidated after a stage change and a delete); `DealHistory.test.tsx`: 4 tests | `deal_repository_test.go`: TestDealRepository_StageChangesAreListedOldestFirstWithTheUser; `deal_integration_test.go`: TestStageJourneyWithHistory | **covered** | The won stage has no e2e (Vitest and Go only) |
+| 4c.4 | **Stage change with history** | `POST /deals/{id}/stage` `{stage, probability?, lost_reason?}`: probability defaults to the new stage's unless sent (won 100, lost 0 always) (more in the notes) | `admin-deals.spec.ts` (details in the notes) | `deal_handler_test.go`, `deal_service_test.go` (details in the notes) | `DealDetail.test.tsx`, `DealHistory.test.tsx` (details in the notes) | `deal_repository_test.go`: TestDealRepository_StageChangesAreListedOldestFirstWithTheUser; `deal_integration_test.go`: TestStageJourneyWithHistory | **covered** | The won stage has no e2e (Vitest and Go only) |
 | 4c.5 | **Deal detail and visibility** | `GET /deals/{id}` with owner, company, customer and lead; sales on another owner's deal is **403** on get, update, stage and history, as `GET /leads/{id}` answers | `admin-deals.spec.ts`: admin can create a deal for a company and sees the formatted amount on both detail pages | `deal_handler_test.go`: TestSalesMayOnlyTouchItsOwnDeals, TestGet_NotFoundAndBadID | `DealDetail.test.tsx`: links to owner, company, customer and lead; not-found state | `deal_repository_test.go`: TestDealRepository_GetByIDPreloadsTheAssociations; `deal_integration_test.go`: TestRoleMatrix | **covered** | The 403 is Go-only (no role-login e2e helper); the UI renders "Deal not found" for any error. The e2e sees a company-linked deal only |
-| 4c.5a | **Tasks linked to a deal** | `deal_id` on `POST /tasks` and `PUT /tasks/{id}`: a live deal the caller may see, closed deals included, else 404; absent keeps, 0 clears, a clear of a link hidden from the caller is 200 and keeps it. `deal_id` and a `deal` summary (id, title, stage) on every task read, only for a caller who may see the deal. `GET /deals/{id}/tasks`: admin every live task, sales owner only its own assignments, 403 otherwise. A deal rule's `create_task` records the deal. Web client (#240): the task form has a server-searched Deal picker for admin and sales only (`GET /deals` without `open`, so won and lost deals are offered; its search results are cached apart from the quote dialog's open-only picker), pre-filled from the `deal` summary; `deal_id` is sent on an update only when the picker was touched, and a clear sends `deal_id: 0`. After an update the form re-reads `GET /tasks/{id}` and opens the task as the API returned it, so a refused clear never looks cleared; every task save marks the cached deal task lists stale. Task detail shows the deal title (linked to the deal) and its stage only when a `deal` summary is present; deal detail has a paginated Tasks section over `GET /deals/{id}/tasks`, captioned for sales that only their own assignments are shown | -- | `task_deal_handler_test.go`: TestTaskDealHandlerErrorMapping; `task_deal_link_test.go`: TestTaskDealLinkWriteRules, TestTaskDealLinkClear, TestTaskDealLogsOmitDealTitle; `deal_visibility_test.go`: TestCanViewDeal, TestRedactTaskDeal; `automation_deal_task_test.go`: TestAutomationDealTaskLink{SQLite,MySQL}, TestAutomationDryRunReportsDealLink | `TaskForm.deal.test.tsx`: 8 tests (no picker for support and customer, only the returned deals with won included and no `open` key, `deal_id` on create, no `deal_id` on an untouched update with and without a summary, `deal_id: 0` on a clear then the re-read keeping the link, a failed re-read, deal task lists invalidated after a create and an update); `TaskDetail.test.tsx`: 2 deal-link tests; `DealTasksSection.test.tsx`: 4 tests (rows and total, empty state, paging, sales caption); `DealDetail.test.tsx`: the Tasks section; `DealAutocomplete.test.tsx`: separate open-only and any-deal search caches, the quote picker's defaults; `tasks.test.ts`: `getDealTasks`, `deal_id` on create and update | `task_deal_link_test.go` (repository): TestTaskDealLinkRepository{SQLite,MySQL}, TestTaskDealLinkSurvivesErasure; `task_deal_integration_test.go`: TestTaskDealReadRoutes{SQLite,MySQL}, TestDealTasksEndpoint{SQLite,MySQL}, TestTaskDealLinkIntegration{SQLite,MySQL}; `task_deal_link_migration_test.go`: TestTaskDealLinkMigration; `database_sqlite_upgrade_test.go`: TestTaskDealLinkSQLiteUpgradeFromV120 | **covered** | Tasks created by earlier automation runs are not backfilled. The UI side has no e2e (Vitest only); a refused clear is proved with a mocked re-read, and no notice says that a hidden link was kept. Deal task lists refresh after a save in the same tab only |
+| 4c.5a | **Tasks linked to a deal** | `deal_id` on `POST /tasks` and `PUT /tasks/{id}`: a live deal the caller may see, closed deals included, else 404 (more in the notes) | -- | `task_deal_handler_test.go`, `task_deal_link_test.go`, `deal_visibility_test.go`, `automation_deal_task_test.go` (details in the notes) | `TaskForm.deal.test.tsx`, `TaskDetail.test.tsx`, `DealTasksSection.test.tsx`, `DealDetail.test.tsx`, `DealAutocomplete.test.tsx`, `tasks.test.ts` (details in the notes) | `task_deal_link_test.go`, `task_deal_integration_test.go`, `task_deal_link_migration_test.go`, `database_sqlite_upgrade_test.go` (details in the notes) | **covered** | Tasks created by earlier automation runs are not backfilled (more in the notes) |
 | 4c.6 | **Delete deal** | Admin only; soft delete; history rows stay; 404 when missing | `admin-deals.spec.ts`: admin can delete a deal | `deal_handler_test.go`: TestDelete_SuccessNotFoundAndFailure; `deal_service_test.go`: TestDealService_DeleteIsSoftAndHistoryStays | `DealList.test.tsx`: admin deletes, sales has no delete button; `DealDetail.test.tsx`: delete dialog | `deal_repository_test.go`: TestDealRepository_DeleteIsSoftAndKeepsTheHistory; `deal_integration_test.go`: TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory | **covered** | Not an erasure: the text stays on the deleted row until the linked customer or lead is erased (4c.8) |
 | 4c.7 | **Deals of a company or customer** | `GET /companies/{id}/deals`, `GET /customers/{id}/deals` (admin, sales; sales own only), newest first, paginated; companies carry `deal_count` on get and list; company delete also nulls `deals.company_id` in its transaction | `admin-deals.spec.ts`: admin can create a deal for a company and sees the formatted amount on both detail pages (company page) | `deal_handler_test.go`: TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404; `deal_service_test.go`: TestListByCompany_*, TestCompanyServiceDelete_UnlinksDealsToo | `CompanyDetail.test.tsx`: 3 deals-section tests; `CustomerDetail.test.tsx`: 3 deals-section tests | `deal_repository_test.go`: TestCompanyRepository_DealCountAndUnlinkDeals; `deal_integration_test.go`: TestListFiltersSortAndPagination, TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory | **covered** | The customer page's Deals section and the prefilled "New Deal" have no e2e (Vitest and Go only) |
-| 4c.8 | **Erasure keeps deals, redacts their text (#245)** | Erasing a linked customer or lead (directly, through a converted lead or through a customer-role login) keeps the deal, its stage, amount, links, owner and history, and in the same transaction sets `title` to `[redacted]` and empties `notes` and `lost_reason`, live and soft-deleted deals alike; notifications about the deal are hard-deleted. Erasing the owning staff user changes nothing on the deal (`owner_id` is never followed). The whole-database sweep covers `deals` and `deal_stage_changes`; both tables are plain CREATE TABLEs, so the deals release gave no existing table a foreign key; `tasks` gained `fk_tasks_deal` later (#240), the one rebuild toward these tables on the SQLite upgrade path | -- | `database_sqlite_upgrade_test.go` (deals tables after a v1.2.0 upgrade); `business_text_erasure_test.go`: TestCustomerErasureScrubsDealText{SQLite,MySQL}, TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL}, TestBusinessTextErasureLeavesUnrelatedRecords{SQLite,MySQL}, TestBusinessTextErasureAtomic{SQLite,MySQL}, TestBusinessTextErasurePurgesDealNotifications{SQLite,MySQL}, TestBusinessTextErasureWithoutDealTables; `identity_erasure_test.go`: TestIdentityErasure{SQLite,MySQL} | -- | `deal_integration_test.go`: TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory; `business_text_erasure_sweep_test.go`: TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData, TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData; `tests/business_text_erasure_test.go`: TestBusinessTextErasureAPISQLite; `erasure_pii_sweep_test.go` (table list) | **covered** | `source` is kept. A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text. Deals of graphs erased before this change are not repaired. The web client shows the redacted title as stored |
-| 4c.9 | **Pipeline aggregate and board (2026-09)** | `GET /deals/pipeline?owner_id=&company_id=` (admin, sales; sales always narrowed to itself as on the list; malformed or zero id → 400): all five stages in pipeline order, empty ones as `count: 0, totals: []`, totals per currency sorted by code with `amount_cents` and `weighted_cents` = round half up of Σ amount × probability / 100, rounded once per stage and currency; soft-deleted deals excluded; one `GROUP BY stage, currency` with integer sums. `/deals/board` shows a column per stage with these headers and a "Move to…" card menu that calls the stage endpoint | `admin-deals-board.spec.ts` (5 tests): "the board shows created deals in their stage columns with counts and totals", "moving a card to Negotiation through its menu moves it and updates both headers", "moving a card to Lost asks for a reason and shows it under the expanded Lost column", "the dashboard "Won this month" tile counts a deal moved to Won on the board", "the list and board toggle round-trips and the choice is remembered" | `deal_handler_test.go`: TestPipeline_PassesTheFiltersAndTheCaller, TestPipeline_BadFiltersAre400, TestPipeline_ResponseShape, TestPipeline_ServiceErrors, TestRoleMatrix; `deal_service_test.go`: TestDealService_PipelineScoping, TestWeightedCents_RoundsHalfUpOnce, TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal, TestBuildDealPipelineStages_Layout; `routes_test.go`: TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter | `DealBoard.test.tsx`: 13 tests (columns in order with counts and totals, error state, column loading and sort, card content, collapsed closed columns, move with refetch, dashboard invalidation, lost reason, cancel, server message, open, "+N more" link, switch to list); `LostReasonDialog.test.tsx`: 3 tests; `DealList.test.tsx` "list and board toggle": switches to the board and remembers the choice, sends a viewer who last chose the board to it, stays on the list without a remembered choice | `deal_repository_test.go`: TestDealRepository_PipelineGroupsByStageAndCurrency, TestDealRepository_PipelineOwnerAndCompanyFilters, TestDealRepository_PipelineAggregatesTheMaximumAmount; `deal_pipeline_integration_test.go`: TestPipelineAsAdmin, TestPipelineAsSalesIsScopedToItself, TestRolesAndBadFilters | **partial** | Sales scoping and the support/customer 403 are Go-only (no role-login e2e helper). A stage value outside the five (only a hand edit of the table could store one) is appended after them rather than dropped |
+| 4c.8 | **Erasure keeps deals, redacts their text (#245)** | Erasing a linked customer or lead (directly, through a converted lead or through a customer-role login) keeps the deal, its stage, amount, links … (more in the notes) | -- | `database_sqlite_upgrade_test.go`, `business_text_erasure_test.go`, `identity_erasure_test.go` (details in the notes) | -- | `deal_integration_test.go`, `business_text_erasure_sweep_test.go`, `tests/business_text_erasure_test.go`, `erasure_pii_sweep_test.go` (details in the notes) | **covered** | `source` is kept. A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text (more in the notes) |
+| 4c.9 | **Pipeline aggregate and board (2026-09)** | `GET /deals/pipeline?owner_id=&company_id=` (admin, sales; sales always narrowed to itself as on the list; malformed or zero id → 400): all five … (more in the notes) | `admin-deals-board.spec.ts` (details in the notes) | `deal_handler_test.go`, `deal_service_test.go`, `routes_test.go` (details in the notes) | `DealBoard.test.tsx`, `LostReasonDialog.test.tsx`, `DealList.test.tsx` (details in the notes) | `deal_repository_test.go`, `deal_pipeline_integration_test.go` (details in the notes) | **partial** | Sales scoping and the support/customer 403 are Go-only (no role-login e2e helper) (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **4c.1** **List deals**
+  - Description: `GET /deals`: `search` over title and notes; server-side filters `stage`,
+    `open=true` (neither won nor lost), `company_id`, `customer_id`, `owner_id` (admin; sales is
+    always narrowed to itself); `sort_by` allowlist
+    (`id, title, stage, amount_cents, probability, expected_close_date, closed_at, created_at, updated_at`,
+    unknown → 400); `page`/`offset`/`limit` with `meta`; `data` is the bare array with owner,
+    company, customer and lead preloaded.
+  - Integration Tests: `deal_repository_test.go`: TestDealRepository_ListFiltersSortsAndPaginates,
+    _ListRejectsUnknownSortColumns; `deal_integration_test.go`: TestListFiltersSortAndPagination,
+    TestSalesOwnerRuleAndOwnDealsOnly, TestRoleMatrix.
+  - Known Issues: On SQLite, search ignores case for ASCII letters only. Sales scoping and the
+    customer/support 403 are Go-only (no role-login e2e helper); the e2e filters by stage on top of
+    a search, the "Open only" toggle and sorting are Vitest and Go only.
+- **4c.2** **Create deal**
+  - Description: Title required (1–200, trimmed); `stage` defaults to qualification; `amount_cents`
+    0 to 1000000000000 (10^12 cents, i.e. 10,000,000,000.00, `models.DealAmountCentsMax`, in the
+    binding and the service, so the pipeline sums cannot overflow); `currency` `^[A-Z]{3}$`, default
+    from `deals.default_currency` (seeded `EUR`, admin-editable, exposed on `/configurations/ui`);
+    `probability` 0–100 with per-stage defaults 10/40/70, won pinned to 100 and lost to 0;
+    `expected_close_date` YYYY-MM-DD; `lost_reason` kept only on lost;
+    `company_id`/`customer_id`/`lead_id` optional live rows → 400 `INVALID_REFERENCE` naming the
+    field; `owner_id` defaults to the caller, sales may only name itself (403), admin anyone; first
+    history row (`from_stage` null) in the same transaction.
+  - Unit Tests (Backend): `deal_handler_test.go`: TestCreate_*,
+    TestDealStageBindingTagsMatchTheModel, TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage,
+    TestDealAmountBindingTagMatchesTheModel; `deal_service_test.go`: TestCreate_*,
+    TestAmountBound_OnCreateAndUpdate, TestApplyDealTransition,
+    TestDealService_CreateWritesTheDealAndItsFirstHistoryRowTogether,
+    _CurrencyDefaultComesFromConfiguration, _AFailedHistoryWriteRollsBackTheDeal; `deal_test.go`
+    (column limits, stage defaults, date JSON).
+  - Unit Tests (Frontend): `DealForm.test.tsx`: 27 tests (fields, currency default from
+    `/configurations/ui`, validation including the amount bound, payload, dashboard pipeline
+    invalidated after a create, `INVALID_REFERENCE` on the pickers);
+    `ConfigurationSettings.test.tsx`: the `deals` category tab.
+  - Integration Tests: `deal_integration_test.go`: TestCreateAppliesDefaultsAndValidates,
+    TestDefaultCurrencyFollowsTheConfiguration; `configuration_repository_test.go`:
+    TestInitializeDefaultsKeepsConfiguredValues.
+  - Known Issues: `lost_reason` is not required by the API when moving to lost (the UI prompts for
+    it). A configured currency that is not three upper-case letters falls back to EUR with a
+    warning. The e2e validation test exercises the form's own checks only; the API 400s are Go.
+- **4c.4** **Stage change with history**
+  - Description: `POST /deals/{id}/stage` `{stage, probability?, lost_reason?}`: probability
+    defaults to the new stage's unless sent (won 100, lost 0 always); `closed_at` set on entering
+    won or lost (won → lost re-stamps it), cleared on entering an open stage; `lost_reason` stored
+    on lost (absent keeps the previous reason), cleared otherwise; same stage → 200 and nothing
+    written; `GET /deals/{id}/history` oldest first with `changed_by` (id, name, email).
+  - E2E Tests: `admin-deals.spec.ts`: moving through the open stages grows the history by one row
+    each time, marking a deal lost needs a reason, shows closed_at and the reason, and moving back
+    clears them.
+  - Unit Tests (Backend): `deal_handler_test.go`: TestChangeStage_*,
+    TestHistory_ReturnsTheRowsAsGivenWithTheUser; `deal_service_test.go`: TestApplyDealTransition,
+    TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory,
+    TestChangeStage_SameStageWritesNothing.
+  - Unit Tests (Frontend): `DealDetail.test.tsx`: 14 tests (stage select, lost dialog, closed_at and
+    reason, dashboard pipeline invalidated after a stage change and a delete);
+    `DealHistory.test.tsx`: 4 tests.
+- **4c.5a** **Tasks linked to a deal**
+  - Description: `deal_id` on `POST /tasks` and `PUT /tasks/{id}`: a live deal the caller may see,
+    closed deals included, else 404; absent keeps, 0 clears, a clear of a link hidden from the
+    caller is 200 and keeps it. `deal_id` and a `deal` summary (id, title, stage) on every task
+    read, only for a caller who may see the deal. `GET /deals/{id}/tasks`: admin every live task,
+    sales owner only its own assignments, 403 otherwise. A deal rule's `create_task` records the
+    deal. Web client (#240): the task form has a server-searched Deal picker for admin and sales
+    only (`GET /deals` without `open`, so won and lost deals are offered; its search results are
+    cached apart from the quote dialog's open-only picker), pre-filled from the `deal` summary;
+    `deal_id` is sent on an update only when the picker was touched, and a clear sends `deal_id: 0`.
+    After an update the form re-reads `GET /tasks/{id}` and opens the task as the API returned it,
+    so a refused clear never looks cleared; every task save marks the cached deal task lists stale.
+    Task detail shows the deal title (linked to the deal) and its stage only when a `deal` summary
+    is present; deal detail has a paginated Tasks section over `GET /deals/{id}/tasks`, captioned
+    for sales that only their own assignments are shown.
+  - Unit Tests (Backend): `task_deal_handler_test.go`: TestTaskDealHandlerErrorMapping;
+    `task_deal_link_test.go`: TestTaskDealLinkWriteRules, TestTaskDealLinkClear,
+    TestTaskDealLogsOmitDealTitle; `deal_visibility_test.go`: TestCanViewDeal, TestRedactTaskDeal;
+    `automation_deal_task_test.go`: TestAutomationDealTaskLink{SQLite,MySQL},
+    TestAutomationDryRunReportsDealLink.
+  - Unit Tests (Frontend): `TaskForm.deal.test.tsx`: 8 tests (no picker for support and customer,
+    only the returned deals with won included and no `open` key, `deal_id` on create, no `deal_id`
+    on an untouched update with and without a summary, `deal_id: 0` on a clear then the re-read
+    keeping the link, a failed re-read, deal task lists invalidated after a create and an update);
+    `TaskDetail.test.tsx`: 2 deal-link tests; `DealTasksSection.test.tsx`: 4 tests (rows and total,
+    empty state, paging, sales caption); `DealDetail.test.tsx`: the Tasks section;
+    `DealAutocomplete.test.tsx`: separate open-only and any-deal search caches, the quote picker's
+    defaults; `tasks.test.ts`: `getDealTasks`, `deal_id` on create and update.
+  - Integration Tests: `task_deal_link_test.go` (repository):
+    TestTaskDealLinkRepository{SQLite,MySQL}, TestTaskDealLinkSurvivesErasure;
+    `task_deal_integration_test.go`: TestTaskDealReadRoutes{SQLite,MySQL},
+    TestDealTasksEndpoint{SQLite,MySQL}, TestTaskDealLinkIntegration{SQLite,MySQL};
+    `task_deal_link_migration_test.go`: TestTaskDealLinkMigration;
+    `database_sqlite_upgrade_test.go`: TestTaskDealLinkSQLiteUpgradeFromV120.
+  - Known Issues: Tasks created by earlier automation runs are not backfilled. The UI side has no
+    e2e (Vitest only); a refused clear is proved with a mocked re-read, and no notice says that a
+    hidden link was kept. Deal task lists refresh after a save in the same tab only.
+- **4c.8** **Erasure keeps deals, redacts their text (#245)**
+  - Description: Erasing a linked customer or lead (directly, through a converted lead or through a
+    customer-role login) keeps the deal, its stage, amount, links, owner and history, and in the
+    same transaction sets `title` to `[redacted]` and empties `notes` and `lost_reason`, live and
+    soft-deleted deals alike; notifications about the deal are hard-deleted. Erasing the owning
+    staff user changes nothing on the deal (`owner_id` is never followed). The whole-database sweep
+    covers `deals` and `deal_stage_changes`; both tables are plain CREATE TABLEs, so the deals
+    release gave no existing table a foreign key; `tasks` gained `fk_tasks_deal` later (#240), the
+    one rebuild toward these tables on the SQLite upgrade path.
+  - Unit Tests (Backend): `database_sqlite_upgrade_test.go` (deals tables after a v1.2.0 upgrade);
+    `business_text_erasure_test.go`: TestCustomerErasureScrubsDealText{SQLite,MySQL},
+    TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL},
+    TestBusinessTextErasureLeavesUnrelatedRecords{SQLite,MySQL},
+    TestBusinessTextErasureAtomic{SQLite,MySQL},
+    TestBusinessTextErasurePurgesDealNotifications{SQLite,MySQL},
+    TestBusinessTextErasureWithoutDealTables; `identity_erasure_test.go`:
+    TestIdentityErasure{SQLite,MySQL}.
+  - Integration Tests: `deal_integration_test.go`:
+    TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory;
+    `business_text_erasure_sweep_test.go`:
+    TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData,
+    TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData;
+    `tests/business_text_erasure_test.go`: TestBusinessTextErasureAPISQLite;
+    `erasure_pii_sweep_test.go` (table list).
+  - Known Issues: `source` is kept. A task a `create_task` step rendered from `{{deal.title}}`
+    before the erasure keeps that text. Deals of graphs erased before this change are not repaired.
+    The web client shows the redacted title as stored.
+- **4c.9** **Pipeline aggregate and board (2026-09)**
+  - Description: `GET /deals/pipeline?owner_id=&company_id=` (admin, sales; sales always narrowed to
+    itself as on the list; malformed or zero id → 400): all five stages in pipeline order, empty
+    ones as `count: 0, totals: []`, totals per currency sorted by code with `amount_cents` and
+    `weighted_cents` = round half up of Σ amount × probability / 100, rounded once per stage and
+    currency; soft-deleted deals excluded; one `GROUP BY stage, currency` with integer sums.
+    `/deals/board` shows a column per stage with these headers and a "Move to…" card menu that calls
+    the stage endpoint.
+  - E2E Tests: `admin-deals-board.spec.ts` (5 tests): "the board shows created deals in their stage
+    columns with counts and totals", "moving a card to Negotiation through its menu moves it and
+    updates both headers", "moving a card to Lost asks for a reason and shows it under the expanded
+    Lost column", "the dashboard "Won this month" tile counts a deal moved to Won on the board",
+    "the list and board toggle round-trips and the choice is remembered".
+  - Unit Tests (Backend): `deal_handler_test.go`: TestPipeline_PassesTheFiltersAndTheCaller,
+    TestPipeline_BadFiltersAre400, TestPipeline_ResponseShape, TestPipeline_ServiceErrors,
+    TestRoleMatrix; `deal_service_test.go`: TestDealService_PipelineScoping,
+    TestWeightedCents_RoundsHalfUpOnce, TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal,
+    TestBuildDealPipelineStages_Layout; `routes_test.go`: TestAllRouteSetupsCoexist,
+    TestStaticDealRoutesWinOverTheIDParameter.
+  - Unit Tests (Frontend): `DealBoard.test.tsx`: 13 tests (columns in order with counts and totals,
+    error state, column loading and sort, card content, collapsed closed columns, move with refetch,
+    dashboard invalidation, lost reason, cancel, server message, open, "+N more" link, switch to
+    list); `LostReasonDialog.test.tsx`: 3 tests; `DealList.test.tsx` "list and board toggle":
+    switches to the board and remembers the choice, sends a viewer who last chose the board to it,
+    stays on the list without a remembered choice.
+  - Integration Tests: `deal_repository_test.go`:
+    TestDealRepository_PipelineGroupsByStageAndCurrency,
+    TestDealRepository_PipelineOwnerAndCompanyFilters,
+    TestDealRepository_PipelineAggregatesTheMaximumAmount; `deal_pipeline_integration_test.go`:
+    TestPipelineAsAdmin, TestPipelineAsSalesIsScopedToItself, TestRolesAndBadFilters.
+  - Known Issues: Sales scoping and the support/customer 403 are Go-only (no role-login e2e helper).
+    A stage value outside the five (only a hand edit of the table could store one) is appended after
+    them rather than dropped.
 
 ---
 
@@ -266,20 +1363,458 @@ session and calls the API through `publicApi`, which sends no bearer token. Cata
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 4d.1 | **Product catalogue** | `GET/POST /products`, `GET/PUT/DELETE /products/{id}`: admin writes, admin and sales read, support and customer 403, unauthenticated 401; name 1–200 trimmed, SKU ≤ 64 (indexed, not unique), `unit_price_cents` 0 to 10^12, currency `^[A-Z]{3}$` defaulting to `deals.default_currency`, `is_active` default true; the list goes through `utils.ParseOffsetLimit` (limit 0 → 20, capped at 100), filters `search` (name or SKU), `is_active`, `currency`, `sort_by` allowlist (`id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, unknown → 400 `BAD_REQUEST` with no data rows); delete is a soft delete and quote lines keep their copied values | `admin-quotes.spec.ts`: the product step of "admin creates a product, quotes a deal from its Quotes section, sends, prints and accepts the quote" (partial: create and the list row) | `product_handler_test.go`: TestProductPriceBindingTagMatchesTheModel, TestProductHandler_*; `product_service_test.go`: TestProductService_*; `product_test.go`: TestProductColumnWidthsMatchConstants; `sort_test.go`: TestValidateSortProductsAndQuotes | `ProductList.test.tsx`, `ProductForm.test.tsx`, `products.test.ts` (see 4d.9) | `product_repository_test.go`: TestProductRepository_*; `product_integration_test.go`: TestProductRoutesRoleMatrix, TestProductListPaginationSortAndFilters, TestProductDeleteKeepsQuoteLines | **covered** | On SQLite, search ignores case for ASCII letters only |
-| 4d.2 | **Create quote** | `POST /quotes`: at least one of `deal_id`/`customer_id` (400 otherwise); with only the deal the customer is taken from it (possibly none); a customer that is not the deal's is 400 `VALIDATION_ERROR`; unknown deal, customer or owner is 400 `INVALID_REFERENCE`; a won or lost deal is 409 (`ErrDealClosed`); sales may only quote its own deals and own the quote itself (403), admin may name any owner; currency defaults to `deals.default_currency`; the quote starts as a draft with totals 0 and one history row (`from_status` null) written in the same transaction; the JSON adds `number` (`Q-000042`) and summaries of customer, deal and owner | -- | `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors, TestQuoteHandler_CreateAndUpdateBodies; `quote_service_test.go`: TestQuoteCreateWritesQuoteAndHistoryTogether; `quote_test.go`: TestQuoteJSONAddsTheNumberAndSummaries, TestQuoteColumnWidthsMatchConstants | -- | `quote_integration_test.go`: TestQuoteCreateLinksAndDefaults | **covered** (API) | A deal with only a lead or a company gives a quote with no recipient; the email then refuses it (4d.7) |
-| 4d.3 | **Lines and totals** | `POST /quotes/{id}/lines`, `PUT`/`DELETE /quotes/{id}/lines/{lineId}`: the product's name and price are copied (overridable), `quantity` 0.001–1,000,000 with at most three decimal places (#343, see 4d.11), `discount_bp` 0–10000, `tax_rate_bp` 0–10000 (default 0, #324), `unit_price_cents` 0–10^12, quantity × price rounded half up and the quote's gross total (`total_cents + tax_cents`) at most 10^12, at most 100 lines (all 400 `VALIDATION_ERROR`, nothing written; the line arithmetic is exact 128-bit integer arithmetic, so nothing overflows); another currency is 400, an inactive or deleted product 400 `INVALID_REFERENCE`, a line of another quote 404; `line_total = round_half_up(quantity × price × (10000 − bp) / 10000)`, rounded once (for whole quantities the same as `(gross × (10000 − bp) + 5000) / 10000`), subtotal = Σ rounded line gross, line `tax_cents = (line_total × tax_rate_bp + 5000) / 10000`, quote `tax_cents` = Σ line tax and `gross_total_cents = total_cents + tax_cents`, all recomputed from the lines in the same transaction and written `WHERE status = 'draft'`; a tax-rate write on a non-draft is 409; existing quotes read tax 0 and gross = total after the upgrade (`20261117120000_add_quote_tax`, `MigrateDatabase` backfill on SQLite) | -- | `quote_test.go`: TestQuoteLineTotalRoundsHalfUp, TestQuoteTotalsSumLines; `quote_tax_test.go` (models): TestQuoteLineTaxCompute, TestQuoteTotalsWithTax, TestQuoteTaxColumnsSchemaSQLite, TestQuoteTaxSQLiteUpgrade, TestQuoteTaxJSON; `quote_service_test.go`: TestQuoteLineLimitsRejectedWithoutWrites; `quote_tax_test.go` (service): TestQuoteTaxRateBoundsRejectedWithoutWrites, TestQuoteLineTaxRounding{SQLite,MySQL}, TestQuoteGrossCapRefusalWritesNothing{SQLite,MySQL}, TestQuoteTaxRateNonDraftRefused{SQLite,MySQL}; `quote_handler_test.go`: TestQuoteLineBindingTagsMatchTheModel; `quote_tax_test.go` (handler): TestQuoteLineTaxRateBinding; `quote_tax_migration_test.go`: TestQuoteTaxMigrationFiles, TestQuoteTaxMigration | -- | `quote_repository_test.go`: TestQuoteRepository_LinesBelongToTheirQuote, _DraftWritesAreConditional; `quote_tax_repository_test.go`: TestQuoteRepositoryUpdateTotalsWithTax{SQLite,MySQL}; `quote_integration_test.go`: TestQuoteLineSnapshotsProductPrice, TestQuoteLockedOutsideDraft; `tests/quote_tax_test.go`: TestQuoteTaxAPISQLite | **covered** (API) | Discounts are per line and percentage only (no quote-level or fixed-amount discount); one tax rate per line only (no tax categories, reverse charge, per-country or quote-level tax); tax is rounded per line, so it can differ by cents from tax on per-rate totals; the web UI shows and edits the rate since #325 (4d.9) |
-| 4d.4 | **Status lifecycle with history** | `POST /quotes/{id}/status`: exactly draft→sent, sent→accepted/rejected/expired, sent→draft; any other pair or a lost race is 400 `INVALID_STATUS_TRANSITION`; the row is claimed by `UPDATE … WHERE id = ? AND status = <from>`, draft→sent then counts the lines with a locking read (zero → 409 `ErrQuoteHasNoLines`, claim rolled back), accepted after `valid_until` is 409 `ErrQuoteExpired`; `sent_at` set on sent, `closed_at` on the three final statuses, both cleared on sent→draft; one history row per move; `GET /quotes/{id}/history` oldest first; two concurrent transitions commit exactly one, a line write racing the send is included or refused | -- | `quote_handler_test.go`: TestQuoteStatusBindingTagsMatchTheModel; `quote_test.go`: TestQuoteTransitionsAreExactlyTheFiveAllowedMoves; `quote_service_test.go`: TestQuoteStatusTransitionMatrix; `quote_status_regression_test.go`: TestQuoteStatusConcurrentSQLite, TestQuoteStatusConcurrentMySQL (needs `TEST_MYSQL_DSN`) | -- | `quote_repository_test.go`: TestQuoteRepository_ClaimStatusIsConditional, _StatusChangesOldestFirstAndLatestID, _LockingReadsCarryForUpdateOnMySQLOnly; `quote_integration_test.go`: TestQuoteLockedOutsideDraft | **covered** | Expiry is manual: nothing moves a quote to `expired` at `valid_until`. Accepting a quote does not change its deal (owner decision) |
+| 4d.1 | **Product catalogue** | `GET/POST /products`, `GET/PUT/DELETE /products/{id}`: admin writes, admin and sales read, support and customer 403, unauthenticated 401 (more in the notes) | `admin-quotes.spec.ts` (details in the notes) | `product_handler_test.go`, `product_service_test.go`, `product_test.go`, `sort_test.go` (details in the notes) | `ProductList.test.tsx`, `ProductForm.test.tsx`, `products.test.ts` (see 4d.9) | `product_repository_test.go`, `product_integration_test.go` (details in the notes) | **covered** | On SQLite, search ignores case for ASCII letters only |
+| 4d.2 | **Create quote** | `POST /quotes`: at least one of `deal_id`/`customer_id` (400 otherwise) (more in the notes) | -- | `quote_handler_test.go`, `quote_service_test.go`, `quote_test.go` (details in the notes) | -- | `quote_integration_test.go`: TestQuoteCreateLinksAndDefaults | **covered** (API) | A deal with only a lead or a company gives a quote with no recipient; the email then refuses it (4d.7) |
+| 4d.3 | **Lines and totals** | `POST /quotes/{id}/lines`, `PUT`/`DELETE /quotes/{id}/lines/{lineId}`: the product's name and price are copied (overridable), `quantity` … (more in the notes) | -- | `quote_test.go`, `quote_tax_test.go`, `quote_service_test.go`, `quote_handler_test.go`, `quote_tax_migration_test.go` (details in the notes) | -- | `quote_repository_test.go`, `quote_tax_repository_test.go`, `quote_integration_test.go`, `tests/quote_tax_test.go` (details in the notes) | **covered** (API) | Discounts are per line and percentage only (no quote-level or fixed-amount discount) (more in the notes) |
+| 4d.4 | **Status lifecycle with history** | `POST /quotes/{id}/status`: exactly draft→sent, sent→accepted/rejected/expired, sent→draft (more in the notes) | -- | `quote_handler_test.go`, `quote_test.go`, `quote_service_test.go`, `quote_status_regression_test.go` (details in the notes) | -- | `quote_repository_test.go`, `quote_integration_test.go` (details in the notes) | **covered** | Expiry is manual: nothing moves a quote to `expired` at `valid_until`. Accepting a quote does not change its deal (owner decision) |
 | 4d.5 | **Visibility and roles** | Admin and sales only (support and customer 403 on every quote route); `GET /quotes`, `GET /deals/{id}/quotes` and `GET /customers/{id}/quotes` are narrowed to the sales caller inside the query, so `meta.total` counts only its quotes and `owner_id` cannot widen it; every per-quote route on another owner's quote is 403, decided before the service; another owner's deal is 403 on its sub-list | -- | `quote_handler_test.go`: TestQuoteHandler_SalesIsScopedToItsOwnQuotes; `routes_test.go`: TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter | -- | `quote_repository_test.go`: TestQuoteRepository_ListScopesOwnerBeforePaginationAndDeleteIsSoft; `quote_integration_test.go`: TestQuoteVisibilityForSales | **covered** | Role cases are Go-only until a sales/support e2e login helper exists |
 | 4d.6 | **Delete** | `DELETE /quotes/{id}`: a sales owner deletes its own drafts (204) and gets 409 on a non-draft; admin deletes any quote; a deleted quote is 404 and absent from lists; lines and history stay in their tables; `DELETE /products/{id}` keeps existing quote lines readable with their copied description and price | -- | `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors | -- | `quote_integration_test.go`: TestQuoteDeleteRules; `product_integration_test.go`: TestProductDeleteKeepsQuoteLines | **covered** | Not an erasure: the text stays on the deleted rows until the customer, or the deal's customer or lead, is erased (4d.8) |
-| 4d.7 | **Plaintext email** | `POST /quotes/{id}/email` on a sent or accepted quote calls `Mailer.Send` once: recipient = the customer's current address, subject exactly `Quote Q-000042 from <name>`, where the name is the stored `general.company_name` read at send time or `GopherCRM` when it is missing, blank, unreadable or unusable in a header (#292, `product_name_test.go`: TestMailProductNameQuoteSubject), body lists number, title, every line (description, quantity, unit price, discount, line total, then the line's tax rate and tax amount, also at 0 %), `Subtotal:`, `Discount:`, `Net total:`, `Tax:` and `Gross total:` with currency (#324, `quote_tax_test.go`: TestQuoteEmailShowsTax), `valid_until` and notes; no transaction is held during SMTP; `last_emailed_at` is stamped by one conditional update (still sent/accepted and no newer `to_status = 'draft'` history row than the id read before sending), else 409 `ErrQuoteChangedDuringSend`; draft/rejected/expired, no customer, or a soft-deleted/erased customer → 409 with no mail; a mailer error → 502 `MAIL_DELIVERY_FAILED` with nothing stamped; the logs carry `quote_id` and `customer_id` only, and `SMTPMailer.Send`'s own failure line keeps the SMTP code of a relay rejection without its text (a malformed reply is logged as `smtp_protocol_error`), which normally echoes the address; `SMTPMailer.Send`/`SendPasswordReset` refuse CR/LF in the recipient, subject or sender (`mailer.ErrInvalidHeader`) and a recipient or sender that is not one address (`mailer.ErrInvalidAddress`; a quoted local part is re-quoted for the envelope, `<`/`>`, control characters and domain literals are refused so no address can inject ESMTP parameters, and a non-ASCII address needs a relay that offers SMTPUTF8; a domain label may then hold any non-ASCII character but controls and whitespace, such as `info@col·legi.cat`, #180) before any relay is dialled; every delivery is hard-bounded (10 s dial, 30 s for the whole SMTP exchange including cleanup, #113), the body goes out quoted-printable, a non-ASCII subject is encoded and folded, and the transport failure log carries neither recipient nor subject | -- | `quote_email_test.go`: TestQuoteEmailDelivery, TestQuoteEmailLogsOmitPersonalData, TestQuoteEmailRevisedDuringSend; `mailer/header_injection_test.go`: TestSMTPMailerRejectsHeaderInjection; `mailer/smtp_relay_reply_test.go`: TestSMTPMailerSendLogOmitsTheRelayReply; `mailer/smtp_transport_test.go`: TestSMTPDeadlines, TestSMTPHeaders, TestSMTPTLSAuth, TestSMTPFailureRedaction; `mailer/smtp_idn_test.go`: TestSMTPInternationalisedDomains | -- | `quote_repository_test.go`: TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft | **covered** | The body is a plaintext rendering of the quote, not the printable document. Since #384 the printable document is attached as `Quote-<number>.pdf` when PDF output is on, and the mail is text only, as before, when it is off or the render fails (4d.14). Without `SMTP_HOST` the development `LogMailer` stands in: it logs the recipient and the subject, as it always did, and returns success, so the call answers 200 and stamps `last_emailed_at` although nothing was delivered . Since #382 the email of a sent quote ends with a single-use client response link (4d.12) |
-| 4d.8 | **Schema, migration and erasure** | `products`, `quotes`, `quote_lines`, `quote_status_changes` in AutoMigrate and in `migrations/20261026120000_add_products_and_quotes.up.sql` (four `CREATE TABLE IF NOT EXISTS`, names identical to AutoMigrate's, no existing table altered, so the SQLite upgrade path rebuilds nothing); the PII sweep covers the four tables; erasing a customer with a deal-linked quote keeps the quote, its `customer_id`, status, totals, lines and history, and the sweep finds nothing of the person. Since #245 the same transaction redacts every quote whose `customer_id` is an erased customer or whose `deal_id` is a deal of an erased customer or lead, live or soft-deleted, in every status: `title` → `[redacted]`, `notes` → `''`, each line's `description` → its product's name (soft-deleted products included). Since #395 it also stamps the unused `quote_response_tokens` rows of the quotes whose `customer_id` is an erased customer, so a mailed response link is refused (row 12.15) | -- | `cmd/migrate/products_quotes_migration_test.go`: TestProductsAndQuotesMigration (fresh and AutoMigrate-first on MySQL/MariaDB, schema parity, ErrNoChange, Steps(-1)); `cmd/migrate/main_test.go` version and table assertions; `business_text_erasure_test.go`: TestCustomerErasureScrubsQuoteText{SQLite,MySQL}, TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL}, TestBusinessTextErasureAtomic{SQLite,MySQL} | -- | `erasure_pii_sweep_test.go`: TestThePersonalDataSweepCoversQuoteTables, TestCustomerErasureWithQuotesLeavesNoPersonalData; `business_text_erasure_sweep_test.go`: TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData, TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData; `tests/business_text_erasure_test.go`: TestBusinessTextErasureAPISQLite | **covered** | The MySQL roots skip without `TEST_MYSQL_DSN`; the migrations CI job runs them on MySQL 8 and MariaDB 10.11 and rejects skips only on a `full` run (a release, or a manual dispatch with `full: true`, #228); on a pull request the database gates job runs them on MariaDB 10.11 only when `cmd/migrate` is selected, without rejecting a skip (#365) |
-| 4d.9 | **Products and quotes UI (2026-10-28)** | `/products` (admin and sales): name, SKU, price formatted with its currency, active chip; search, active filter, server pagination and sorting on the API allowlist; New, row Edit and Delete (with confirmation) for admin only. `/products/new` and `/products/{id}/edit` (admin only): name required and ≤ 200, SKU ≤ 64, price ≥ 0 in major units converted with the existing `decimalToCents`, currency `^[A-Z]{3}$` defaulting to `deals.default_currency` through `useDefaultDealCurrency`, active switch; the body goes out in cents. `/quotes` (admin and sales): number (`Q-000042`), title, status chip, customer, deal, total with currency, valid until; status filter, server pagination and sorting; "New Quote" opens the create dialog (title, open-deal picker, customer picker, currency, valid until, notes; at least one link). `/quotes/{id}`: header (number, status, customer, deal link, owner, valid until, sent/closed/last-emailed times), lines table (description, qty, unit price, discount %, tax rate %, tax, line total) with "Add line" (active products in the quote's currency, quantity, discount % and tax % sent as basis points, optional price override), line edit and delete and an Edit dialog (title, valid until, notes) while draft and none of them otherwise; subtotal, discount, net total, tax and bold gross total from the server on every status (#325); status buttons for the valid transitions only (draft: Mark as sent; sent: Accept, Reject, Mark expired, Revise) posting to `/quotes/{id}/status` and refreshing the quote and history, with the server message on 400 `INVALID_STATUS_TRANSITION` and 409; Print link; "Email quote" on sent and accepted quotes with a confirmation that names the customer (no address field) and distinct messages for 409 and 502, the last emailed time on success; status history; delete (admin, or a sales owner's draft). `/quotes/{id}/print`: app name, number, title, date, valid until, customer name and company, lines with their tax rate and tax, subtotal, discount, net total, tax and gross total (#325), notes, a Print button calling `window.print()`; the app bar, navigation and breadcrumbs are hidden under `@media print` (`displayPrint` in `MainLayout`). DealDetail "Quotes" section over `GET /deals/{id}/quotes` (number, title, status, total; "New quote" prefilled with the deal, hidden on won/lost deals). Products and Quotes nav entries and routes for admin and sales; support and customer are redirected as on the other guarded pages; the product form routes redirect sales too. All calls go through `src/api/endpoints/products.ts` and `quotes.ts` | `admin-quotes.spec.ts` (1 test): "admin creates a product, quotes a deal from its Quotes section, sends, prints and accepts the quote" (product, deal, quote from the section, a line at 10 % off with the server totals, Mark as sent, the print page with print-media emulation hiding the navigation while the quote stays visible, Accept, the deal's section showing the accepted quote and its total); `admin-quotes-tax.spec.ts` (1 test, #325): a line at 21 % tax sent as `tax_rate_bp` 2100, the line tax and the net, tax and gross totals on the detail page, the rate edited to 0 and back, and the same totals on the print page of the sent quote | -- (no backend change) | `ProductList.test.tsx` (5), `ProductForm.test.tsx` (7), `QuoteList.test.tsx` (5), `QuoteDetail.test.tsx` (12), `QuoteDetail.tax.test.tsx` (4), `QuoteLineDialog.test.tsx` (13), `QuoteStatusActions.test.tsx` (3), `QuoteEmailDialog.test.tsx` (3), `QuotePrint.test.tsx` (4), `QuotePrint.tax.test.tsx` (3), `DealQuotesSection.test.tsx` (5), `DealDetail.test.tsx`: "renders the Quotes section for the deal", "hides New quote in the Quotes section of a lost deal"; `routes/index.test.tsx` "products and quotes routes" (2); `MainLayout.test.tsx` (2); `products.test.ts` (8), `quotes.test.ts` (15), `quoteFormat.test.ts` (6) | -- | **covered** | Sales behaviour and the support/customer redirects are Vitest-only (no role-login e2e helper). The customer detail page has no Quotes section (`GET /customers/{id}/quotes` is not used by the UI). The quote list offers no delete; the detail page does. Screenshots: [SCREENSHOTS.md, Products and quotes](SCREENSHOTS.md#products-and-quotes) (`e2e/screenshots/11-quotes.spec.ts`) |
-| 4d.10 | **Product external-id mappings (#239)** | `product_external_ids` maps an integrator's exact, case-sensitive `(source, scope, external_id)` to a live product, on the pattern of the customer mappings (#212): `source` 1–64, `scope` 0–128 (default `''`), `external_id` 1–255 runes, valid UTF-8, no control characters, no leading or trailing whitespace; the only unique index is `idx_product_external_ids_identity`, `utf8mb4_bin` on MySQL/MariaDB (migration `20261112120000_add_product_external_ids` or the collation guard of `MigrateDatabase`), rows are hard-deleted and `products.sku` stays non-unique. `POST /products/{id}/external-ids` (admin only: 201; 409 `CONFLICT` for a triple already mapped to any product; 404 for a missing or deleted product; 400 `VALIDATION_ERROR` with `details.field`/`details.reason`, never the value) locks the live product row and inserts in one transaction; `DELETE /products/{id}/external-ids/{mappingId}` (admin only: 204; 404 for another product's mapping). `GET /products?source=&scope=&external_id=` (admin and sales) enters lookup mode when any of the three is present, validates before any read, ignores the other list parameters and answers the list shape with 0 or 1 live product (inactive included), meta page 1. `DELETE /products/{id}` locks the product, hard-deletes its mappings and soft-deletes it in one transaction, so the keys can be reused; a race with a mapping create leaves no mapping on a deleted product. Sales is 403 on both mapping writes; support and customer are 403 on every product route. No personal data, so no erasure step | -- (no UI) | `product_external_id_test.go`: TestProductExternalIDSchemaSQLite, TestProductExternalIDSQLiteUpgrade, TestProductExternalIDJSON; `cmd/migrate/product_external_ids_migration_test.go`: TestProductExternalIDsMigrationFiles, TestProductExternalIDsMigration (MySQL/MariaDB); `product_external_id_service_test.go`: TestProductExternalIDValidation, TestProductExternalIDServiceRefusedWhenUnwired, TestProductDeleteRefusedWhenUnwired, TestProductExternalIDLogsOmitValues; `product_delete_purge_test.go`: TestProductDeleteFreesExternalIDs{SQLite,MySQL}; `product_external_id_race_test.go`: TestProductExternalIDCreateRacesDelete{SQLite,MySQL}; `product_external_id_handler_test.go`: TestProductExternalIDHandlerErrorMapping, TestProductListExternalIDLookup, TestProductExternalIDRoutesRoles; `cmd/product_external_id_wiring_test.go`: TestProductExternalIDProductionWiring | -- | `product_external_id_repository_test.go`: TestProductExternalIDRepository{SQLite,MySQL}; `tests/product_external_id_api_test.go`: TestProductExternalIDAPISQLite | **covered** (API) | No read route lists a product's mappings, and the product JSON does not embed them. The MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in the Database migrations workflow is an operator follow-up |
-| 4d.11 | **Fractional line quantities (#343)** | A line quantity is an exact decimal from 0.001 to 1,000,000 with no non-zero digit beyond the third decimal place, carried as `models.QuoteQuantity` (integer thousandths) and stored in `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`), which replaces the whole-unit `quantity` column. `POST /quotes/{id}/lines` and `PUT /quotes/{id}/lines/{lineId}` decode the JSON number exactly (no float64; `1e-3`, `1.5000` and `1000000.000` are judged by value); zero, negative, above 1,000,000, a fourth non-zero decimal or a literal over 64 bytes / exponent above 30 is 400 `VALIDATION_ERROR` with `error.details.quantity` before any read or write, a quantity sent as a string 400 `BAD_REQUEST`, a missing or null quantity on POST 400 `VALIDATION_ERROR`, an absent or null one on PUT keeps the stored value; the service re-checks the bound (`validateLineBounds`) before any transaction. `ComputeQuoteLineAmounts` gives gross = round_half_up(quantity × price) and line total = round_half_up(quantity × price × (10000 − bp) / 10000) in 128-bit integer arithmetic; a rounded gross above 10^12 is refused; the subtotal sums the rounded line gross values (1.5 × 9.99 at 12.5 % off: gross 14.99, line total 13.11). Responses return the quantity as a JSON number without trailing zeros (`1.5`, `2`, `0.001`), and the quote email prints `quantity 1.5 x …`; whole quantities give the same stored values, JSON and email text as before. MySQL/MariaDB get the column from `20261118120000_store_quote_line_quantity_milli` (add, backfill × 1000, drop `quantity`, every step guarded; down restores `quantity` rounded half up with a floor of 1), SQLite and every driver from `MigrateDatabase` (backfill in chunks of 500, then the native `ALTER TABLE quote_lines DROP COLUMN quantity`, which keeps the indexes and foreign keys). Stop every replica before upgrading; to roll the binary back run the down migration first (MySQL/MariaDB) or restore the pre-upgrade backup (SQLite). Web UI (#346): the line dialog's Quantity field is a text input (`inputmode="decimal"`, `name="quantity"`, no min/max/step, hint "From 0.001 to 1,000,000, up to three decimals") checked by `isValidQuoteQuantity` on add and edit (refused text shows "Quantity must be a number from 0.001 to 1,000,000 with at most three decimals" and sends nothing) and sent as `Number(text)`; a 400 `VALIDATION_ERROR` with a string `error.details.quantity` shows that message on the field instead of the `quote-line-error` alert (every other refusal stays in the alert), and editing the field restores the hint; the edit dialog is prefilled with the stored value (`2.5`); the detail and print pages render `formatQuantity` (`1.5`, `2`, `0.001`, no trailing zeros, exponent or thousands separator) and the server's line and quote totals, which the browser never recomputes | `admin-quotes-fractional-quantity.spec.ts` (1 test, #346): "admin adds and edits a fractional line quantity and sees it without trailing zeros on the detail and print pages" (add 1.5, edit to 0.125, a local refusal of `1.2345`, a fulfilled 400 with `details.quantity` on the field, the print page) | `quote_quantity_test.go` (models): TestQuoteQuantityParse, TestQuoteQuantityJSON, TestQuoteLineAmounts, TestQuoteQuantitySQLiteUpgrade; `quote_quantity_test.go` (handler): TestQuoteLineQuantityBinding, with TestQuoteLineBindingTagsMatchTheModel; `quote_quantity_test.go` (service): TestQuoteFractionalQuantityBoundsRejectedWithoutWrites, TestQuoteFractionalQuantityTotals{SQLite,MySQL}, TestQuoteEmailFractionalQuantity; `cmd/migrate/quote_quantity_migration_test.go`: TestQuoteQuantityMigrationFiles, TestQuoteQuantityMigration (MySQL/MariaDB) | `QuoteLineDialog.test.tsx` ("QuoteLineDialog quantity …", 7 tests); `quoteFormat.test.ts` (3 quantity tests: "quoteFormat formats a quantity without trailing zeros", "quoteFormat validates quantity text from 0.001 to 1000000 with at most three decimals", "quoteFormat keeps a three-decimal quantity exact through Number and JSON"); `QuoteDetail.test.tsx`: "QuoteDetail shows fractional line quantities without trailing zeros and the server's line and quote totals"; `QuotePrint.test.tsx`: "QuotePrint prints fractional line quantities without trailing zeros and the server's totals" | `quote_quantity_repository_test.go`: TestQuoteLineQuantityStorage{SQLite,MySQL}; `tests/quote_quantity_test.go`: TestQuoteFractionalQuantityAPISQLite | **covered** (API and web UI) | The web UI accepts a dot as the only decimal separator and at most three typed decimals (`1.5000` is refused locally although the API accepts it by value), with no thousands separator, sign or exponent; quantities display as plain digits (`1000000`). No units of measure. The down migration rounds a fractional quantity to whole units and leaves the stored totals as they are. The MySQL roots skip without `TEST_MYSQL_DSN`; registering the new roots in `scripts/ci/check-go.py` and the migration roots in the Database migrations workflow is an operator follow-up |
-| 4d.12 | **Client response link, backend (#382)** | The email of a *sent* quote ends with `APP_BASE_URL/quote-response?token=<token>`; only the HMAC-SHA256 hash of the token is stored in `quote_response_tokens` (keyed by `API_KEY_SECRET`, else `JWT_SECRET`), minted in one short transaction before the send (lock the quote, re-check sent, read the quote's customer as live, re-check the history marker, insert; a customer erased before the mint is 409 with nothing stored or sent); after the mailer reports success a second short transaction (lock the quote, stamp the quote's unused rows older than the token just sent, by primary key) retires the links of earlier emails, so a failed send leaves the previous link usable, and a failure of that step after the send is a warn line while the email still succeeds; an accepted quote and a sent quote past `valid_until` are emailed without a link; a quote that changed before the mint is 409 with nothing sent; the token is in no log line and no error text. `GET /quotes/public/response` (no authentication, strict tier; the token in the `X-Quote-Token` request header, a token only in the query string is not read and gets the generic 400) returns `QuotePublicView` (number, status, currency, `valid_until`, lines, five totals; no id, title, notes, owner, customer, deal or product reference) and never writes. `POST /quotes/public/response` `{token, decision}` (`accept`/`decline`) claims the token with one conditional update (unused, unexpired, quote live and sent, all in the statement) and moves the quote sent→accepted/rejected with `closed_at` and one history row in one transaction; the history row has no user (`changed_by_id` NULL) and `source` `client` (#400: `GET /quotes/{id}/history` returns `source` `staff`/`client` on every entry and omits `changed_by` on a client answer; migration `20261122120000_quote_history_source` adds the column and makes `changed_by_id` nullable) and the token row (`used_at`, `decision`) records which link was spent; the deal is unchanged. An invalid body is 400 `VALIDATION_ERROR` before any lookup; an unknown, used, expired or invalidated token, a quote no longer sent, a deleted quote and a quote whose customer was erased (checked by the read and, under the quote lock, before the claim) are the same 400 `BAD_REQUEST` "Invalid or expired quote link". Two concurrent answers commit exactly one; a failure after the claim rolls back and the link stays usable. The three `/quotes/public` routes answer every response, rate-limit refusals included, with `Cache-Control: no-store`. The link dies at the end of the `valid_until` day (server's local date; never without `valid_until` while the quote is sent), with the next successfully sent email of the quote, and with any staff status change away from sent (also after sent→draft→sent). Schema: `quote_response_tokens` in AutoMigrate and `migrations/20261121120000_add_quote_response_tokens.up.sql` (no foreign key, no existing table altered) | -- | `quote_public_handler_test.go`: TestQuotePublicView, TestQuotePublicRespond; `quote_history_client_test.go`: TestQuoteHistoryClientAnswer; `routes_test.go`: TestQuotePublicRoutesWinOverTheIDParameter, TestAllRouteSetupsCoexist | -- | `quote_email_test.go`: TestQuoteEmailResponseLink; `quote_response_test.go`: TestQuoteResponseView, TestQuoteResponseDecision, TestQuoteResponseRollbackKeepsLink, TestQuoteResponseDeadLinks; `quote_response_regression_test.go`: TestQuoteResponseConcurrentSQLite, TestQuoteResponseConcurrentMySQL; `quote_response_token_repository_test.go`: TestQuoteResponseTokenRepository; `quote_response_erasure_test.go`: TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}; `erasure_quote_tokens_test.go`: TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}, TestErasureQuoteTokenWritesLeaveGapsFreeMySQL; `cmd/migrate/quote_response_tokens_migration_test.go`: TestQuoteResponseTokensMigrationFiles, TestQuoteResponseTokensMigration; `cmd/migrate/quote_history_source_migration_test.go`: TestQuoteHistorySourceMigrationFiles, TestQuoteHistorySourceMigration; `database_sqlite_upgrade_test.go`: TestQuoteHistorySourceSQLiteUpgrade | **covered** (backend) | The page that answers the link is 4d.13. A client answer recorded before #400 keeps the quote owner as its user and reads `source` `staff` (no backfill). Erasing the customer of a sent quote invalidates its mailed links (#395, row 12.15). The view holds no personal data |
-| 4d.13 | **Client response page (#383)** | `/quote-response?token=<token>`, a top-level SPA route outside `ProtectedRoute` and `MainLayout` (no navigation, no sign-in link). The page takes the token from the link once, keeps it in component state (never in web storage) and removes it from the address bar with a replace navigation (`/quote-response`, no search, no new history entry), so a reload shows the invalid-link message and the client opens the mailed link again. It reads the quote once per mount through `quoteResponseApi.getQuoteResponse`, which sends the token in the `X-Quote-Token` request header and no query string (no retry, no refetch on focus: both routes share one strict rate bucket) and shows `Quote <number>`, `Valid until` (omitted when not set), the lines (description, quantity, unit price, discount, tax rate, net line total) and the Subtotal, Discount, Net, Tax and Gross totals in the quote's currency, with Accept and Decline. Each button opens one confirmation dialog naming the quote number; only Confirm calls `quoteResponseApi.respond(token, 'accept' \| 'decline')`, and every button is disabled while it is in flight, so one decision is sent. Success shows only `You have accepted quote <number>.` or `You have declined quote <number>.`. A missing or empty token (no request), a `GET` answered 400 and a `POST` answered 400 `BAD_REQUEST` show only `This link is no longer valid. It may already have been used or it has expired.`; any other `GET` failure (network, 429, 5xx) shows only `The quote could not be loaded. Please try again later.`; any other `POST` failure shows an error alert and keeps the quote and the buttons. The token is never rendered or logged. Both calls go through `publicApi` = `ApiClient.getPublicClient()`: the base URL, timeout, transport and envelope handling of `api`, no request interceptor, so no `Authorization` header from a stored session and no refresh or replay on a 401 | `quote-response.spec.ts` (1 test): an admin-created sent quote's link, obtained from `go run ./scripts/e2e/quote-response-link`, opened in a signed-out browser context shows the quote, the address is `/quote-response` without the token, and the one read carries `x-quote-token`, no query string and `Cache-Control: no-store`; Accept and Confirm (answered with `no-store`) show the confirmation; the staff page shows the quote accepted; the link reopened shows the invalid-link message without buttons | `scripts/e2e/quote-response-link/main_test.go`: TestQuoteResponseLinkPrintsUsableLink, TestQuoteResponseLinkRefusesDraftQuote, TestQuoteResponseLinkRefusesNonE2EDatabase | `QuoteResponse.test.tsx` (12 tests); `client.public.test.ts` (5 tests); `quoteResponse.test.ts` (4 tests); `routes/index.test.tsx` ("quote response route", 1 test) | -- | **covered** (web UI) | No typed-name signature and no audit of who opened the link. The staff history shows the answer as `Client` (#400; `QuoteHistory.test.tsx`, and `quote-response.spec.ts` checks the last history row). `scripts/e2e/quote-response-link` is a browser-test fixture, not a server feature: it runs only under `make e2e` (requires `E2E_UI_PORT`) and refuses a MySQL database whose name does not end in `_e2e` |
-| 4d.14 | **Quote PDF output (#384)** | The server prints the quote document with a headless browser named by `QUOTE_PDF_CHROME_PATH`: `chrome-headless-shell` (what the Docker image ships since #393) or a full Chrome or Chromium (default empty; empty, a path that is not an executable file, or no `APP_BASE_URL` = PDF off, the server still boots and logs one warning for a path that does not resolve). The browser opens the public SPA route `/quote-render#<credential>`, which renders `QuoteDocument` (the document of the print page, no toolbar, no application chrome) from `POST /quotes/public/render` `{token}`. The credential is 32 random bytes minted per render, stored only as a hash in the process's memory with the quote id and an expiry, deleted when the render returns; it opens that one quote read-only (`models.QuoteRenderView`: the quote as `GET /quotes/{id}` returns it and `product_name`), other body fields are ignored, every refusal is the generic 400 `Invalid or expired render link`, and as a Bearer token it is 401. The credential is single use: a second redemption, concurrent or not, is the generic 400 and fails that render. A render whose page never redeemed the credential fails, so an error page is never mailed. `GET /quotes/{id}/pdf` (`quotes.view`; 400/403/404 exactly those of `GET /quotes/{id}`, decided before anything is rendered) answers the raw file with `Content-Type: application/pdf` and `Content-Disposition: attachment; filename="Quote-<number>.pdf"`; PDF off is 503 `PDF_UNAVAILABLE`, a failed, late or queued-out render 503 `PDF_RENDER_FAILED`; the file and every error answer carry `Cache-Control: no-store`. `POST /quotes/{id}/email` renders after the recipient checks and before the response link is minted, with no transaction held, and sends through `mailer.AttachmentSender` (`multipart/mixed`: the unchanged quoted-printable text part and one base64 attachment); PDF off, a mailer without attachment support, a failed or late render → `Mailer.Send` exactly as before plus one warn line with the quote id, the customer id and a reason. One render at a time per process, bounded at 15 s including the wait (`QuotePDFRenderTimeout`); email worst case 15 s + 30 s SMTP = 45 s; the SPA gives `emailQuote` and `downloadQuotePdf` 55 s (`QUOTE_PDF_REQUEST_TIMEOUT_MS`). The browser runs in its own process group (killed whole at the bound), with a temp dir as profile, `HOME`, `TMPDIR` and XDG directories, and a built environment (`PATH`, `LANG`/`LC_ALL`, `TZ`): no server secret reaches it; it is started with `--remote-debugging-pipe` and no URL and driven over its DevTools pipe (file descriptors 3 and 4: navigate, wait, `Page.printToPDF`), so the render URL and its credential are on no command line and no debugging port is opened (#396; needs a Unix host); Go never passes `--no-sandbox`; neither the URL, the credential nor the browser's output is logged. `GET /configurations/ui` carries the synthetic read-only `quotes.pdf_available`; QuoteDetail shows **Download PDF** only when it is `true`, saves `Quote-<number>.pdf`, and on failure shows the server's message or `Failed to download the PDF`. The runtime image (Debian slim since #393) ships `chrome-headless-shell` at a pinned version, downloaded from Chrome for Testing and checked against a SHA-256 since #420, with `fonts-liberation`, and sets the variable to a launcher that execs the headless shell; the two development compose files set it empty | -- (the e2e backend pins `QUOTE_PDF_CHROME_PATH` empty) | `service/quote_pdf_test.go`: TestQuotePDFOff, TestQuotePDFRender, TestQuoteRenderCredential, TestQuotePDFTimeoutBudget; `service/quote_pdf_chrome_test.go`: TestChromeQuotePDFRendererMissingBinary, TestChromeQuotePDFRendererTimeout, TestChromeQuotePDFRendererEnvironment, TestChromeQuotePDFRendererLaunchArguments, TestChromeQuotePDFRendererPipe, TestChromeQuotePDFRendererRealBinary (skips without `QUOTE_PDF_CHROME_PATH`); `service/quote_email_test.go`: TestQuoteEmailPDFAttachment; `handler/quote_pdf_handler_test.go`: TestQuotePDFHandler; `handler/quote_public_handler_test.go`: TestQuotePublicRender; `handler/configuration_handler_test.go`: TestUIConfigurationsQuotePDFAvailable; `handler/routes_test.go`: TestQuotePublicRoutesWinOverTheIDParameter; `mailer/smtp_attachment_test.go`: TestSMTPAttachment, TestLogMailerAttachment; `config`: TestLoad_QuotePDFChromePath, TestDockerfileShipsHeadlessShell | `QuoteRender.test.tsx`; `quoteRender.test.ts`; `quotes.test.ts` (timeouts, Blob error body); `QuoteDetail.test.tsx` (button, failure texts); `ConfigurationContext.test.tsx`; `routes/index.test.tsx` (`/quote-render`) | -- | **covered** (Go and Vitest with fakes); the real chain is a manual check | No automatic test drives a real browser through the SPA: `scripts/e2e/quote-pdf-chain.sh` (browser → `/quote-render` → API → PDF text; `local` with a full Chrome, `image` with the built image) is run by hand and belongs to the release checks (`docs/DEV_ENTITIES.md`). Known limits in `docs/ROADMAP.md`: per-process credential store, PDF date in the server's time zone, PDF off in the development compose files, systemd deployment not run on a real host |
+| 4d.7 | **Plaintext email** | `POST /quotes/{id}/email` on a sent or accepted quote calls `Mailer.Send` once: recipient = the customer's current address, subject exactly … (more in the notes) | -- | `quote_email_test.go`, `mailer/header_injection_test.go`, `mailer/smtp_relay_reply_test.go`, `mailer/smtp_transport_test.go` and 1 more file (details in the notes) | -- | `quote_repository_test.go`: TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft | **covered** | The body is a plaintext rendering of the quote, not the printable document (more in the notes) |
+| 4d.8 | **Schema, migration and erasure** | `products`, `quotes`, `quote_lines`, `quote_status_changes` in AutoMigrate and in `migrations/20261026120000_add_products_and_quotes.up.sql` … (more in the notes) | -- | `cmd/migrate/products_quotes_migration_test.go`, `cmd/migrate/main_test.go`, `business_text_erasure_test.go` (details in the notes) | -- | `erasure_pii_sweep_test.go`, `business_text_erasure_sweep_test.go`, `tests/business_text_erasure_test.go` (details in the notes) | **covered** | The MySQL roots skip without `TEST_MYSQL_DSN` (more in the notes) |
+| 4d.9 | **Products and quotes UI (2026-10-28)** | `/products` (admin and sales): name, SKU, price formatted with its currency, active chip (more in the notes) | `admin-quotes.spec.ts`, `admin-quotes-tax.spec.ts` (details in the notes) | -- (no backend change) | `ProductList.test.tsx`, `ProductForm.test.tsx`, `QuoteList.test.tsx`, `QuoteDetail.test.tsx`, `QuoteDetail.tax.test.tsx`, `QuoteLineDialog.test.tsx` and 11 more files (details in the notes) | -- | **covered** | Sales behaviour and the support/customer redirects are Vitest-only (no role-login e2e helper) (more in the notes) |
+| 4d.10 | **Product external-id mappings (#239)** | `product_external_ids` maps an integrator's exact, case-sensitive `(source, scope, external_id)` to a live product, on the pattern of the customer … (more in the notes) | -- (no UI) | `product_external_id_test.go`, `cmd/migrate/product_external_ids_migration_test.go`, `product_external_id_service_test.go` and 4 more files (details in the notes) | -- | `product_external_id_repository_test.go`: TestProductExternalIDRepository{SQLite,MySQL}; `tests/product_external_id_api_test.go`: TestProductExternalIDAPISQLite | **covered** (API) | No read route lists a product's mappings, and the product JSON does not embed them (more in the notes) |
+| 4d.11 | **Fractional line quantities (#343)** | A line quantity is an exact decimal from 0.001 to 1,000,000 with no non-zero digit beyond the third decimal place, carried as `models.QuoteQuantity` … (more in the notes) | `admin-quotes-fractional-quantity.spec.ts` (details in the notes) | `quote_quantity_test.go`, `cmd/migrate/quote_quantity_migration_test.go` (details in the notes) | `QuoteLineDialog.test.tsx`, `quoteFormat.test.ts`, `QuoteDetail.test.tsx`, `QuotePrint.test.tsx` (details in the notes) | `quote_quantity_repository_test.go`: TestQuoteLineQuantityStorage{SQLite,MySQL}; `tests/quote_quantity_test.go`: TestQuoteFractionalQuantityAPISQLite | **covered** (API and web UI) | The web UI accepts a dot as the only decimal separator and at most three typed decimals … (more in the notes) |
+| 4d.12 | **Client response link, backend (#382)** | The email of a *sent* quote ends with `APP_BASE_URL/quote-response?token=<token>` (more in the notes) | -- | `quote_public_handler_test.go`, `quote_history_client_test.go`, `routes_test.go` (details in the notes) | -- | `quote_email_test.go`, `quote_response_test.go`, `quote_response_regression_test.go`, `quote_response_token_repository_test.go` and 5 more files (details in the notes) | **covered** (backend) | The page that answers the link is 4d.13 (more in the notes) |
+| 4d.13 | **Client response page (#383)** | `/quote-response?token=<token>`, a top-level SPA route outside `ProtectedRoute` and `MainLayout` (no navigation, no sign-in link) (more in the notes) | `quote-response.spec.ts` (details in the notes) | `scripts/e2e/quote-response-link/main_test.go` (details in the notes) | `QuoteResponse.test.tsx`, `client.public.test.ts`, `quoteResponse.test.ts`, `routes/index.test.tsx` (details in the notes) | -- | **covered** (web UI) | No typed-name signature and no audit of who opened the link (more in the notes) |
+| 4d.14 | **Quote PDF output (#384)** | The server prints the quote document with a headless browser named by `QUOTE_PDF_CHROME_PATH`: `chrome-headless-shell` … (more in the notes) | -- (the e2e backend pins `QUOTE_PDF_CHROME_PATH` empty) | `service/quote_pdf_test.go`, `service/quote_pdf_chrome_test.go`, `service/quote_email_test.go`, `handler/quote_pdf_handler_test.go` and 4 more files (details in the notes) | `QuoteRender.test.tsx`, `quoteRender.test.ts`, `quotes.test.ts`, `QuoteDetail.test.tsx`, `ConfigurationContext.test.tsx`, `routes/index.test.tsx` (details in the notes) | -- | **covered** (Go and Vitest with fakes); the real chain is a manual check | No automatic test drives a real browser through the SPA: `scripts/e2e/quote-pdf-chain.sh` … (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **4d.1** **Product catalogue**
+  - Description: `GET/POST /products`, `GET/PUT/DELETE /products/{id}`: admin writes, admin and
+    sales read, support and customer 403, unauthenticated 401; name 1–200 trimmed, SKU ≤ 64
+    (indexed, not unique), `unit_price_cents` 0 to 10^12, currency `^[A-Z]{3}$` defaulting to
+    `deals.default_currency`, `is_active` default true; the list goes through
+    `utils.ParseOffsetLimit` (limit 0 → 20, capped at 100), filters `search` (name or SKU),
+    `is_active`, `currency`, `sort_by` allowlist
+    (`id, name, sku, unit_price_cents, currency, is_active, created_at, updated_at`, unknown → 400
+    `BAD_REQUEST` with no data rows); delete is a soft delete and quote lines keep their copied
+    values.
+  - E2E Tests: `admin-quotes.spec.ts`: the product step of "admin creates a product, quotes a deal
+    from its Quotes section, sends, prints and accepts the quote" (partial: create and the list
+    row).
+  - Unit Tests (Backend): `product_handler_test.go`: TestProductPriceBindingTagMatchesTheModel,
+    TestProductHandler_*; `product_service_test.go`: TestProductService_*; `product_test.go`:
+    TestProductColumnWidthsMatchConstants; `sort_test.go`: TestValidateSortProductsAndQuotes.
+  - Integration Tests: `product_repository_test.go`: TestProductRepository_*;
+    `product_integration_test.go`: TestProductRoutesRoleMatrix,
+    TestProductListPaginationSortAndFilters, TestProductDeleteKeepsQuoteLines.
+- **4d.2** **Create quote**
+  - Description: `POST /quotes`: at least one of `deal_id`/`customer_id` (400 otherwise); with only
+    the deal the customer is taken from it (possibly none); a customer that is not the deal's is 400
+    `VALIDATION_ERROR`; unknown deal, customer or owner is 400 `INVALID_REFERENCE`; a won or lost
+    deal is 409 (`ErrDealClosed`); sales may only quote its own deals and own the quote itself
+    (403), admin may name any owner; currency defaults to `deals.default_currency`; the quote starts
+    as a draft with totals 0 and one history row (`from_status` null) written in the same
+    transaction; the JSON adds `number` (`Q-000042`) and summaries of customer, deal and owner.
+  - Unit Tests (Backend): `quote_handler_test.go`: TestQuoteHandlerMapsServiceErrors,
+    TestQuoteHandler_CreateAndUpdateBodies; `quote_service_test.go`:
+    TestQuoteCreateWritesQuoteAndHistoryTogether; `quote_test.go`:
+    TestQuoteJSONAddsTheNumberAndSummaries, TestQuoteColumnWidthsMatchConstants.
+- **4d.3** **Lines and totals**
+  - Description: `POST /quotes/{id}/lines`, `PUT`/`DELETE /quotes/{id}/lines/{lineId}`: the
+    product's name and price are copied (overridable), `quantity` 0.001–1,000,000 with at most three
+    decimal places (#343, see 4d.11), `discount_bp` 0–10000, `tax_rate_bp` 0–10000 (default 0, #324),
+    `unit_price_cents` 0–10^12, quantity × price rounded half up and the quote's gross total
+    (`total_cents + tax_cents`) at most 10^12, at most 100 lines (all 400 `VALIDATION_ERROR`,
+    nothing written; the line arithmetic is exact 128-bit integer arithmetic, so nothing overflows);
+    another currency is 400, an inactive or deleted product 400 `INVALID_REFERENCE`, a line of
+    another quote 404; `line_total = round_half_up(quantity × price × (10000 − bp) / 10000)`,
+    rounded once (for whole quantities the same as `(gross × (10000 − bp) + 5000) / 10000`),
+    subtotal = Σ rounded line gross, line `tax_cents = (line_total × tax_rate_bp + 5000) / 10000`,
+    quote `tax_cents` = Σ line tax and `gross_total_cents = total_cents + tax_cents`, all recomputed
+    from the lines in the same transaction and written `WHERE status = 'draft'`; a tax-rate write on
+    a non-draft is 409; existing quotes read tax 0 and gross = total after the upgrade
+    (`20261117120000_add_quote_tax`, `MigrateDatabase` backfill on SQLite).
+  - Unit Tests (Backend): `quote_test.go`: TestQuoteLineTotalRoundsHalfUp, TestQuoteTotalsSumLines;
+    `quote_tax_test.go` (models): TestQuoteLineTaxCompute, TestQuoteTotalsWithTax,
+    TestQuoteTaxColumnsSchemaSQLite, TestQuoteTaxSQLiteUpgrade, TestQuoteTaxJSON;
+    `quote_service_test.go`: TestQuoteLineLimitsRejectedWithoutWrites; `quote_tax_test.go`
+    (service): TestQuoteTaxRateBoundsRejectedWithoutWrites, TestQuoteLineTaxRounding{SQLite,MySQL},
+    TestQuoteGrossCapRefusalWritesNothing{SQLite,MySQL},
+    TestQuoteTaxRateNonDraftRefused{SQLite,MySQL}; `quote_handler_test.go`:
+    TestQuoteLineBindingTagsMatchTheModel; `quote_tax_test.go` (handler):
+    TestQuoteLineTaxRateBinding; `quote_tax_migration_test.go`: TestQuoteTaxMigrationFiles,
+    TestQuoteTaxMigration.
+  - Integration Tests: `quote_repository_test.go`: TestQuoteRepository_LinesBelongToTheirQuote,
+    _DraftWritesAreConditional; `quote_tax_repository_test.go`:
+    TestQuoteRepositoryUpdateTotalsWithTax{SQLite,MySQL}; `quote_integration_test.go`:
+    TestQuoteLineSnapshotsProductPrice, TestQuoteLockedOutsideDraft; `tests/quote_tax_test.go`:
+    TestQuoteTaxAPISQLite.
+  - Known Issues: Discounts are per line and percentage only (no quote-level or fixed-amount
+    discount); one tax rate per line only (no tax categories, reverse charge, per-country or
+    quote-level tax); tax is rounded per line, so it can differ by cents from tax on per-rate
+    totals; the web UI shows and edits the rate since #325 (4d.9).
+- **4d.4** **Status lifecycle with history**
+  - Description: `POST /quotes/{id}/status`: exactly draft→sent, sent→accepted/rejected/expired,
+    sent→draft; any other pair or a lost race is 400 `INVALID_STATUS_TRANSITION`; the row is claimed
+    by `UPDATE … WHERE id = ? AND status = <from>`, draft→sent then counts the lines with a locking
+    read (zero → 409 `ErrQuoteHasNoLines`, claim rolled back), accepted after `valid_until` is 409
+    `ErrQuoteExpired`; `sent_at` set on sent, `closed_at` on the three final statuses, both cleared
+    on sent→draft; one history row per move; `GET /quotes/{id}/history` oldest first; two concurrent
+    transitions commit exactly one, a line write racing the send is included or refused.
+  - Unit Tests (Backend): `quote_handler_test.go`: TestQuoteStatusBindingTagsMatchTheModel;
+    `quote_test.go`: TestQuoteTransitionsAreExactlyTheFiveAllowedMoves; `quote_service_test.go`:
+    TestQuoteStatusTransitionMatrix; `quote_status_regression_test.go`:
+    TestQuoteStatusConcurrentSQLite, TestQuoteStatusConcurrentMySQL (needs `TEST_MYSQL_DSN`).
+  - Integration Tests: `quote_repository_test.go`: TestQuoteRepository_ClaimStatusIsConditional,
+    _StatusChangesOldestFirstAndLatestID, _LockingReadsCarryForUpdateOnMySQLOnly;
+    `quote_integration_test.go`: TestQuoteLockedOutsideDraft.
+- **4d.7** **Plaintext email**
+  - Description: `POST /quotes/{id}/email` on a sent or accepted quote calls `Mailer.Send` once:
+    recipient = the customer's current address, subject exactly `Quote Q-000042 from <name>`, where
+    the name is the stored `general.company_name` read at send time or `GopherCRM` when it is
+    missing, blank, unreadable or unusable in a header (#292, `product_name_test.go`:
+    TestMailProductNameQuoteSubject), body lists number, title, every line (description, quantity,
+    unit price, discount, line total, then the line's tax rate and tax amount, also at 0 %),
+    `Subtotal:`, `Discount:`, `Net total:`, `Tax:` and `Gross total:` with currency (#324,
+    `quote_tax_test.go`: TestQuoteEmailShowsTax), `valid_until` and notes; no transaction is held
+    during SMTP; `last_emailed_at` is stamped by one conditional update (still sent/accepted and no
+    newer `to_status = 'draft'` history row than the id read before sending), else 409
+    `ErrQuoteChangedDuringSend`; draft/rejected/expired, no customer, or a soft-deleted/erased
+    customer → 409 with no mail; a mailer error → 502 `MAIL_DELIVERY_FAILED` with nothing stamped;
+    the logs carry `quote_id` and `customer_id` only, and `SMTPMailer.Send`'s own failure line keeps
+    the SMTP code of a relay rejection without its text (a malformed reply is logged as
+    `smtp_protocol_error`), which normally echoes the address; `SMTPMailer.Send`/`SendPasswordReset`
+    refuse CR/LF in the recipient, subject or sender (`mailer.ErrInvalidHeader`) and a recipient or
+    sender that is not one address (`mailer.ErrInvalidAddress`; a quoted local part is re-quoted for
+    the envelope, `<`/`>`, control characters and domain literals are refused so no address can
+    inject ESMTP parameters, and a non-ASCII address needs a relay that offers SMTPUTF8; a domain
+    label may then hold any non-ASCII character but controls and whitespace, such as
+    `info@col·legi.cat`, #180) before any relay is dialled; every delivery is hard-bounded (10 s
+    dial, 30 s for the whole SMTP exchange including cleanup, #113), the body goes out
+    quoted-printable, a non-ASCII subject is encoded and folded, and the transport failure log
+    carries neither recipient nor subject.
+  - Unit Tests (Backend): `quote_email_test.go`: TestQuoteEmailDelivery,
+    TestQuoteEmailLogsOmitPersonalData, TestQuoteEmailRevisedDuringSend;
+    `mailer/header_injection_test.go`: TestSMTPMailerRejectsHeaderInjection;
+    `mailer/smtp_relay_reply_test.go`: TestSMTPMailerSendLogOmitsTheRelayReply;
+    `mailer/smtp_transport_test.go`: TestSMTPDeadlines, TestSMTPHeaders, TestSMTPTLSAuth,
+    TestSMTPFailureRedaction; `mailer/smtp_idn_test.go`: TestSMTPInternationalisedDomains.
+  - Known Issues: The body is a plaintext rendering of the quote, not the printable document. Since #384
+    the printable document is attached as `Quote-<number>.pdf` when PDF output is on, and the mail
+    is text only, as before, when it is off or the render fails (4d.14). Without `SMTP_HOST` the
+    development `LogMailer` stands in: it logs the recipient and the subject, as it always did, and
+    returns success, so the call answers 200 and stamps `last_emailed_at` although nothing was
+    delivered . Since #382 the email of a sent quote ends with a single-use client response link
+    (4d.12).
+- **4d.8** **Schema, migration and erasure**
+  - Description: `products`, `quotes`, `quote_lines`, `quote_status_changes` in AutoMigrate and in
+    `migrations/20261026120000_add_products_and_quotes.up.sql` (four `CREATE TABLE IF NOT EXISTS`,
+    names identical to AutoMigrate's, no existing table altered, so the SQLite upgrade path rebuilds
+    nothing); the PII sweep covers the four tables; erasing a customer with a deal-linked quote
+    keeps the quote, its `customer_id`, status, totals, lines and history, and the sweep finds
+    nothing of the person. Since #245 the same transaction redacts every quote whose `customer_id`
+    is an erased customer or whose `deal_id` is a deal of an erased customer or lead, live or
+    soft-deleted, in every status: `title` → `[redacted]`, `notes` → `''`, each line's `description`
+    → its product's name (soft-deleted products included). Since #395 it also stamps the unused
+    `quote_response_tokens` rows of the quotes whose `customer_id` is an erased customer, so a
+    mailed response link is refused (row 12.15).
+  - Unit Tests (Backend): `cmd/migrate/products_quotes_migration_test.go`:
+    TestProductsAndQuotesMigration (fresh and AutoMigrate-first on MySQL/MariaDB, schema parity,
+    ErrNoChange, Steps(-1)); `cmd/migrate/main_test.go` version and table assertions;
+    `business_text_erasure_test.go`: TestCustomerErasureScrubsQuoteText{SQLite,MySQL},
+    TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL},
+    TestBusinessTextErasureAtomic{SQLite,MySQL}.
+  - Integration Tests: `erasure_pii_sweep_test.go`: TestThePersonalDataSweepCoversQuoteTables,
+    TestCustomerErasureWithQuotesLeavesNoPersonalData; `business_text_erasure_sweep_test.go`:
+    TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData,
+    TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData;
+    `tests/business_text_erasure_test.go`: TestBusinessTextErasureAPISQLite.
+  - Known Issues: The MySQL roots skip without `TEST_MYSQL_DSN`; the migrations CI job runs them on
+    MySQL 8 and MariaDB 10.11 and rejects skips only on a `full` run (a release, or a manual
+    dispatch with `full: true`, #228); on a pull request the database gates job runs them on MariaDB
+    10.11 only when `cmd/migrate` is selected, without rejecting a skip (#365).
+- **4d.9** **Products and quotes UI (2026-10-28)**
+  - Description: `/products` (admin and sales): name, SKU, price formatted with its currency, active
+    chip; search, active filter, server pagination and sorting on the API allowlist; New, row Edit
+    and Delete (with confirmation) for admin only. `/products/new` and `/products/{id}/edit` (admin
+    only): name required and ≤ 200, SKU ≤ 64, price ≥ 0 in major units converted with the existing
+    `decimalToCents`, currency `^[A-Z]{3}$` defaulting to `deals.default_currency` through
+    `useDefaultDealCurrency`, active switch; the body goes out in cents. `/quotes` (admin and
+    sales): number (`Q-000042`), title, status chip, customer, deal, total with currency, valid
+    until; status filter, server pagination and sorting; "New Quote" opens the create dialog (title,
+    open-deal picker, customer picker, currency, valid until, notes; at least one link).
+    `/quotes/{id}`: header (number, status, customer, deal link, owner, valid until,
+    sent/closed/last-emailed times), lines table (description, qty, unit price, discount %, tax rate
+    %, tax, line total) with "Add line" (active products in the quote's currency, quantity, discount
+    % and tax % sent as basis points, optional price override), line edit and delete and an Edit
+    dialog (title, valid until, notes) while draft and none of them otherwise; subtotal, discount,
+    net total, tax and bold gross total from the server on every status (#325); status buttons for
+    the valid transitions only (draft: Mark as sent; sent: Accept, Reject, Mark expired, Revise)
+    posting to `/quotes/{id}/status` and refreshing the quote and history, with the server message
+    on 400 `INVALID_STATUS_TRANSITION` and 409; Print link; "Email quote" on sent and accepted
+    quotes with a confirmation that names the customer (no address field) and distinct messages for
+    409 and 502, the last emailed time on success; status history; delete (admin, or a sales owner's
+    draft). `/quotes/{id}/print`: app name, number, title, date, valid until, customer name and
+    company, lines with their tax rate and tax, subtotal, discount, net total, tax and gross total
+    (#325), notes, a Print button calling `window.print()`; the app bar, navigation and breadcrumbs
+    are hidden under `@media print` (`displayPrint` in `MainLayout`). DealDetail "Quotes" section
+    over `GET /deals/{id}/quotes` (number, title, status, total; "New quote" prefilled with the
+    deal, hidden on won/lost deals). Products and Quotes nav entries and routes for admin and sales;
+    support and customer are redirected as on the other guarded pages; the product form routes
+    redirect sales too. All calls go through `src/api/endpoints/products.ts` and `quotes.ts`.
+  - E2E Tests: `admin-quotes.spec.ts` (1 test): "admin creates a product, quotes a deal from its
+    Quotes section, sends, prints and accepts the quote" (product, deal, quote from the section, a
+    line at 10 % off with the server totals, Mark as sent, the print page with print-media emulation
+    hiding the navigation while the quote stays visible, Accept, the deal's section showing the
+    accepted quote and its total); `admin-quotes-tax.spec.ts` (1 test, #325): a line at 21 % tax
+    sent as `tax_rate_bp` 2100, the line tax and the net, tax and gross totals on the detail page,
+    the rate edited to 0 and back, and the same totals on the print page of the sent quote.
+  - Unit Tests (Frontend): `ProductList.test.tsx` (5), `ProductForm.test.tsx` (7),
+    `QuoteList.test.tsx` (5), `QuoteDetail.test.tsx` (12), `QuoteDetail.tax.test.tsx` (4),
+    `QuoteLineDialog.test.tsx` (13), `QuoteStatusActions.test.tsx` (3), `QuoteEmailDialog.test.tsx`
+    (3), `QuotePrint.test.tsx` (4), `QuotePrint.tax.test.tsx` (3), `DealQuotesSection.test.tsx` (5),
+    `DealDetail.test.tsx`: "renders the Quotes section for the deal", "hides New quote in the Quotes
+    section of a lost deal"; `routes/index.test.tsx` "products and quotes routes" (2);
+    `MainLayout.test.tsx` (2); `products.test.ts` (8), `quotes.test.ts` (15), `quoteFormat.test.ts`
+    (6).
+  - Known Issues: Sales behaviour and the support/customer redirects are Vitest-only (no role-login
+    e2e helper). The customer detail page has no Quotes section (`GET /customers/{id}/quotes` is not
+    used by the UI). The quote list offers no delete; the detail page does. Screenshots:
+    [SCREENSHOTS.md, Products and quotes](SCREENSHOTS.md#products-and-quotes)
+    (`e2e/screenshots/11-quotes.spec.ts`).
+- **4d.10** **Product external-id mappings (#239)**
+  - Description: `product_external_ids` maps an integrator's exact, case-sensitive
+    `(source, scope, external_id)` to a live product, on the pattern of the customer mappings
+    (#212): `source` 1–64, `scope` 0–128 (default `''`), `external_id` 1–255 runes, valid UTF-8, no
+    control characters, no leading or trailing whitespace; the only unique index is
+    `idx_product_external_ids_identity`, `utf8mb4_bin` on MySQL/MariaDB (migration
+    `20261112120000_add_product_external_ids` or the collation guard of `MigrateDatabase`), rows are
+    hard-deleted and `products.sku` stays non-unique. `POST /products/{id}/external-ids` (admin
+    only: 201; 409 `CONFLICT` for a triple already mapped to any product; 404 for a missing or
+    deleted product; 400 `VALIDATION_ERROR` with `details.field`/`details.reason`, never the value)
+    locks the live product row and inserts in one transaction;
+    `DELETE /products/{id}/external-ids/{mappingId}` (admin only: 204; 404 for another product's
+    mapping). `GET /products?source=&scope=&external_id=` (admin and sales) enters lookup mode when
+    any of the three is present, validates before any read, ignores the other list parameters and
+    answers the list shape with 0 or 1 live product (inactive included), meta page 1.
+    `DELETE /products/{id}` locks the product, hard-deletes its mappings and soft-deletes it in one
+    transaction, so the keys can be reused; a race with a mapping create leaves no mapping on a
+    deleted product. Sales is 403 on both mapping writes; support and customer are 403 on every
+    product route. No personal data, so no erasure step.
+  - Unit Tests (Backend): `product_external_id_test.go`: TestProductExternalIDSchemaSQLite,
+    TestProductExternalIDSQLiteUpgrade, TestProductExternalIDJSON;
+    `cmd/migrate/product_external_ids_migration_test.go`: TestProductExternalIDsMigrationFiles,
+    TestProductExternalIDsMigration (MySQL/MariaDB); `product_external_id_service_test.go`:
+    TestProductExternalIDValidation, TestProductExternalIDServiceRefusedWhenUnwired,
+    TestProductDeleteRefusedWhenUnwired, TestProductExternalIDLogsOmitValues;
+    `product_delete_purge_test.go`: TestProductDeleteFreesExternalIDs{SQLite,MySQL};
+    `product_external_id_race_test.go`: TestProductExternalIDCreateRacesDelete{SQLite,MySQL};
+    `product_external_id_handler_test.go`: TestProductExternalIDHandlerErrorMapping,
+    TestProductListExternalIDLookup, TestProductExternalIDRoutesRoles;
+    `cmd/product_external_id_wiring_test.go`: TestProductExternalIDProductionWiring.
+  - Known Issues: No read route lists a product's mappings, and the product JSON does not embed
+    them. The MySQL roots skip without `TEST_MYSQL_DSN`; registering the migration roots in the
+    Database migrations workflow is an operator follow-up.
+- **4d.11** **Fractional line quantities (#343)**
+  - Description: A line quantity is an exact decimal from 0.001 to 1,000,000 with no non-zero digit
+    beyond the third decimal place, carried as `models.QuoteQuantity` (integer thousandths) and
+    stored in `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`), which replaces the
+    whole-unit `quantity` column. `POST /quotes/{id}/lines` and `PUT /quotes/{id}/lines/{lineId}`
+    decode the JSON number exactly (no float64; `1e-3`, `1.5000` and `1000000.000` are judged by
+    value); zero, negative, above 1,000,000, a fourth non-zero decimal or a literal over 64 bytes /
+    exponent above 30 is 400 `VALIDATION_ERROR` with `error.details.quantity` before any read or
+    write, a quantity sent as a string 400 `BAD_REQUEST`, a missing or null quantity on POST 400
+    `VALIDATION_ERROR`, an absent or null one on PUT keeps the stored value; the service re-checks
+    the bound (`validateLineBounds`) before any transaction. `ComputeQuoteLineAmounts` gives gross =
+    round_half_up(quantity × price) and line total = round_half_up(quantity × price × (10000 − bp) / 10000)
+    in 128-bit integer arithmetic; a rounded gross above 10^12 is refused; the subtotal sums the
+    rounded line gross values (1.5 × 9.99 at 12.5 % off: gross 14.99, line total 13.11). Responses
+    return the quantity as a JSON number without trailing zeros (`1.5`, `2`, `0.001`), and the quote
+    email prints `quantity 1.5 x …`; whole quantities give the same stored values, JSON and email
+    text as before. MySQL/MariaDB get the column from
+    `20261118120000_store_quote_line_quantity_milli` (add, backfill × 1000, drop `quantity`, every
+    step guarded; down restores `quantity` rounded half up with a floor of 1), SQLite and every
+    driver from `MigrateDatabase` (backfill in chunks of 500, then the native
+    `ALTER TABLE quote_lines DROP COLUMN quantity`, which keeps the indexes and foreign keys). Stop
+    every replica before upgrading; to roll the binary back run the down migration first
+    (MySQL/MariaDB) or restore the pre-upgrade backup (SQLite). Web UI (#346): the line dialog's
+    Quantity field is a text input (`inputmode="decimal"`, `name="quantity"`, no min/max/step, hint
+    "From 0.001 to 1,000,000, up to three decimals") checked by `isValidQuoteQuantity` on add and
+    edit (refused text shows "Quantity must be a number from 0.001 to 1,000,000 with at most three
+    decimals" and sends nothing) and sent as `Number(text)`; a 400 `VALIDATION_ERROR` with a string
+    `error.details.quantity` shows that message on the field instead of the `quote-line-error` alert
+    (every other refusal stays in the alert), and editing the field restores the hint; the edit
+    dialog is prefilled with the stored value (`2.5`); the detail and print pages render
+    `formatQuantity` (`1.5`, `2`, `0.001`, no trailing zeros, exponent or thousands separator) and
+    the server's line and quote totals, which the browser never recomputes.
+  - E2E Tests: `admin-quotes-fractional-quantity.spec.ts` (1 test, #346): "admin adds and edits a
+    fractional line quantity and sees it without trailing zeros on the detail and print pages" (add
+    1.5, edit to 0.125, a local refusal of `1.2345`, a fulfilled 400 with `details.quantity` on the
+    field, the print page).
+  - Unit Tests (Backend): `quote_quantity_test.go` (models): TestQuoteQuantityParse,
+    TestQuoteQuantityJSON, TestQuoteLineAmounts, TestQuoteQuantitySQLiteUpgrade;
+    `quote_quantity_test.go` (handler): TestQuoteLineQuantityBinding, with
+    TestQuoteLineBindingTagsMatchTheModel; `quote_quantity_test.go` (service):
+    TestQuoteFractionalQuantityBoundsRejectedWithoutWrites,
+    TestQuoteFractionalQuantityTotals{SQLite,MySQL}, TestQuoteEmailFractionalQuantity;
+    `cmd/migrate/quote_quantity_migration_test.go`: TestQuoteQuantityMigrationFiles,
+    TestQuoteQuantityMigration (MySQL/MariaDB).
+  - Unit Tests (Frontend): `QuoteLineDialog.test.tsx` ("QuoteLineDialog quantity …", 7 tests);
+    `quoteFormat.test.ts` (3 quantity tests: "quoteFormat formats a quantity without trailing
+    zeros", "quoteFormat validates quantity text from 0.001 to 1000000 with at most three decimals",
+    "quoteFormat keeps a three-decimal quantity exact through Number and JSON");
+    `QuoteDetail.test.tsx`: "QuoteDetail shows fractional line quantities without trailing zeros and
+    the server's line and quote totals"; `QuotePrint.test.tsx`: "QuotePrint prints fractional line
+    quantities without trailing zeros and the server's totals".
+  - Known Issues: The web UI accepts a dot as the only decimal separator and at most three typed
+    decimals (`1.5000` is refused locally although the API accepts it by value), with no thousands
+    separator, sign or exponent; quantities display as plain digits (`1000000`). No units of
+    measure. The down migration rounds a fractional quantity to whole units and leaves the stored
+    totals as they are. The MySQL roots skip without `TEST_MYSQL_DSN`; registering the new roots in
+    `scripts/ci/check-go.py` and the migration roots in the Database migrations workflow is an
+    operator follow-up.
+- **4d.12** **Client response link, backend (#382)**
+  - Description: The email of a *sent* quote ends with `APP_BASE_URL/quote-response?token=<token>`;
+    only the HMAC-SHA256 hash of the token is stored in `quote_response_tokens` (keyed by
+    `API_KEY_SECRET`, else `JWT_SECRET`), minted in one short transaction before the send (lock the
+    quote, re-check sent, read the quote's customer as live, re-check the history marker, insert; a
+    customer erased before the mint is 409 with nothing stored or sent); after the mailer reports
+    success a second short transaction (lock the quote, stamp the quote's unused rows older than the
+    token just sent, by primary key) retires the links of earlier emails, so a failed send leaves
+    the previous link usable, and a failure of that step after the send is a warn line while the
+    email still succeeds; an accepted quote and a sent quote past `valid_until` are emailed without
+    a link; a quote that changed before the mint is 409 with nothing sent; the token is in no log
+    line and no error text. `GET /quotes/public/response` (no authentication, strict tier; the token
+    in the `X-Quote-Token` request header, a token only in the query string is not read and gets the
+    generic 400) returns `QuotePublicView` (number, status, currency, `valid_until`, lines, five
+    totals; no id, title, notes, owner, customer, deal or product reference) and never writes.
+    `POST /quotes/public/response` `{token, decision}` (`accept`/`decline`) claims the token with
+    one conditional update (unused, unexpired, quote live and sent, all in the statement) and moves
+    the quote sent→accepted/rejected with `closed_at` and one history row in one transaction; the
+    history row has no user (`changed_by_id` NULL) and `source` `client` (#400:
+    `GET /quotes/{id}/history` returns `source` `staff`/`client` on every entry and omits
+    `changed_by` on a client answer; migration `20261122120000_quote_history_source` adds the column
+    and makes `changed_by_id` nullable) and the token row (`used_at`, `decision`) records which link
+    was spent; the deal is unchanged. An invalid body is 400 `VALIDATION_ERROR` before any lookup;
+    an unknown, used, expired or invalidated token, a quote no longer sent, a deleted quote and a
+    quote whose customer was erased (checked by the read and, under the quote lock, before the
+    claim) are the same 400 `BAD_REQUEST` "Invalid or expired quote link". Two concurrent answers
+    commit exactly one; a failure after the claim rolls back and the link stays usable. The three
+    `/quotes/public` routes answer every response, rate-limit refusals included, with
+    `Cache-Control: no-store`. The link dies at the end of the `valid_until` day (server's local
+    date; never without `valid_until` while the quote is sent), with the next successfully sent
+    email of the quote, and with any staff status change away from sent (also after
+    sent→draft→sent). Schema: `quote_response_tokens` in AutoMigrate and
+    `migrations/20261121120000_add_quote_response_tokens.up.sql` (no foreign key, no existing table
+    altered).
+  - Unit Tests (Backend): `quote_public_handler_test.go`: TestQuotePublicView,
+    TestQuotePublicRespond; `quote_history_client_test.go`: TestQuoteHistoryClientAnswer;
+    `routes_test.go`: TestQuotePublicRoutesWinOverTheIDParameter, TestAllRouteSetupsCoexist.
+  - Integration Tests: `quote_email_test.go`: TestQuoteEmailResponseLink; `quote_response_test.go`:
+    TestQuoteResponseView, TestQuoteResponseDecision, TestQuoteResponseRollbackKeepsLink,
+    TestQuoteResponseDeadLinks; `quote_response_regression_test.go`:
+    TestQuoteResponseConcurrentSQLite, TestQuoteResponseConcurrentMySQL;
+    `quote_response_token_repository_test.go`: TestQuoteResponseTokenRepository;
+    `quote_response_erasure_test.go`: TestQuoteResponseAfterCustomerErasure{SQLite,MySQL};
+    `erasure_quote_tokens_test.go`: TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL},
+    TestErasureQuoteTokenWritesLeaveGapsFreeMySQL;
+    `cmd/migrate/quote_response_tokens_migration_test.go`: TestQuoteResponseTokensMigrationFiles,
+    TestQuoteResponseTokensMigration; `cmd/migrate/quote_history_source_migration_test.go`:
+    TestQuoteHistorySourceMigrationFiles, TestQuoteHistorySourceMigration;
+    `database_sqlite_upgrade_test.go`: TestQuoteHistorySourceSQLiteUpgrade.
+  - Known Issues: The page that answers the link is 4d.13. A client answer recorded before #400
+    keeps the quote owner as its user and reads `source` `staff` (no backfill). Erasing the customer
+    of a sent quote invalidates its mailed links (#395, row 12.15). The view holds no personal data.
+- **4d.13** **Client response page (#383)**
+  - Description: `/quote-response?token=<token>`, a top-level SPA route outside `ProtectedRoute` and
+    `MainLayout` (no navigation, no sign-in link). The page takes the token from the link once,
+    keeps it in component state (never in web storage) and removes it from the address bar with a
+    replace navigation (`/quote-response`, no search, no new history entry), so a reload shows the
+    invalid-link message and the client opens the mailed link again. It reads the quote once per
+    mount through `quoteResponseApi.getQuoteResponse`, which sends the token in the `X-Quote-Token`
+    request header and no query string (no retry, no refetch on focus: both routes share one strict
+    rate bucket) and shows `Quote <number>`, `Valid until` (omitted when not set), the lines
+    (description, quantity, unit price, discount, tax rate, net line total) and the Subtotal,
+    Discount, Net, Tax and Gross totals in the quote's currency, with Accept and Decline. Each
+    button opens one confirmation dialog naming the quote number; only Confirm calls
+    `quoteResponseApi.respond(token, 'accept' \| 'decline')`, and every button is disabled while it
+    is in flight, so one decision is sent. Success shows only `You have accepted quote <number>.` or
+    `You have declined quote <number>.`. A missing or empty token (no request), a `GET` answered 400
+    and a `POST` answered 400 `BAD_REQUEST` show only
+    `This link is no longer valid. It may already have been used or it has expired.`; any other
+    `GET` failure (network, 429, 5xx) shows only
+    `The quote could not be loaded. Please try again later.`; any other `POST` failure shows an
+    error alert and keeps the quote and the buttons. The token is never rendered or logged. Both
+    calls go through `publicApi` = `ApiClient.getPublicClient()`: the base URL, timeout, transport
+    and envelope handling of `api`, no request interceptor, so no `Authorization` header from a
+    stored session and no refresh or replay on a 401.
+  - E2E Tests: `quote-response.spec.ts` (1 test): an admin-created sent quote's link, obtained from
+    `go run ./scripts/e2e/quote-response-link`, opened in a signed-out browser context shows the
+    quote, the address is `/quote-response` without the token, and the one read carries
+    `x-quote-token`, no query string and `Cache-Control: no-store`; Accept and Confirm (answered
+    with `no-store`) show the confirmation; the staff page shows the quote accepted; the link
+    reopened shows the invalid-link message without buttons.
+  - Unit Tests (Backend): `scripts/e2e/quote-response-link/main_test.go`:
+    TestQuoteResponseLinkPrintsUsableLink, TestQuoteResponseLinkRefusesDraftQuote,
+    TestQuoteResponseLinkRefusesNonE2EDatabase.
+  - Unit Tests (Frontend): `QuoteResponse.test.tsx` (12 tests); `client.public.test.ts` (5 tests);
+    `quoteResponse.test.ts` (4 tests); `routes/index.test.tsx` ("quote response route", 1 test).
+  - Known Issues: No typed-name signature and no audit of who opened the link. The staff history
+    shows the answer as `Client` (#400; `QuoteHistory.test.tsx`, and `quote-response.spec.ts` checks
+    the last history row). `scripts/e2e/quote-response-link` is a browser-test fixture, not a server
+    feature: it runs only under `make e2e` (requires `E2E_UI_PORT`) and refuses a MySQL database
+    whose name does not end in `_e2e`.
+- **4d.14** **Quote PDF output (#384)**
+  - Description: The server prints the quote document with a headless browser named by
+    `QUOTE_PDF_CHROME_PATH`: `chrome-headless-shell` (what the Docker image ships since #393) or a
+    full Chrome or Chromium (default empty; empty, a path that is not an executable file, or no
+    `APP_BASE_URL` = PDF off, the server still boots and logs one warning for a path that does not
+    resolve). The browser opens the public SPA route `/quote-render#<credential>`, which renders
+    `QuoteDocument` (the document of the print page, no toolbar, no application chrome) from
+    `POST /quotes/public/render` `{token}`. The credential is 32 random bytes minted per render,
+    stored only as a hash in the process's memory with the quote id and an expiry, deleted when the
+    render returns; it opens that one quote read-only (`models.QuoteRenderView`: the quote as
+    `GET /quotes/{id}` returns it and `product_name`), other body fields are ignored, every refusal
+    is the generic 400 `Invalid or expired render link`, and as a Bearer token it is 401. The
+    credential is single use: a second redemption, concurrent or not, is the generic 400 and fails
+    that render. A render whose page never redeemed the credential fails, so an error page is never
+    mailed. `GET /quotes/{id}/pdf` (`quotes.view`; 400/403/404 exactly those of `GET /quotes/{id}`,
+    decided before anything is rendered) answers the raw file with `Content-Type: application/pdf`
+    and `Content-Disposition: attachment; filename="Quote-<number>.pdf"`; PDF off is 503
+    `PDF_UNAVAILABLE`, a failed, late or queued-out render 503 `PDF_RENDER_FAILED`; the file and
+    every error answer carry `Cache-Control: no-store`. `POST /quotes/{id}/email` renders after the
+    recipient checks and before the response link is minted, with no transaction held, and sends
+    through `mailer.AttachmentSender` (`multipart/mixed`: the unchanged quoted-printable text part
+    and one base64 attachment); PDF off, a mailer without attachment support, a failed or late
+    render → `Mailer.Send` exactly as before plus one warn line with the quote id, the customer id
+    and a reason. One render at a time per process, bounded at 15 s including the wait
+    (`QuotePDFRenderTimeout`); email worst case 15 s + 30 s SMTP = 45 s; the SPA gives `emailQuote`
+    and `downloadQuotePdf` 55 s (`QUOTE_PDF_REQUEST_TIMEOUT_MS`). The browser runs in its own
+    process group (killed whole at the bound), with a temp dir as profile, `HOME`, `TMPDIR` and XDG
+    directories, and a built environment (`PATH`, `LANG`/`LC_ALL`, `TZ`): no server secret reaches
+    it; it is started with `--remote-debugging-pipe` and no URL and driven over its DevTools pipe
+    (file descriptors 3 and 4: navigate, wait, `Page.printToPDF`), so the render URL and its
+    credential are on no command line and no debugging port is opened (#396; needs a Unix host); Go
+    never passes `--no-sandbox`; neither the URL, the credential nor the browser's output is logged.
+    `GET /configurations/ui` carries the synthetic read-only `quotes.pdf_available`; QuoteDetail
+    shows **Download PDF** only when it is `true`, saves `Quote-<number>.pdf`, and on failure shows
+    the server's message or `Failed to download the PDF`. The runtime image (Debian slim since #393)
+    ships `chrome-headless-shell` at a pinned version, downloaded from Chrome for Testing and
+    checked against a SHA-256 since #420, with `fonts-liberation`, and sets the variable to a
+    launcher that execs the headless shell; the two development compose files set it empty.
+  - Unit Tests (Backend): `service/quote_pdf_test.go`: TestQuotePDFOff, TestQuotePDFRender,
+    TestQuoteRenderCredential, TestQuotePDFTimeoutBudget; `service/quote_pdf_chrome_test.go`:
+    TestChromeQuotePDFRendererMissingBinary, TestChromeQuotePDFRendererTimeout,
+    TestChromeQuotePDFRendererEnvironment, TestChromeQuotePDFRendererLaunchArguments,
+    TestChromeQuotePDFRendererPipe, TestChromeQuotePDFRendererRealBinary (skips without
+    `QUOTE_PDF_CHROME_PATH`); `service/quote_email_test.go`: TestQuoteEmailPDFAttachment;
+    `handler/quote_pdf_handler_test.go`: TestQuotePDFHandler;
+    `handler/quote_public_handler_test.go`: TestQuotePublicRender;
+    `handler/configuration_handler_test.go`: TestUIConfigurationsQuotePDFAvailable;
+    `handler/routes_test.go`: TestQuotePublicRoutesWinOverTheIDParameter;
+    `mailer/smtp_attachment_test.go`: TestSMTPAttachment, TestLogMailerAttachment; `config`:
+    TestLoad_QuotePDFChromePath, TestDockerfileShipsHeadlessShell.
+  - Unit Tests (Frontend): `QuoteRender.test.tsx`; `quoteRender.test.ts`; `quotes.test.ts`
+    (timeouts, Blob error body); `QuoteDetail.test.tsx` (button, failure texts);
+    `ConfigurationContext.test.tsx`; `routes/index.test.tsx` (`/quote-render`).
+  - Known Issues: No automatic test drives a real browser through the SPA:
+    `scripts/e2e/quote-pdf-chain.sh` (browser → `/quote-render` → API → PDF text; `local` with a
+    full Chrome, `image` with the built image) is run by hand and belongs to the release checks
+    (`docs/DEV_ENTITIES.md`). Known limits in `docs/ROADMAP.md`: per-process credential store, PDF
+    date in the server's time zone, PDF off in the development compose files, systemd deployment not
+    run on a real host.
 
 ---
 
@@ -304,24 +1839,298 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 4e.1 | **Rule CRUD (admin)** | `POST /automation/rules` returns 201 with the steps numbered 1..n; an invalid trigger or step config, more than 20 steps, more than 90 days of waits, a backward or out-of-range `else_position` or an unknown `{{placeholder}}` is 400 `INVALID_INPUT` writing no row; an unknown, inactive or non-staff user id is 400 `INVALID_REFERENCE`; every refused field is listed in `error.details.fields` as `{field, code, message}` (paths such as `steps[2].config.title`, steps counted from zero) while `error.message` and `error.code` stay those of the first refusal; the staff-user lookups run once per distinct user; list through `ParseOffsetLimit` with the `automation_rules` sort allowlist; sales, support and customer get 403 on every rule route | `automation-rules.spec.ts` (create through the form; a user deactivated after the rule was saved is refused on save and the message lands under the user picker) | `automation_validation_test.go`: TestAutomationRuleValidationCollectsAllFields, TestAutomationRuleValidationLegacyMessage, TestAutomationRuleValidationReferencePaths, TestAutomationRuleValidationStopsOnEntityType; `sort_test.go`: TestValidateSortAutomationAllowlists; `routes_test.go`: TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter, TestAutomationDraftDryRunRouteIsStatic; `config_test.go`: TestLoad_AutomationDefaultsAndClamp | `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`, `ruleFormSchema.test.ts`, `conditionValues.test.ts`, `StaffUserAutocomplete.test.tsx`, `automation.test.ts` | `tests/automation_api_test.go`: TestAutomationRuleAPISQLite | **covered** | -- |
-| 4e.2 | **Rule lifecycle cancels runs** | Every update, in one transaction, increments `version`, replaces the steps and cancels the rule's pending, waiting and running runs with `rule_changed`; disable cancels with `rule_disabled`; delete soft-deletes and cancels with `rule_deleted`; a running run cancelled this way performs no further step (its conditional advance affects zero rows); a fault during the step replacement leaves version, steps and runs unchanged | -- | `automation_rule_lifecycle_test.go`: TestAutomationRuleLifecycle{SQLite,MySQL}, incl. the subtests "an update without enabled keeps a disable committed after the caller read the rule" and "an update with enabled sets the switch inside the transaction" | -- | `tests/automation_api_test.go`: TestAutomationRuleUpdateKeepsConcurrentDisableSQLite | **covered** | The MySQL root needs `TEST_MYSQL_DSN`. An update that omits `enabled` keeps the switch as read under the rule's row lock inside the update transaction (fixed 2026-10-29; before, a disable committed meanwhile was undone) |
-| 4e.3 | **Lead and deal events in the write transaction** | `LeadService.Create/Update`, form create/update, bulk lead status and `ConvertToCustomer` record `lead_created`, `lead_updated` and `lead_status_changed` (`from_value`/`to_value`) with origin `user`, `form`, `bulk` or `conversion`; deal create/update/stage record `deal_created` (`to_value` = stage), `deal_updated` and `deal_stage_changed`, won and lost included; the same stage records nothing; a rolled-back write and a refused bulk batch record nothing; no personal data in any column; a finalised submission of a `create_lead` form (received, or confirmed through double opt-in) linked to a lead records exactly one `lead_form_submitted` (origin `form`, `form_id` and `submission_id` set) after the `lead_created` or `lead_updated`, in the same transaction as the link, while spam, pending and `create_lead`-off submissions and a rolled-back link record none (#220) | -- | `automation_lead_events_test.go`: TestAutomationLeadEvents{SQLite,MySQL}; `automation_deal_events_test.go`: TestAutomationDealEvents{SQLite,MySQL}; `form_attribution_test.go`: TestFormSubmittedEvent{SQLite,MySQL} | -- | -- | **covered** | `actor_id` is empty on the lead service paths (no actor reaches `LeadService`) |
-| 4e.4 | **Dispatch** | A conditional claim of the event (`processed_at IS NULL`, one row) and, in the same transaction, one run per enabled matching rule with the rule version and `evt:<event_id>:rule:<rule_id>`, inserted with `clause.OnConflict{DoNothing: true}` (`ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE id=id`); a duplicate is no error and no row; two dispatchers racing for one event produce one set of runs; disabled or deleted rules, non-matching from/to filters and `origin=automation` events start no run; a `lead_form_submitted` lead rule with `trigger.form_id` starts only for events of that form, one with `form_id` 0 or omitted for every form, and `lead_created`/`lead_updated` rules start as before (#220) | -- | `automation_dispatch_test.go`: TestAutomationDispatch{SQLite,MySQL}; `form_attribution_test.go`: TestAutomationFormSubmittedDispatch{SQLite,MySQL}; `automation_run_dedupe_test.go`: TestAutomationRunDedupe{SQLite,MySQL} | -- | `tests/form_attribution_api_test.go`: TestFormAttributionAPISQLite | **covered** | -- |
-| 4e.5 | **Step execution** | One `WithTransactionAndRetry` transaction per step: locking read of the record (`FOR UPDATE` on MySQL), conditional advance (`status='running' AND next_position=?`, one row or rollback and stop), the effect, the `automation_run_steps` row; `create_task` is due `due_in_days` after execution (UTC) and links the lead, or the deal's customer else its lead; `assign_owner` records an `origin=automation` event that starts no run; `notify` creates one notification; a fault after the effect rolls everything back and the retry performs it once; an inactive or erased recipient is `skipped`/`recipient_unavailable`; on MySQL a cancel, a rule change or an erasure committed from a second connection after the first read leaves no task, notification, owner change or run-step row | -- | `automation_step_execution_test.go`: TestAutomationStepExecution{SQLite,MySQL}; `automation_condition_test.go`: TestAutomationTaskPlaceholdersExcludePersonalData | -- | -- | **covered** | A step that fails three times fails the run with `step_failed`. A task's text accepts only `lead.id`, `lead.status`, `lead.source` and the `deal.*` placeholders (a task survives the erasure of its lead); the lead's name, email, phone, company and the owner's fields are refused in it and blanked by the task renderer. `deal.title` is staff-typed and may name the client: the erasure redacts the deal's title (#245), but a task rendered from it earlier keeps its text (accepted limitation) |
+| 4e.1 | **Rule CRUD (admin)** | `POST /automation/rules` returns 201 with the steps numbered 1..n (more in the notes) | `automation-rules.spec.ts` (create through the form; a user deactivated after the rule was saved is refused on save and the message lands under the user picker) | `automation_validation_test.go`, `sort_test.go`, `routes_test.go`, `config_test.go` (details in the notes) | `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`, `ruleFormSchema.test.ts`, `conditionValues.test.ts`, `StaffUserAutocomplete.test.tsx` and 1 more file (details in the notes) | `tests/automation_api_test.go`: TestAutomationRuleAPISQLite | **covered** | -- |
+| 4e.2 | **Rule lifecycle cancels runs** | Every update, in one transaction, increments `version`, replaces the steps and cancels the rule's pending, waiting and running runs with `rule_changed` (more in the notes) | -- | `automation_rule_lifecycle_test.go` (details in the notes) | -- | `tests/automation_api_test.go`: TestAutomationRuleUpdateKeepsConcurrentDisableSQLite | **covered** | The MySQL root needs `TEST_MYSQL_DSN` (more in the notes) |
+| 4e.3 | **Lead and deal events in the write transaction** | `LeadService.Create/Update`, form create/update, bulk lead status and `ConvertToCustomer` record `lead_created`, `lead_updated` and … (more in the notes) | -- | `automation_lead_events_test.go`, `automation_deal_events_test.go`, `form_attribution_test.go` (details in the notes) | -- | -- | **covered** | `actor_id` is empty on the lead service paths (no actor reaches `LeadService`) |
+| 4e.4 | **Dispatch** | A conditional claim of the event (`processed_at IS NULL`, one row) and, in the same transaction, one run per enabled matching rule with the rule … (more in the notes) | -- | `automation_dispatch_test.go`, `form_attribution_test.go`, `automation_run_dedupe_test.go` (details in the notes) | -- | `tests/form_attribution_api_test.go`: TestFormAttributionAPISQLite | **covered** | -- |
+| 4e.5 | **Step execution** | One `WithTransactionAndRetry` transaction per step: locking read of the record (`FOR UPDATE` on MySQL), conditional advance … (more in the notes) | -- | `automation_step_execution_test.go`, `automation_condition_test.go` (details in the notes) | -- | -- | **covered** | A step that fails three times fails the run with `step_failed` (more in the notes) |
 | 4e.6 | **Email at most once** | `send_email` is two transactions: locking read and locking check of the run, a `sending` row (unique on `run_id, position`) committed first, then one `Mailer.Send` to the staff user's current address, then the row marked `succeeded` or `failed` (`mail_failed`) and the conditional advance; a fault after the send never sends again (`email_unconfirmed`); a second executor cannot insert another `sending` row; a cancel between the send and the stamp stays cancelled with the row finalized, while a cancel before the pre-send owner check (#237) sends nothing and leaves the row `sending` | -- | `automation_step_execution_test.go` (send_email subtests); `automation_reconcile_test.go`: TestAutomationReconcile{SQLite,MySQL} | -- | -- | **covered** | Without `SMTP_HOST` the `LogMailer` logs the recipient and subject and the step is `succeeded` with nothing delivered |
-| 4e.7 | **Conditions and branching** | Allowlisted fields (`status`, `source`, `classification`, `company`, `owner_id`; `stage`, `source`, `currency`, `amount_cents`, `probability`, `owner_id`) and operators evaluated against a fresh read; true continues, false completes (`else=stop`) or jumps forward (`else=jump`); `amount_cents` is true only in the deal's currency; unknown fields, operators and value types are refused at rule validation; the attribution fields `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host` are string fields of a lead rule on `lead_form_submitted` only (`not_applicable` elsewhere, in the draft dry run too), read from the run's triggering submission inside the step transaction after the lead's locking read and only when its `lead_id` is the run's lead, so two enquiries to one lead branch on their own values; a dry run reads them empty (#220) | -- | `automation_condition_test.go`: TestAutomationConditionBranching; `form_attribution_test.go`: TestAutomationFormTriggerValidation, TestAutomationAttributionConditions{SQLite,MySQL}, TestAutomationDryRunAttributionEmpty, TestFormAttributionParse, TestFormSubmissionAttribution{SQLite,MySQL}, TestFormAttributionLogsOmitValues | -- | `tests/form_attribution_api_test.go`: TestFormAttributionAPISQLite | **covered** | `contains` is case-insensitive on every engine. The attribution of each enquiry is stored on its own `form_submissions` row (spam and pending rows stay empty); `leads.source` keeps the form that created the lead |
+| 4e.7 | **Conditions and branching** | Allowlisted fields … (more in the notes) | -- | `automation_condition_test.go`, `form_attribution_test.go` (details in the notes) | -- | `tests/form_attribution_api_test.go`: TestFormAttributionAPISQLite | **covered** | `contains` is case-insensitive on every engine (more in the notes) |
 | 4e.8 | **Waits survive a restart** | A wait leaves the run `waiting` with `resume_at = now + duration` (UTC) and `next_position` after the wait; nothing resumes it before; a fresh engine on the same database resumes it through a conditional claim; a condition after the wait sees changes made during it; a deleted or erased record cancels with `record_deleted`, a changed rule with `rule_changed`; on MySQL a cancel committed after the resuming step's first read leaves no effect | -- | `automation_wait_resume_test.go`: TestAutomationWaitResume{SQLite,MySQL} | -- | -- | **covered** | Waits resume at the first poll after `resume_at` (`AUTOMATION_POLL_INTERVAL_SECONDS`) |
 | 4e.9 | **Daily schedule** | One pass per UTC day from the first tick at or after `hour_utc` (same-day catch-up, no backfill of a missed day); at most 500 live matching records per tick above the persisted cursor in id order, `sch:<rule_id>:<day>:<entity_id>`, the cursor advanced by a conditional update on `(schedule_pass_on, schedule_cursor)`; a short batch completes the day; 1,201 records get exactly one run over three ticks; a racing worker or a repeat tick adds nothing | -- | `automation_schedule_test.go`: TestAutomationScheduleTrigger{SQLite,MySQL}; `automation_repository_test.go`: TestAutomationRepositoryConditionalUpdates | -- | -- | **covered** | Filters are `status` (leads) or `stage` (deals) plus `stale_days` |
-| 4e.10 | **Dry run** | `POST /automation/rules/{id}/dry-run {entity_type, entity_id}` simulates the saved rule and `POST /automation/rules/dry-run {rule, entity_type, entity_id}` an unsaved body (the editor's current values, for a new or an edited rule) after the same validation as a create (`error.details.fields` on a refusal), with `draft: true` and no rule id or version in the report; both report each step's outcome, simulated time and details (resolved user ids, task due date and link, owner from/to, branch); waits advance the simulated clock; a simulated assign feeds later conditions; no row count or column value changes in any table, zero `Mailer.Send` calls, no run, notification, task or event; the wrong entity type is 400 `INVALID_INPUT`, a missing rule or record 404, a non-admin 403 | `automation-rules.spec.ts` | `automation_dry_run_test.go`: TestAutomationDryRunNoSideEffects{SQLite,MySQL}, TestAutomationDraftDryRunNoSideEffects{SQLite,MySQL} (an instrumented pool and GORM callbacks refuse any transaction start, write, raw statement or locking read during the draft), TestAutomationDraftDryRunInstrumentationCatchesWrites, TestAutomationDraftDryRunValidatesLikeCreate | `DryRunDialog.test.tsx`, `AutomationRuleForm.test.tsx`, `AutomationStepDetails.test.tsx`, `automationFormat.test.ts` | `tests/automation_api_test.go`: TestAutomationRunAPISQLite ("dry run", "draft dry run") | **covered** | The rule list's dry run simulates the saved version; the editor's simulates the form as it is |
-| 4e.11 | **Run history and cancel** | The repository applies the role scope inside the SQL before offset and limit (admin: every run; sales: runs whose lead or deal it currently owns, total matching); sort allowlist `id, created_at, updated_at, status, resume_at`; the service returns `ErrForbidden` for support and customer before any query; over HTTP a sales user asking for somebody else's run gets 404, support and customer 403; `POST /automation/runs/{id}/cancel` is admin-only, cancels with `manual` and answers 409 `INVALID_STATUS_TRANSITION` for a finished run | -- | `automation_run_service_test.go`: TestAutomationRunServiceRoles; `models/automation_run_json_test.go`: TestAutomationRunJSONNeverSerialisesTheRule | `AutomationRunList.test.tsx`, `AutomationRunDetail.test.tsx`, `AutomationRunsSection.test.tsx`, `automationFormat.test.ts`, `automationQueries.test.ts` | `automation_repository_test.go`: TestAutomationRunListScope{SQLite,MySQL}, TestAutomationRunRuleNames{SQLite,MySQL}; `tests/automation_api_test.go`: TestAutomationRunAPISQLite | **covered** | Each run carries `rule_name` and `rule_deleted`, read by one extra query over the page's rule ids, never the rule's trigger or steps. Sales users therefore see the names of the rules that ran on their records, also after a rule is deleted — keep personal or confidential text out of rule names |
+| 4e.10 | **Dry run** | `POST /automation/rules/{id}/dry-run {entity_type, entity_id}` simulates the saved rule and … (more in the notes) | `automation-rules.spec.ts` | `automation_dry_run_test.go` (details in the notes) | `DryRunDialog.test.tsx`, `AutomationRuleForm.test.tsx`, `AutomationStepDetails.test.tsx`, `automationFormat.test.ts` | `tests/automation_api_test.go`: TestAutomationRunAPISQLite ("dry run", "draft dry run") | **covered** | The rule list's dry run simulates the saved version; the editor's simulates the form as it is |
+| 4e.11 | **Run history and cancel** | The repository applies the role scope inside the SQL before offset and limit (admin: every run; sales: runs whose lead or deal it currently owns, total matching) (more in the notes) | -- | `automation_run_service_test.go`: TestAutomationRunServiceRoles; `models/automation_run_json_test.go`: TestAutomationRunJSONNeverSerialisesTheRule | `AutomationRunList.test.tsx`, `AutomationRunDetail.test.tsx`, `AutomationRunsSection.test.tsx`, `automationFormat.test.ts`, `automationQueries.test.ts` | `automation_repository_test.go`, `tests/automation_api_test.go` (details in the notes) | **covered** | Each run carries `rule_name` and `rule_deleted`, read by one extra query over the page's rule ids, never the rule's trigger or steps (more in the notes) |
 | 4e.12 | **Notifications** | `GET /notifications` (own, newest first, paginated, `unread=true`), `GET /notifications/unread-count`, `POST /notifications/{id}/read` (404 for anyone else's), `POST /notifications/read-all` (own only); customers get 403 | `automation-rules.spec.ts` (bell count unchanged by a dry run) | -- | `NotificationBell.test.tsx`, `NotificationList.test.tsx`, `notificationTarget.test.ts`, `notifications.test.ts` | `tests/notification_api_test.go`: TestNotificationAPISQLite | **covered** | -- |
-| 4e.13 | **Run leases, stale recovery and the drain** | Each claim stores the engine's instance id (`owner_instance`) and a heartbeat (`heartbeat_at`), both hidden from the JSON; one heartbeat goroutine per executed run renews it every 30 s and is joined before the executor returns; a renewal refused after a cancel or a takeover stops the executor with no further write; the advance, the release, the first `send_email` transaction, a pre-send check and the email stamp (`FinishSendingStep`, only while `sending`) are fenced on the owner; every cancel, lead erasure and ticket delete included (#333), clears the lease in the cancelling update, after which no renewal, fenced advance or release, claim or sweep touches the run, and a cancel after a terminal transition or another cancel changes nothing. The stale sweep runs in `setupDependencies` before the worker and the HTTP server start (only when `AUTOMATION_ENABLED` is true) and at the start of every tick on every replica: a running run whose heartbeat is NULL or older than 3 min goes back to `pending` at its `next_position` (attempts unchanged), one whose last step row is a `send_email` in `sending` is failed with `email_unconfirmed` and never resent, and a live run on another replica is left alone. Two workers execute each step and send each email at most once. The worker starts only when `AUTOMATION_ENABLED` is true and `main` drains it (`combineStops`, together with the other drains and before `models.CloseDatabase`); `Stop` closes admission, cancels the worker and waits under the deadline; a drained runtime holds no goroutine and writes no heartbeat; a step in flight finishes its transaction and nothing is written afterwards | -- | `automation_reconcile_test.go`: TestAutomationReconcile{SQLite,MySQL}; `automation_runtime_test.go`: TestAutomationRuntimeDrain; `automation_run_lease_test.go`: TestAutomationRunLeaseTakeover{SQLite,MySQL}, TestAutomationRunLeaseEmailAtMostOnce{SQLite,MySQL}, TestAutomationRunLeaseLiveRunSpared{SQLite,MySQL}; `automation_run_lease_heartbeat_test.go`: TestAutomationRunLeaseHeartbeatLifecycle; `automation_run_lease_concurrency_test.go`: TestAutomationRunLeaseConcurrentWorkers{SQLite,MySQL}, TestAutomationRunLeaseLockOrderMySQL, TestAutomationRunLeaseLogsOmitPersonalData; `automation_cancel_lease_test.go`: TestAutomationCancelPathsReleaseLease{SQLite,MySQL}; `models/automation_run_lease_test.go`: TestAutomationRunLeaseJSONHidden, TestAutomationRunLeaseSQLiteUpgrade; `cmd/migrate/automation_run_lease_migration_test.go`: TestAutomationRunLeaseMigrationFiles, TestAutomationRunLeaseMigration | -- | `cmd/automation_runtime_test.go`: TestAutomationRuntimeLifecycle; `cmd/automation_run_lease_wiring_test.go`: TestAutomationRunLeaseProductionWiring; `automation_run_lease_repository_test.go`: TestAutomationRunLeaseRepository{SQLite,MySQL}; `repository/automation_cancel_lease_test.go`: TestAutomationCancelReleasesLease{SQLite,MySQL} | **covered** | Several replicas need MySQL/MariaDB; several processes on one SQLite file are not supported. Replica clocks must agree to well under 90 s; upgrade by stopping every replica first. An executor paused between the pre-send check and `Send` can still send once after a sweep recorded `email_unconfirmed` (never resent). The MySQL roots need `TEST_MYSQL_DSN` |
-| 4e.14 | **Erasure** | Lead erasure cancels the lead's pending, waiting and running runs with `record_deleted` and hard-deletes the notifications whose entity is the lead, before the scrub and inside the erasure transaction; user erasure hard-deletes the user's notifications; a failure rolls the whole erasure back; on MySQL an erasure committed while a step is paused after its first read wins the deadlock and the step adds nothing; lead erasure also empties the six attribution columns of every linked submission, live and soft-deleted, in the erasure transaction, and the lead's `lead_form_submitted` events keep only ids and types (#220) | -- | -- | -- | `automation_erasure_test.go`: TestAutomationErasure{SQLite,MySQL}; `form_attribution_erasure_test.go`: TestFormAttributionErasedWithLead{SQLite,MySQL}; `identity_erasure_test.go`: TestIdentityErasure{SQLite,MySQL}; `test/integration/erasure_pii_sweep_test.go`: TestLeadErasureLeavesNoPersonalDataInAnyTable | **covered** | Run logs hold ids only and are kept; so are the tasks a rule created. A task's text cannot carry a lead's name, email, phone, company or owner placeholder, but a task rendered from `{{deal.title}}` before the erasure keeps that staff-typed title, which may name the client (accepted limitation of #245, see 4e.5) |
-| 4e.15 | **Migration** | `20261028120000_add_follow_up_automation` up/down pair: six `CREATE TABLE IF NOT EXISTS` with the unique keys and foreign keys AutoMigrate produces, nothing altered; down drops the six. `20261107120000_add_form_attribution` (#220) adds the six `form_submissions` attribution columns (`varchar(100)`/`varchar(255)`, `NOT NULL DEFAULT ''`) and the nullable `automation_events.form_id` and `submission_id`, each only when missing, matching AutoMigrate; down drops exactly those eight; on SQLite `MigrateDatabase` adds them and keeps existing rows | -- | `cmd/migrate/automation_migration_test.go`: TestMigrationAutomationSchema (MySQL/MariaDB), TestMigrationAutomationTablesListed; `cmd/migrate/form_attribution_migration_test.go`: TestFormAttributionMigration (MySQL/MariaDB), TestFormAttributionMigrationFiles; `cmd/migrate/main_test.go` version and table assertions; `internal/models/form_attribution_test.go`: TestFormAttributionSQLiteUpgrade, TestFormSubmissionAttributionJSON | -- | -- | **covered** | The MySQL roots skip without `TEST_MYSQL_DSN` |
+| 4e.13 | **Run leases, stale recovery and the drain** | Each claim stores the engine's instance id (`owner_instance`) and a heartbeat (`heartbeat_at`), both hidden from the JSON (more in the notes) | -- | `automation_reconcile_test.go`, `automation_runtime_test.go`, `automation_run_lease_test.go`, `automation_run_lease_heartbeat_test.go` and 4 more files (details in the notes) | -- | `cmd/automation_runtime_test.go`, `cmd/automation_run_lease_wiring_test.go`, `automation_run_lease_repository_test.go` and 1 more file (details in the notes) | **covered** | Several replicas need MySQL/MariaDB (more in the notes) |
+| 4e.14 | **Erasure** | Lead erasure cancels the lead's pending, waiting and running runs with `record_deleted` and hard-deletes the notifications whose entity is the lead … (more in the notes) | -- | -- | -- | `automation_erasure_test.go`, `form_attribution_erasure_test.go`, `identity_erasure_test.go`, `test/integration/erasure_pii_sweep_test.go` (details in the notes) | **covered** | Run logs hold ids only and are kept (more in the notes) |
+| 4e.15 | **Migration** | `20261028120000_add_follow_up_automation` up/down pair: six `CREATE TABLE IF NOT EXISTS` with the unique keys and foreign keys AutoMigrate produces, nothing altered (more in the notes) | -- | `cmd/migrate/automation_migration_test.go`, `cmd/migrate/form_attribution_migration_test.go`, `cmd/migrate/main_test.go` and 1 more file (details in the notes) | -- | -- | **covered** | The MySQL roots skip without `TEST_MYSQL_DSN` |
 | 4e.16 | **Log privacy** | Logs written while dispatching, executing and dry-running carry operation names, ids, statuses, step types, outcomes and error codes only: never the lead's name, email, phone or notes, never an email or notification subject or body, never a transport error (which may quote the address) | -- | `automation_log_privacy_test.go`: TestAutomationLogsOmitPersonalData | -- | -- | **covered** | -- |
-| 4e.17 | **Automation and notification UI** | `/automation/rules` list and form with the dry-run dialog, `/automation/runs` list and detail with the admin cancel, "Automation" sections on LeadDetail and DealDetail, the notification bell and `/notifications` page; rules admin-only, runs admin and sales, bell and page for every staff role | `automation-rules.spec.ts`: "admin creates a disabled lead_created rule with a condition and a notify step, dry-runs it on a lead and the unread count stays the same", "admin dry-runs an unsaved new rule from the form and nothing is created", "saving a rule whose user was deactivated meanwhile shows the server error under the user picker" | -- | `automation.test.ts`, `notifications.test.ts`, `automationFormat.test.ts`, `automationQueries.test.ts`, `ruleFormSchema.test.ts`, `conditionValues.test.ts`, `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`, `StaffUserAutocomplete.test.tsx`, `DryRunDialog.test.tsx`, `AutomationStepDetails.test.tsx`, `AutomationRunList.test.tsx`, `AutomationRunDetail.test.tsx`, `AutomationRunsSection.test.tsx`, `NotificationBell.test.tsx`, `NotificationList.test.tsx`, `notificationTarget.test.ts`, `MainLayout.test.tsx`, `routes/index.test.tsx` | -- | **covered** | Runs show the rule's name (`Rule #<id>` when the rule row is gone, "(deleted)" for a deleted rule); a refused rule marks each field the server lists, following steps moved while the request was in flight and dropping errors of fields edited or steps removed meanwhile; the editor's dry run simulates the unsaved form. Sales and support paths are covered in Vitest, not e2e |
-| 4e.18 | **Ticket triggers (#242)** | Entity `ticket` with `ticket_created` (`to_value` = stored status), `ticket_updated` and `ticket_status_changed` (`from_value`/`to_value`), recorded in the ticket write transaction: `TicketService.Create`/`Update` through `WithTicketAutomationEvents` (origin `user`, no actor; the update locks the ticket row first and checks and records from the locked row) and the bulk ticket status batch (a locking read in id order, origin `bulk`, actor the caller); a refused or failed write records nothing. Rules: from/to and `filters.ticket_status` take ticket statuses; condition fields `status`, `priority`, `owner_id`, `customer_id`; placeholders `ticket.id`, `ticket.number`, `ticket.status`, `ticket.priority` (plus `owner.*` in notify and email), never the title, description or a customer field; `assign_owner` needs a support or admin user (`unknown_reference` otherwise, re-checked at run time). Execution locks the ticket (`GetTicketForUpdate`); the owner is `assigned_to_id`; `create_task` links the ticket's customer; `assign_owner` writes only `assigned_to_id` and records an `origin=automation` event. `DELETE /tickets/{id}` cancels the ticket's open runs with `record_deleted` and purges its notifications in its transaction; a run started after the delete is cancelled at its first step. Admin sees ticket runs; sales never does; support keeps 403. Screens (#312): the rule form offers the entity Ticket with its four triggers, From/To/Only status (Open, In progress, Resolved, Closed; sent as `from`/`to` and `filters.ticket_status`), the four condition fields (status and priority values suggested) and the ticket placeholder help, mirroring the API allowlists in `gocrm-ui/src/types/automation.ts`; an API refusal of `trigger.filters.ticket_status` or of a non-support `assign_owner` user shows on its field. The rule list labels ticket rules Ticket, the run list filters by Ticket and links a run to `/tickets/<id>`, the dry run picks a ticket (`T-000042 · <subject>`), and a ticket notification links to its ticket | `automation-ticket-rules.spec.ts`: admin creates a disabled `ticket_status_changed` rule in the form, the edit page loads it and Save changes sends the stored rule back (POST 201, PUT body and 200 compared) | `ticket_automation_events_test.go`: TestAutomationTicketEvents{SQLite,MySQL}, TestTicketServiceWithoutAutomationUnchanged; `ticket_automation_bulk_test.go`: TestAutomationTicketBulkEvents{SQLite,MySQL}; `ticket_automation_validation_test.go`: TestAutomationTicketRuleValidation; `ticket_automation_steps_test.go`: TestAutomationTicketStepExecution{SQLite,MySQL}; `ticket_automation_lock_order_test.go`: TestAutomationTicketLockOrderMySQL; `ticket_automation_schedule_test.go`: TestAutomationTicketSchedule{SQLite,MySQL}; `ticket_automation_dry_run_test.go`: TestAutomationTicketDryRunNoSideEffectsSQLite; `ticket_automation_log_privacy_test.go`: TestAutomationTicketLogsOmitPersonalData; `internal/handler/automation_ticket_test.go`: TestAutomationHandlerTicketEntity | `ruleFormSchema.ticket.test.ts` (allowlists equal the API sets, `filters.ticket_status` payload and load, client refusals, server path mapping, lead/deal payloads unchanged); `AutomationRuleForm.ticket.test.tsx` (create, schedule, edit round trip, API field errors, labels, entity switch, lead and deal flows unchanged); `DryRunDialog.ticket.test.tsx`; `automationFormat.ticket.test.ts`; `AutomationRuleList.ticket.test.tsx`; `AutomationRunList.ticket.test.tsx`; `notificationTarget.ticket.test.ts` | `internal/repository`: TestTicketDeleteCancelsAutomation{SQLite,MySQL}, TestAutomationTicketRepository{SQLite,MySQL}; `tests/automation_ticket_test.go`: TestAutomationTicketAPISQLite; `cmd/ticket_automation_wiring_test.go`: TestTicketAutomationProductionWiring | **covered** | The `assign_owner` user picker of a ticket rule still lists sales users; the API refuses them (`unknown_reference`, shown on the field). The ticket detail page has no Automation runs section. Customer erasure keeps tickets and their runs (ticket placeholders and conditions carry no customer data). No comment, SLA or overdue triggers and no `tasks.ticket_id` (roadmap). The MySQL roots need `TEST_MYSQL_DSN`; registering them in `scripts/ci/check-go.py` is an operator follow-up |
+| 4e.17 | **Automation and notification UI** | `/automation/rules` list and form with the dry-run dialog, `/automation/runs` list and detail with the admin cancel, "Automation" sections on … (more in the notes) | `automation-rules.spec.ts` (details in the notes) | -- | `automation.test.ts`, `notifications.test.ts`, `automationFormat.test.ts`, `automationQueries.test.ts`, `ruleFormSchema.test.ts` and 14 more files (details in the notes) | -- | **covered** | Runs show the rule's name (`Rule #<id>` when the rule row is gone, "(deleted)" for a deleted rule) (more in the notes) |
+| 4e.18 | **Ticket triggers (#242)** | Entity `ticket` with `ticket_created` (`to_value` = stored status), `ticket_updated` and `ticket_status_changed` (`from_value`/`to_value`), recorded … (more in the notes) | `automation-ticket-rules.spec.ts` (details in the notes) | `ticket_automation_events_test.go`, `ticket_automation_bulk_test.go`, `ticket_automation_validation_test.go`, `ticket_automation_steps_test.go` and 5 more files (details in the notes) | `ruleFormSchema.ticket.test.ts`, `AutomationRuleForm.ticket.test.tsx`, `DryRunDialog.ticket.test.tsx`, `automationFormat.ticket.test.ts` and 3 more files (details in the notes) | `tests/automation_ticket_test.go`, `cmd/ticket_automation_wiring_test.go` (details in the notes) | **covered** | The `assign_owner` user picker of a ticket rule still lists sales users (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **4e.1** **Rule CRUD (admin)**
+  - Description: `POST /automation/rules` returns 201 with the steps numbered 1..n; an invalid
+    trigger or step config, more than 20 steps, more than 90 days of waits, a backward or
+    out-of-range `else_position` or an unknown `{{placeholder}}` is 400 `INVALID_INPUT` writing no
+    row; an unknown, inactive or non-staff user id is 400 `INVALID_REFERENCE`; every refused field
+    is listed in `error.details.fields` as `{field, code, message}` (paths such as
+    `steps[2].config.title`, steps counted from zero) while `error.message` and `error.code` stay
+    those of the first refusal; the staff-user lookups run once per distinct user; list through
+    `ParseOffsetLimit` with the `automation_rules` sort allowlist; sales, support and customer get
+    403 on every rule route.
+  - Unit Tests (Backend): `automation_validation_test.go`:
+    TestAutomationRuleValidationCollectsAllFields, TestAutomationRuleValidationLegacyMessage,
+    TestAutomationRuleValidationReferencePaths, TestAutomationRuleValidationStopsOnEntityType;
+    `sort_test.go`: TestValidateSortAutomationAllowlists; `routes_test.go`:
+    TestAllRouteSetupsCoexist, TestStaticDealRoutesWinOverTheIDParameter,
+    TestAutomationDraftDryRunRouteIsStatic; `config_test.go`: TestLoad_AutomationDefaultsAndClamp.
+  - Unit Tests (Frontend): `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`,
+    `ruleFormSchema.test.ts`, `conditionValues.test.ts`, `StaffUserAutocomplete.test.tsx`,
+    `automation.test.ts`.
+- **4e.2** **Rule lifecycle cancels runs**
+  - Description: Every update, in one transaction, increments `version`, replaces the steps and
+    cancels the rule's pending, waiting and running runs with `rule_changed`; disable cancels with
+    `rule_disabled`; delete soft-deletes and cancels with `rule_deleted`; a running run cancelled
+    this way performs no further step (its conditional advance affects zero rows); a fault during
+    the step replacement leaves version, steps and runs unchanged.
+  - Unit Tests (Backend): `automation_rule_lifecycle_test.go`:
+    TestAutomationRuleLifecycle{SQLite,MySQL}, incl. the subtests "an update without enabled keeps a
+    disable committed after the caller read the rule" and "an update with enabled sets the switch
+    inside the transaction".
+  - Known Issues: The MySQL root needs `TEST_MYSQL_DSN`. An update that omits `enabled` keeps the
+    switch as read under the rule's row lock inside the update transaction (fixed 2026-10-29;
+    before, a disable committed meanwhile was undone).
+- **4e.3** **Lead and deal events in the write transaction**
+  - Description: `LeadService.Create/Update`, form create/update, bulk lead status and
+    `ConvertToCustomer` record `lead_created`, `lead_updated` and `lead_status_changed`
+    (`from_value`/`to_value`) with origin `user`, `form`, `bulk` or `conversion`; deal
+    create/update/stage record `deal_created` (`to_value` = stage), `deal_updated` and
+    `deal_stage_changed`, won and lost included; the same stage records nothing; a rolled-back write
+    and a refused bulk batch record nothing; no personal data in any column; a finalised submission
+    of a `create_lead` form (received, or confirmed through double opt-in) linked to a lead records
+    exactly one `lead_form_submitted` (origin `form`, `form_id` and `submission_id` set) after the
+    `lead_created` or `lead_updated`, in the same transaction as the link, while spam, pending and
+    `create_lead`-off submissions and a rolled-back link record none (#220).
+  - Unit Tests (Backend): `automation_lead_events_test.go`: TestAutomationLeadEvents{SQLite,MySQL};
+    `automation_deal_events_test.go`: TestAutomationDealEvents{SQLite,MySQL};
+    `form_attribution_test.go`: TestFormSubmittedEvent{SQLite,MySQL}.
+- **4e.4** **Dispatch**
+  - Description: A conditional claim of the event (`processed_at IS NULL`, one row) and, in the same
+    transaction, one run per enabled matching rule with the rule version and
+    `evt:<event_id>:rule:<rule_id>`, inserted with `clause.OnConflict{DoNothing: true}`
+    (`ON CONFLICT DO NOTHING` / `ON DUPLICATE KEY UPDATE id=id`); a duplicate is no error and no
+    row; two dispatchers racing for one event produce one set of runs; disabled or deleted rules,
+    non-matching from/to filters and `origin=automation` events start no run; a
+    `lead_form_submitted` lead rule with `trigger.form_id` starts only for events of that form, one
+    with `form_id` 0 or omitted for every form, and `lead_created`/`lead_updated` rules start as
+    before (#220).
+  - Unit Tests (Backend): `automation_dispatch_test.go`: TestAutomationDispatch{SQLite,MySQL};
+    `form_attribution_test.go`: TestAutomationFormSubmittedDispatch{SQLite,MySQL};
+    `automation_run_dedupe_test.go`: TestAutomationRunDedupe{SQLite,MySQL}.
+- **4e.5** **Step execution**
+  - Description: One `WithTransactionAndRetry` transaction per step: locking read of the record
+    (`FOR UPDATE` on MySQL), conditional advance (`status='running' AND next_position=?`, one row or
+    rollback and stop), the effect, the `automation_run_steps` row; `create_task` is due
+    `due_in_days` after execution (UTC) and links the lead, or the deal's customer else its lead;
+    `assign_owner` records an `origin=automation` event that starts no run; `notify` creates one
+    notification; a fault after the effect rolls everything back and the retry performs it once; an
+    inactive or erased recipient is `skipped`/`recipient_unavailable`; on MySQL a cancel, a rule
+    change or an erasure committed from a second connection after the first read leaves no task,
+    notification, owner change or run-step row.
+  - Unit Tests (Backend): `automation_step_execution_test.go`:
+    TestAutomationStepExecution{SQLite,MySQL}; `automation_condition_test.go`:
+    TestAutomationTaskPlaceholdersExcludePersonalData.
+  - Known Issues: A step that fails three times fails the run with `step_failed`. A task's text
+    accepts only `lead.id`, `lead.status`, `lead.source` and the `deal.*` placeholders (a task
+    survives the erasure of its lead); the lead's name, email, phone, company and the owner's fields
+    are refused in it and blanked by the task renderer. `deal.title` is staff-typed and may name the
+    client: the erasure redacts the deal's title (#245), but a task rendered from it earlier keeps
+    its text (accepted limitation).
+- **4e.7** **Conditions and branching**
+  - Description: Allowlisted fields (`status`, `source`, `classification`, `company`, `owner_id`;
+    `stage`, `source`, `currency`, `amount_cents`, `probability`, `owner_id`) and operators
+    evaluated against a fresh read; true continues, false completes (`else=stop`) or jumps forward
+    (`else=jump`); `amount_cents` is true only in the deal's currency; unknown fields, operators and
+    value types are refused at rule validation; the attribution fields `utm_source`, `utm_medium`,
+    `utm_campaign`, `utm_term`, `utm_content` and `referrer_host` are string fields of a lead rule
+    on `lead_form_submitted` only (`not_applicable` elsewhere, in the draft dry run too), read from
+    the run's triggering submission inside the step transaction after the lead's locking read and
+    only when its `lead_id` is the run's lead, so two enquiries to one lead branch on their own
+    values; a dry run reads them empty (#220).
+  - Unit Tests (Backend): `automation_condition_test.go`: TestAutomationConditionBranching;
+    `form_attribution_test.go`: TestAutomationFormTriggerValidation,
+    TestAutomationAttributionConditions{SQLite,MySQL}, TestAutomationDryRunAttributionEmpty,
+    TestFormAttributionParse, TestFormSubmissionAttribution{SQLite,MySQL},
+    TestFormAttributionLogsOmitValues.
+  - Known Issues: `contains` is case-insensitive on every engine. The attribution of each enquiry is
+    stored on its own `form_submissions` row (spam and pending rows stay empty); `leads.source`
+    keeps the form that created the lead.
+- **4e.10** **Dry run**
+  - Description: `POST /automation/rules/{id}/dry-run {entity_type, entity_id}` simulates the saved
+    rule and `POST /automation/rules/dry-run {rule, entity_type, entity_id}` an unsaved body (the
+    editor's current values, for a new or an edited rule) after the same validation as a create
+    (`error.details.fields` on a refusal), with `draft: true` and no rule id or version in the
+    report; both report each step's outcome, simulated time and details (resolved user ids, task due
+    date and link, owner from/to, branch); waits advance the simulated clock; a simulated assign
+    feeds later conditions; no row count or column value changes in any table, zero `Mailer.Send`
+    calls, no run, notification, task or event; the wrong entity type is 400 `INVALID_INPUT`, a
+    missing rule or record 404, a non-admin 403.
+  - Unit Tests (Backend): `automation_dry_run_test.go`:
+    TestAutomationDryRunNoSideEffects{SQLite,MySQL},
+    TestAutomationDraftDryRunNoSideEffects{SQLite,MySQL} (an instrumented pool and GORM callbacks
+    refuse any transaction start, write, raw statement or locking read during the draft),
+    TestAutomationDraftDryRunInstrumentationCatchesWrites,
+    TestAutomationDraftDryRunValidatesLikeCreate.
+- **4e.11** **Run history and cancel**
+  - Description: The repository applies the role scope inside the SQL before offset and limit
+    (admin: every run; sales: runs whose lead or deal it currently owns, total matching); sort
+    allowlist `id, created_at, updated_at, status, resume_at`; the service returns `ErrForbidden`
+    for support and customer before any query; over HTTP a sales user asking for somebody else's run
+    gets 404, support and customer 403; `POST /automation/runs/{id}/cancel` is admin-only, cancels
+    with `manual` and answers 409 `INVALID_STATUS_TRANSITION` for a finished run.
+  - Integration Tests: `automation_repository_test.go`: TestAutomationRunListScope{SQLite,MySQL},
+    TestAutomationRunRuleNames{SQLite,MySQL}; `tests/automation_api_test.go`:
+    TestAutomationRunAPISQLite.
+  - Known Issues: Each run carries `rule_name` and `rule_deleted`, read by one extra query over the
+    page's rule ids, never the rule's trigger or steps. Sales users therefore see the names of the
+    rules that ran on their records, also after a rule is deleted — keep personal or confidential
+    text out of rule names.
+- **4e.13** **Run leases, stale recovery and the drain**
+  - Description: Each claim stores the engine's instance id (`owner_instance`) and a heartbeat
+    (`heartbeat_at`), both hidden from the JSON; one heartbeat goroutine per executed run renews it
+    every 30 s and is joined before the executor returns; a renewal refused after a cancel or a
+    takeover stops the executor with no further write; the advance, the release, the first
+    `send_email` transaction, a pre-send check and the email stamp (`FinishSendingStep`, only while
+    `sending`) are fenced on the owner; every cancel, lead erasure and ticket delete included
+    (#333), clears the lease in the cancelling update, after which no renewal, fenced advance or
+    release, claim or sweep touches the run, and a cancel after a terminal transition or another
+    cancel changes nothing. The stale sweep runs in `setupDependencies` before the worker and the
+    HTTP server start (only when `AUTOMATION_ENABLED` is true) and at the start of every tick on
+    every replica: a running run whose heartbeat is NULL or older than 3 min goes back to `pending`
+    at its `next_position` (attempts unchanged), one whose last step row is a `send_email` in
+    `sending` is failed with `email_unconfirmed` and never resent, and a live run on another replica
+    is left alone. Two workers execute each step and send each email at most once. The worker starts
+    only when `AUTOMATION_ENABLED` is true and `main` drains it (`combineStops`, together with the
+    other drains and before `models.CloseDatabase`); `Stop` closes admission, cancels the worker and
+    waits under the deadline; a drained runtime holds no goroutine and writes no heartbeat; a step
+    in flight finishes its transaction and nothing is written afterwards.
+  - Unit Tests (Backend): `automation_reconcile_test.go`: TestAutomationReconcile{SQLite,MySQL};
+    `automation_runtime_test.go`: TestAutomationRuntimeDrain; `automation_run_lease_test.go`:
+    TestAutomationRunLeaseTakeover{SQLite,MySQL},
+    TestAutomationRunLeaseEmailAtMostOnce{SQLite,MySQL},
+    TestAutomationRunLeaseLiveRunSpared{SQLite,MySQL}; `automation_run_lease_heartbeat_test.go`:
+    TestAutomationRunLeaseHeartbeatLifecycle; `automation_run_lease_concurrency_test.go`:
+    TestAutomationRunLeaseConcurrentWorkers{SQLite,MySQL}, TestAutomationRunLeaseLockOrderMySQL,
+    TestAutomationRunLeaseLogsOmitPersonalData; `automation_cancel_lease_test.go`:
+    TestAutomationCancelPathsReleaseLease{SQLite,MySQL}; `models/automation_run_lease_test.go`:
+    TestAutomationRunLeaseJSONHidden, TestAutomationRunLeaseSQLiteUpgrade;
+    `cmd/migrate/automation_run_lease_migration_test.go`: TestAutomationRunLeaseMigrationFiles,
+    TestAutomationRunLeaseMigration.
+  - Integration Tests: `cmd/automation_runtime_test.go`: TestAutomationRuntimeLifecycle;
+    `cmd/automation_run_lease_wiring_test.go`: TestAutomationRunLeaseProductionWiring;
+    `automation_run_lease_repository_test.go`: TestAutomationRunLeaseRepository{SQLite,MySQL};
+    `repository/automation_cancel_lease_test.go`: TestAutomationCancelReleasesLease{SQLite,MySQL}.
+  - Known Issues: Several replicas need MySQL/MariaDB; several processes on one SQLite file are not
+    supported. Replica clocks must agree to well under 90 s; upgrade by stopping every replica
+    first. An executor paused between the pre-send check and `Send` can still send once after a
+    sweep recorded `email_unconfirmed` (never resent). The MySQL roots need `TEST_MYSQL_DSN`.
+- **4e.14** **Erasure**
+  - Description: Lead erasure cancels the lead's pending, waiting and running runs with
+    `record_deleted` and hard-deletes the notifications whose entity is the lead, before the scrub
+    and inside the erasure transaction; user erasure hard-deletes the user's notifications; a
+    failure rolls the whole erasure back; on MySQL an erasure committed while a step is paused after
+    its first read wins the deadlock and the step adds nothing; lead erasure also empties the six
+    attribution columns of every linked submission, live and soft-deleted, in the erasure
+    transaction, and the lead's `lead_form_submitted` events keep only ids and types (#220).
+  - Integration Tests: `automation_erasure_test.go`: TestAutomationErasure{SQLite,MySQL};
+    `form_attribution_erasure_test.go`: TestFormAttributionErasedWithLead{SQLite,MySQL};
+    `identity_erasure_test.go`: TestIdentityErasure{SQLite,MySQL};
+    `test/integration/erasure_pii_sweep_test.go`: TestLeadErasureLeavesNoPersonalDataInAnyTable.
+  - Known Issues: Run logs hold ids only and are kept; so are the tasks a rule created. A task's
+    text cannot carry a lead's name, email, phone, company or owner placeholder, but a task rendered
+    from `{{deal.title}}` before the erasure keeps that staff-typed title, which may name the client
+    (accepted limitation of #245, see 4e.5).
+- **4e.15** **Migration**
+  - Description: `20261028120000_add_follow_up_automation` up/down pair: six
+    `CREATE TABLE IF NOT EXISTS` with the unique keys and foreign keys AutoMigrate produces, nothing
+    altered; down drops the six. `20261107120000_add_form_attribution` (#220) adds the six
+    `form_submissions` attribution columns (`varchar(100)`/`varchar(255)`, `NOT NULL DEFAULT ''`)
+    and the nullable `automation_events.form_id` and `submission_id`, each only when missing,
+    matching AutoMigrate; down drops exactly those eight; on SQLite `MigrateDatabase` adds them and
+    keeps existing rows.
+  - Unit Tests (Backend): `cmd/migrate/automation_migration_test.go`: TestMigrationAutomationSchema
+    (MySQL/MariaDB), TestMigrationAutomationTablesListed;
+    `cmd/migrate/form_attribution_migration_test.go`: TestFormAttributionMigration (MySQL/MariaDB),
+    TestFormAttributionMigrationFiles; `cmd/migrate/main_test.go` version and table assertions;
+    `internal/models/form_attribution_test.go`: TestFormAttributionSQLiteUpgrade,
+    TestFormSubmissionAttributionJSON.
+- **4e.17** **Automation and notification UI**
+  - Description: `/automation/rules` list and form with the dry-run dialog, `/automation/runs` list
+    and detail with the admin cancel, "Automation" sections on LeadDetail and DealDetail, the
+    notification bell and `/notifications` page; rules admin-only, runs admin and sales, bell and
+    page for every staff role.
+  - E2E Tests: `automation-rules.spec.ts`: "admin creates a disabled lead_created rule with a
+    condition and a notify step, dry-runs it on a lead and the unread count stays the same", "admin
+    dry-runs an unsaved new rule from the form and nothing is created", "saving a rule whose user
+    was deactivated meanwhile shows the server error under the user picker".
+  - Unit Tests (Frontend): `automation.test.ts`, `notifications.test.ts`,
+    `automationFormat.test.ts`, `automationQueries.test.ts`, `ruleFormSchema.test.ts`,
+    `conditionValues.test.ts`, `AutomationRuleList.test.tsx`, `AutomationRuleForm.test.tsx`,
+    `StaffUserAutocomplete.test.tsx`, `DryRunDialog.test.tsx`, `AutomationStepDetails.test.tsx`,
+    `AutomationRunList.test.tsx`, `AutomationRunDetail.test.tsx`, `AutomationRunsSection.test.tsx`,
+    `NotificationBell.test.tsx`, `NotificationList.test.tsx`, `notificationTarget.test.ts`,
+    `MainLayout.test.tsx`, `routes/index.test.tsx`.
+  - Known Issues: Runs show the rule's name (`Rule #<id>` when the rule row is gone, "(deleted)" for
+    a deleted rule); a refused rule marks each field the server lists, following steps moved while
+    the request was in flight and dropping errors of fields edited or steps removed meanwhile; the
+    editor's dry run simulates the unsaved form. Sales and support paths are covered in Vitest, not
+    e2e.
+- **4e.18** **Ticket triggers (#242)**
+  - Description: Entity `ticket` with `ticket_created` (`to_value` = stored status),
+    `ticket_updated` and `ticket_status_changed` (`from_value`/`to_value`), recorded in the ticket
+    write transaction: `TicketService.Create`/`Update` through `WithTicketAutomationEvents` (origin
+    `user`, no actor; the update locks the ticket row first and checks and records from the locked
+    row) and the bulk ticket status batch (a locking read in id order, origin `bulk`, actor the
+    caller); a refused or failed write records nothing. Rules: from/to and `filters.ticket_status`
+    take ticket statuses; condition fields `status`, `priority`, `owner_id`, `customer_id`;
+    placeholders `ticket.id`, `ticket.number`, `ticket.status`, `ticket.priority` (plus `owner.*` in
+    notify and email), never the title, description or a customer field; `assign_owner` needs a
+    support or admin user (`unknown_reference` otherwise, re-checked at run time). Execution locks
+    the ticket (`GetTicketForUpdate`); the owner is `assigned_to_id`; `create_task` links the
+    ticket's customer; `assign_owner` writes only `assigned_to_id` and records an
+    `origin=automation` event. `DELETE /tickets/{id}` cancels the ticket's open runs with
+    `record_deleted` and purges its notifications in its transaction; a run started after the delete
+    is cancelled at its first step. Admin sees ticket runs; sales never does; support keeps 403.
+    Screens (#312): the rule form offers the entity Ticket with its four triggers, From/To/Only
+    status (Open, In progress, Resolved, Closed; sent as `from`/`to` and `filters.ticket_status`),
+    the four condition fields (status and priority values suggested) and the ticket placeholder
+    help, mirroring the API allowlists in `gocrm-ui/src/types/automation.ts`; an API refusal of
+    `trigger.filters.ticket_status` or of a non-support `assign_owner` user shows on its field. The
+    rule list labels ticket rules Ticket, the run list filters by Ticket and links a run to
+    `/tickets/<id>`, the dry run picks a ticket (`T-000042 · <subject>`), and a ticket notification
+    links to its ticket.
+  - E2E Tests: `automation-ticket-rules.spec.ts`: admin creates a disabled `ticket_status_changed`
+    rule in the form, the edit page loads it and Save changes sends the stored rule back (POST 201,
+    PUT body and 200 compared).
+  - Unit Tests (Backend): `ticket_automation_events_test.go`:
+    TestAutomationTicketEvents{SQLite,MySQL}, TestTicketServiceWithoutAutomationUnchanged;
+    `ticket_automation_bulk_test.go`: TestAutomationTicketBulkEvents{SQLite,MySQL};
+    `ticket_automation_validation_test.go`: TestAutomationTicketRuleValidation;
+    `ticket_automation_steps_test.go`: TestAutomationTicketStepExecution{SQLite,MySQL};
+    `ticket_automation_lock_order_test.go`: TestAutomationTicketLockOrderMySQL;
+    `ticket_automation_schedule_test.go`: TestAutomationTicketSchedule{SQLite,MySQL};
+    `ticket_automation_dry_run_test.go`: TestAutomationTicketDryRunNoSideEffectsSQLite;
+    `ticket_automation_log_privacy_test.go`: TestAutomationTicketLogsOmitPersonalData;
+    `internal/handler/automation_ticket_test.go`: TestAutomationHandlerTicketEntity.
+  - Unit Tests (Frontend): `ruleFormSchema.ticket.test.ts` (allowlists equal the API sets,
+    `filters.ticket_status` payload and load, client refusals, server path mapping, lead/deal
+    payloads unchanged); `AutomationRuleForm.ticket.test.tsx` (create, schedule, edit round trip,
+    API field errors, labels, entity switch, lead and deal flows unchanged);
+    `DryRunDialog.ticket.test.tsx`; `automationFormat.ticket.test.ts`;
+    `AutomationRuleList.ticket.test.tsx`; `AutomationRunList.ticket.test.tsx`;
+    `notificationTarget.ticket.test.ts`.
+  - Integration Tests: `internal/repository`: TestTicketDeleteCancelsAutomation{SQLite,MySQL},
+    TestAutomationTicketRepository{SQLite,MySQL}; `tests/automation_ticket_test.go`:
+    TestAutomationTicketAPISQLite; `cmd/ticket_automation_wiring_test.go`:
+    TestTicketAutomationProductionWiring.
+  - Known Issues: The `assign_owner` user picker of a ticket rule still lists sales users; the API
+    refuses them (`unknown_reference`, shown on the field). The ticket detail page has no Automation
+    runs section. Customer erasure keeps tickets and their runs (ticket placeholders and conditions
+    carry no customer data). No comment, SLA or overdue triggers and no `tasks.ticket_id` (roadmap).
+    The MySQL roots need `TEST_MYSQL_DSN`; registering them in `scripts/ci/check-go.py` is an
+    operator follow-up.
 
 ---
 
@@ -333,13 +2142,94 @@ cases in `docs/testing/16-follow-up-automation.md`; runtime design in
 | 5.2 | **Create Ticket** | Form with subject, description, priority, customer, assignee | `admin-tickets.spec.ts`: create ticket, validation errors, long description | `ticket_handler_test.go`: TestCreate_Success, TestCreate_ValidationError, TestCreate_CustomerRole_Forbidden; `ticket_service_test.go`: 4 create tests | `TicketForm.test.tsx`: 18 tests | `ticket_test.go`: TestTicketLifecycle, TestTicketValidation | **covered** | Only **admin and support** may create tickets (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)); sales cannot |
 | 5.3 | **Edit Ticket** | Update ticket fields including status transitions | `admin-tickets.spec.ts`: edit ticket, update status, update priority | `ticket_handler_test.go`: TestUpdate_Success_Admin, TestUpdate_Support_NotAssigned_Forbidden, TestUpdate_Support_Assigned_Success; `ticket_service_reassignment_test.go`: TestTicketServiceUpdateDetachesStaleAssignee | `TicketForm.test.tsx`: edit mode, change agent, unassign | `ticket_test.go`: TestTicketStatusTransitions; `internal/integration/ticket_reassignment_integration_test.go`: TestTicketReassignmentPersists{SQLite,MySQL} | **covered** | -- |
 | 5.4 | **Delete Ticket** | Admin-only deletion. Ordinary soft delete — tickets hold no personal data of their own; the same transaction hard-deletes the ticket's comment mail delivery records (#219) | `admin-tickets.spec.ts`: delete a ticket | `ticket_handler_test.go`: TestDelete_Success_Admin, TestDelete_NonAdmin_Forbidden, TestDelete_ServiceError | `TicketList.test.tsx`: handles deletion, cancel deletion | `erasure_test.go`: TestTaskAndTicketDeletesRemainPlainSoftDeletes; `internal/repository`: TestTicketDeletePurgesMailDeliveries{SQLite,MySQL} | **covered** | -- |
-| 5.5 | **Filter by Status/Priority** | Dropdown filters for status and priority. `GET /tickets` filters server-side (#218): `status` and `priority` each take one exact, case-sensitive value, combine with each other, with `search` and with `sort_by`/`sort_order`, apply before offset and limit (so `total` and the pagination metadata reflect them) and for support only narrow the assigned tickets; an unknown value is 400 `VALIDATION_ERROR`, an empty one is ignored, customers still get 403 | `admin-tickets.spec.ts`: filter by status, filter by priority | `ticket_list_filter_test.go` (handler): TestTicketListFilterHandler; `ticket_list_filter_test.go` (service): TestTicketServiceListFiltered; `ticket_enum_valid_test.go`: TestTicketEnumIsValid | `TicketList.test.tsx`: filters by status, by priority, clears filters, combines filters | `internal/repository/ticket_list_filter_test.go`: TestTicketListFilterRepository{SQLite,MySQL}; `internal/integration/ticket_list_filter_integration_test.go`: TestTicketListFilters{SQLite,MySQL} | **covered** | The ticket screen already sends `status`/`priority` and renders `data.total`, so it now filters on the server with correct totals; the `admin-tickets.spec.ts` filter tests each seed two tickets and assert that the non-matching one leaves the list (#402) |
+| 5.5 | **Filter by Status/Priority** | Dropdown filters for status and priority (more in the notes) | `admin-tickets.spec.ts`: filter by status, filter by priority | `ticket_list_filter_test.go`, `ticket_enum_valid_test.go` (details in the notes) | `TicketList.test.tsx`: filters by status, by priority, clears filters, combines filters | `internal/repository/ticket_list_filter_test.go`, `internal/integration/ticket_list_filter_integration_test.go` (details in the notes) | **covered** | The ticket screen already sends `status`/`priority` and renders `data.total`, so it now filters on the server with correct totals (more in the notes) |
 | 5.6 | **Search Tickets** | Search across title, description, resolution | `admin-tickets.spec.ts`: search tickets | `ticket_handler_test.go`: TestList_SearchByTitle, TestList_SearchWithSort | `TicketList.test.tsx`: filters by search term | -- | **covered** | -- |
 | 5.7 | **Sort Tickets** | Click column headers to sort | -- | `ticket_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
 | 5.8 | **My Tickets** | Support users see their assigned tickets | -- | `ticket_handler_test.go`: TestListMyTickets_Success, TestListMyTickets_CustomerRole_Forbidden | -- | `ticket_test.go`: TestListMyTickets | **partial** | No E2E test |
 | 5.9 | **Tickets by Customer** | `GET /customers/:id/tickets` — a customer-role user may only read their own; support gets only that customer's tickets assigned to it, rows and totals scoped before pagination | -- | `ticket_handler_test.go`: TestListByCustomer_Success, _CustomerRole_OtherCustomer_Forbidden, _CustomerRole_OwnCustomer_Success, _AdminRole_AnyCustomer_Success, _CustomerRole_LookupError_Forbidden | -- | `ticket_test.go`: TestListByCustomer; `internal/integration/ticket_visibility_integration_test.go`: TestTicketCustomerVisibility{SQLite,MySQL} | **covered** | Previously had **no ownership check** (IDOR); regression tests added. Still no E2E test |
-| 5.10 | **Email a staff comment to the customer** | `POST /tickets/:id/comments` with `email_customer: true` (admin, or the assigned support user; not on an internal note, which is 400): the comment, `first_responded_at` and a pending delivery record commit together, then one mail goes to the ticket customer's current address (subject `Ticket T-000042 from <name>`, the stored `general.company_name` or `GopherCRM`, #292; number, title, this comment only) and the record is stamped `sent`, `failed`, `log_only` or `skipped`, returned as `delivery` on the 201 only. Records hold ids only and are hard-deleted with the ticket and on customer erasure (#219) | -- | `ticket_comment_email_test.go`: TestTicketCommentEmailHandlerFlag, TestTicketCommentEmailHandlerErrorMapping | -- | `internal/service`: TestTicketCommentEmail{Delivery,SkipReasons,Failures,LogOnly,AtomicitySQLite,AtomicityMySQL,RefusedWhenUnwired,TransactionRootRequired,ServiceRefusesInternalOrNonStaff,LogsOmitPersonalData,RecordHoldsNoAddress}; `internal/repository`: TestTicketMailDeliveryRepository{SQLite,MySQL}, TestTicketMailDeliveryErasure{SQLite,MySQL,WithoutTable}; `tests`: TestTicketCommentEmailAPISQLite; `cmd`: TestTicketCommentMailProductionWiring; `test/integration`: TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable | **partial** | Backend only: the comment form has no checkbox yet (a later frontend ticket). No retry; a row left `pending` means the outcome is unknown |
-| 5.11 | **Form → ticket intake** | A double opt-in form with `create_ticket` (admin or sales; excludes `create_lead`) opens one open, medium, unassigned ticket (title `Form: <form name>`, description `Submitted through form <id>, submission <id>.` with no submitted value) when a pending submission is confirmed, for the live customer whose email matches, in the confirmation transaction with a `form_ticket_keys` row and a `ticket_created` event (origin form). An optional `idempotency_key` on the public submission (API clients) makes confirmations with the same key open at most one ticket; keyless submissions use `submission-<id>`. Outcomes `created`, `duplicate`, `key_conflict`, `no_customer`, `unavailable` are recorded on the submission; the public answers never change. Key rows go with the ticket's delete and with every erasure of the customer or submitter (#213). The form builder configures it under **Submission action** ("Create a lead", "Create a support ticket", "Create nothing"): the ticket action switches double opt-in on, turns lead creation off and hides the lead owner (sent as 0); saving refuses a ticket form without double opt-in or one that also creates leads, and every create and update sends `create_ticket`, so saving a ticket form keeps it. FormDetail shows "Creates tickets: yes/no" (#335). An optional `ticket_title_field` (#804) names a text or select field: the ticket is then titled `<form name>: <value>` (control characters become spaces, trimmed, cut to 255 runes), and a blank value or a field removed or retyped since the submission keeps `Form: <form name>`; it needs `create_ticket` and an exact text or select field name (else 400), an absent value on PUT clears it, and the builder offers it as **Ticket title field** under the ticket action and always sends it | `form-builder-ticket.spec.ts`: admin creates a ticket form in the builder and an unchanged update keeps create_ticket and the ticket title field | `internal/models`: TestFormTicketTargetDefinition, TestFormTicketTitleFieldDefinition, TestFormSubmissionTicketJSON; `internal/handler`: TestFormTicketFlagHandler, TestFormTicketTitleFieldHandler, TestFormPublicSubmitIdempotencyKeyValidation, TestHostedViewRendersPerRenderIdempotencyKey, TestHostedViewIsNotCached, TestHostedViewWithoutRandomnessOmitsKey, TestHostedFormResubmissionWithSameKeyOpensOneTicket (#340) | `FormBuilder.ticket.test.tsx` (action choice, both rules, edit round trip, support read-only, the ticket title field select, its payload and its stale-field error); `FormBuilder.test.tsx`: payload carries `create_ticket: false` and `ticket_title_field: ''`; `FormDetail.test.tsx`: shows that a ticket form creates tickets / a lead form creates no tickets | `internal/models`: TestFormTicketIntake{SchemaSQLite,SQLiteUpgrade}; `internal/repository`: TestFormTicketKeyRepository{SQLite,MySQL}, TestFormTicketCustomerMatch{SQLite,MySQL}, TestFormTicketKeyErasure{SQLite,MySQL}, TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}; `internal/service`: TestFormTicketIntake{Confirmed,DuplicateKey,KeyConflict,Atomicity,VsCustomerErasure}{SQLite,MySQL}, TestFormTicketIntake{PendingSpamAndKeyless,NoCustomer,Unwired,LogsOmitPersonalData}, TestFormTicketTitleField; `tests`: TestFormTicketIntakeAPISQLite; `test/integration`: TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable; `cmd/migrate`: TestFormTicketIntakeMigration{,Files}, TestFormTicketTitleFieldMigration{,Files}; `cmd`: TestFormTicketIntakeProductionWiring | **partial** | The submission list and detail show no ticket outcome, ticket link or key yet (a later frontend ticket). The hosted view renders one random key per page load (`data-idempotency-key`, served `Cache-Control: no-store`, #340), and the embed script sends that key, or one it generates per rendered form, on every submission of the render (#341), so a browser resend is deduplicated; leads of `create_lead` forms are not. An unmatched submitter gets no ticket |
+| 5.10 | **Email a staff comment to the customer** | `POST /tickets/:id/comments` with `email_customer: true` (admin, or the assigned support user; not on an internal note, which is 400): the comment … (more in the notes) | -- | `ticket_comment_email_test.go`: TestTicketCommentEmailHandlerFlag, TestTicketCommentEmailHandlerErrorMapping | -- | `internal/service` … (more in the notes) | **partial** | Backend only: the comment form has no checkbox yet (a later frontend ticket). No retry; a row left `pending` means the outcome is unknown |
+| 5.11 | **Form → ticket intake** | A double opt-in form with `create_ticket` (admin or sales; excludes `create_lead`) opens one open, medium, unassigned ticket … (more in the notes) | `form-builder-ticket.spec.ts`: admin creates a ticket form in the builder and an unchanged update keeps create_ticket and the ticket title field | `internal/models`: TestFormTicketTargetDefinition, TestFormTicketTitleFieldDefinition, TestFormSubmissionTicketJSON (more in the notes) | `FormBuilder.ticket.test.tsx`, `FormBuilder.test.tsx`, `FormDetail.test.tsx` (details in the notes) | `internal/models`: TestFormTicketIntake{SchemaSQLite,SQLiteUpgrade} (more in the notes) | **partial** | The submission list and detail show no ticket outcome, ticket link or key yet (a later frontend ticket) (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **5.5** **Filter by Status/Priority**
+  - Description: Dropdown filters for status and priority. `GET /tickets` filters server-side
+    (#218): `status` and `priority` each take one exact, case-sensitive value, combine with each
+    other, with `search` and with `sort_by`/`sort_order`, apply before offset and limit (so `total`
+    and the pagination metadata reflect them) and for support only narrow the assigned tickets; an
+    unknown value is 400 `VALIDATION_ERROR`, an empty one is ignored, customers still get 403.
+  - Unit Tests (Backend): `ticket_list_filter_test.go` (handler): TestTicketListFilterHandler;
+    `ticket_list_filter_test.go` (service): TestTicketServiceListFiltered;
+    `ticket_enum_valid_test.go`: TestTicketEnumIsValid.
+  - Integration Tests: `internal/repository/ticket_list_filter_test.go`:
+    TestTicketListFilterRepository{SQLite,MySQL};
+    `internal/integration/ticket_list_filter_integration_test.go`:
+    TestTicketListFilters{SQLite,MySQL}.
+  - Known Issues: The ticket screen already sends `status`/`priority` and renders `data.total`, so
+    it now filters on the server with correct totals; the `admin-tickets.spec.ts` filter tests each
+    seed two tickets and assert that the non-matching one leaves the list (#402).
+- **5.10** **Email a staff comment to the customer**
+  - Description: `POST /tickets/:id/comments` with `email_customer: true` (admin, or the assigned
+    support user; not on an internal note, which is 400): the comment, `first_responded_at` and a
+    pending delivery record commit together, then one mail goes to the ticket customer's current
+    address (subject `Ticket T-000042 from <name>`, the stored `general.company_name` or
+    `GopherCRM`, #292; number, title, this comment only) and the record is stamped `sent`, `failed`,
+    `log_only` or `skipped`, returned as `delivery` on the 201 only. Records hold ids only and are
+    hard-deleted with the ticket and on customer erasure (#219).
+  - Integration Tests: `internal/service`:
+    TestTicketCommentEmail{Delivery,SkipReasons,Failures,LogOnly,AtomicitySQLite,AtomicityMySQL,RefusedWhenUnwired,TransactionRootRequired,ServiceRefusesInternalOrNonStaff,LogsOmitPersonalData,RecordHoldsNoAddress};
+    `internal/repository`: TestTicketMailDeliveryRepository{SQLite,MySQL},
+    TestTicketMailDeliveryErasure{SQLite,MySQL,WithoutTable}; `tests`:
+    TestTicketCommentEmailAPISQLite; `cmd`: TestTicketCommentMailProductionWiring;
+    `test/integration`: TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable.
+- **5.11** **Form → ticket intake**
+  - Description: A double opt-in form with `create_ticket` (admin or sales; excludes `create_lead`)
+    opens one open, medium, unassigned ticket (title `Form: <form name>`, description
+    `Submitted through form <id>, submission <id>.` with no submitted value) when a pending
+    submission is confirmed, for the live customer whose email matches, in the confirmation
+    transaction with a `form_ticket_keys` row and a `ticket_created` event (origin form). An
+    optional `idempotency_key` on the public submission (API clients) makes confirmations with the
+    same key open at most one ticket; keyless submissions use `submission-<id>`. Outcomes `created`,
+    `duplicate`, `key_conflict`, `no_customer`, `unavailable` are recorded on the submission; the
+    public answers never change. Key rows go with the ticket's delete and with every erasure of the
+    customer or submitter (#213). The form builder configures it under **Submission action**
+    ("Create a lead", "Create a support ticket", "Create nothing"): the ticket action switches
+    double opt-in on, turns lead creation off and hides the lead owner (sent as 0); saving refuses a
+    ticket form without double opt-in or one that also creates leads, and every create and update
+    sends `create_ticket`, so saving a ticket form keeps it. FormDetail shows "Creates tickets:
+    yes/no" (#335). An optional `ticket_title_field` (#804) names a text or select field: the ticket
+    is then titled `<form name>: <value>` (control characters become spaces, trimmed, cut to 255
+    runes), and a blank value or a field removed or retyped since the submission keeps
+    `Form: <form name>`; it needs `create_ticket` and an exact text or select field name (else 400),
+    an absent value on PUT clears it, and the builder offers it as **Ticket title field** under the
+    ticket action and always sends it.
+  - Unit Tests (Backend): `internal/models`: TestFormTicketTargetDefinition,
+    TestFormTicketTitleFieldDefinition, TestFormSubmissionTicketJSON; `internal/handler`:
+    TestFormTicketFlagHandler, TestFormTicketTitleFieldHandler,
+    TestFormPublicSubmitIdempotencyKeyValidation, TestHostedViewRendersPerRenderIdempotencyKey,
+    TestHostedViewIsNotCached, TestHostedViewWithoutRandomnessOmitsKey,
+    TestHostedFormResubmissionWithSameKeyOpensOneTicket (#340).
+  - Unit Tests (Frontend): `FormBuilder.ticket.test.tsx` (action choice, both rules, edit round
+    trip, support read-only, the ticket title field select, its payload and its stale-field error);
+    `FormBuilder.test.tsx`: payload carries `create_ticket: false` and `ticket_title_field: ''`;
+    `FormDetail.test.tsx`: shows that a ticket form creates tickets / a lead form creates no
+    tickets.
+  - Integration Tests: `internal/models`: TestFormTicketIntake{SchemaSQLite,SQLiteUpgrade};
+    `internal/repository`: TestFormTicketKeyRepository{SQLite,MySQL},
+    TestFormTicketCustomerMatch{SQLite,MySQL}, TestFormTicketKeyErasure{SQLite,MySQL},
+    TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}; `internal/service`:
+    TestFormTicketIntake{Confirmed,DuplicateKey,KeyConflict,Atomicity,VsCustomerErasure}{SQLite,MySQL},
+    TestFormTicketIntake{PendingSpamAndKeyless,NoCustomer,Unwired,LogsOmitPersonalData},
+    TestFormTicketTitleField; `tests`: TestFormTicketIntakeAPISQLite; `test/integration`:
+    TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable; `cmd/migrate`:
+    TestFormTicketIntakeMigration{,Files}, TestFormTicketTitleFieldMigration{,Files}; `cmd`:
+    TestFormTicketIntakeProductionWiring.
+  - Known Issues: The submission list and detail show no ticket outcome, ticket link or key yet (a
+    later frontend ticket). The hosted view renders one random key per page load
+    (`data-idempotency-key`, served `Cache-Control: no-store`, #340), and the embed script sends
+    that key, or one it generates per rendered form, on every submission of the render (#341), so a
+    browser resend is deduplicated; leads of `create_lead` forms are not. An unmatched submitter
+    gets no ticket.
 
 ---
 
@@ -381,11 +2271,48 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 | 7.2 | **Create User** | Admin creates users with any role, system or custom (the role picker lists the roles of `GET /roles`). This and the `create-admin` CLI are the only ways to obtain an elevated role | `admin-users.spec.ts`: create user, different roles, validation errors, password mismatch, duplicate email | `user_handler_test.go`: TestCreate_Success, TestCreate_EmailConflict | -- | `user_test.go`: TestUserRegistration, TestEmailUniqueness | **covered** | -- |
 | 7.3 | **Edit User** | Update user profile, role (system or custom; an edit that leaves the picker alone keeps the stored role), active status. Only admins may change role or `is_active` | `admin-users.spec.ts`: edit an existing user | `user_handler_test.go`: TestUpdate_Success | -- | `user_test.go`: TestUserCRUD; `users_me_password_test.go`: TestUpdateUserByIDDoesNotChangePassword | **covered** | -- |
 | 7.4 | **Delete User** | Admin-only. **Erases** personal data, purges API keys, refresh and reset tokens, then soft-deletes. A customer-role user takes its customer records and their converted leads with it; a staff user is erased alone (#108). Cannot delete yourself | -- | `user_handler_test.go`: TestDelete_Success, TestDelete_NotFound, TestDelete_GenuineFailureIsInternalError, TestDelete_SelfDeletion; `user_service_test.go`: TestDelete_Success, TestDelete_NotFound, TestDelete_LookupFailureIsNotReportedAsNotFound | -- | `erasure_test.go`: 28 tests; `erasure_atomicity_test.go`: 19 tests; `identity_erasure_test.go`: TestIdentityErasure{SQLite,MySQL} | **covered** | The previously claimed `admin-users.spec.ts` "cannot delete self" E2E test does not exist — `admin-users.spec.ts` has no delete test at all. Irreversible — see section 12 |
-| 7.5 | **Activate/Deactivate** | Toggle user active status from the users list row menu ("More actions for <name>"). This is the **reversible** way to suspend access. Deactivating (also `PUT /users/{id}` with `is_active` false) ends every access token and revokes every refresh token and API key of the account in the same transaction; activating it again brings none of them back (#526). Deactivating your own account is disabled in the menu and refused by the API | -- | `user_handler_test.go`: TestActivate_Success, TestActivate_NotFound, TestDeactivate_Success, TestDeactivate_SelfDeactivationPrevented | `UserList.test.tsx`: activates/deactivates the chosen row after a re-sort, own-account deactivation disabled, no menu for non-admins | `erasure_test.go`: TestUserDeactivationDoesNotAnonymiseAnything; `erasure_pii_sweep_test.go`: TestDeactivationLeavesThePersonalDataWhereItIs; `auth_credential_revocation_test.go`: `TestCredentialRevocation{SQLite,MySQL}`; `cmd/credential_revocation_wiring_test.go`: `TestCredentialRevocationProductionWiring` | **partial** | No E2E test: the previously claimed "deactivate and activate users" E2E test does not exist. `POST /users/:id/activate` and `/deactivate` are routed admin-only |
+| 7.5 | **Activate/Deactivate** | Toggle user active status from the users list row menu ("More actions for <name>") (more in the notes) | -- | `user_handler_test.go`: TestActivate_Success, TestActivate_NotFound, TestDeactivate_Success, TestDeactivate_SelfDeactivationPrevented | `UserList.test.tsx`: activates/deactivates the chosen row after a re-sort, own-account deactivation disabled, no menu for non-admins | `erasure_test.go`, `erasure_pii_sweep_test.go`, `auth_credential_revocation_test.go`, `cmd/credential_revocation_wiring_test.go` (details in the notes) | **partial** | No E2E test: the previously claimed "deactivate and activate users" E2E test does not exist. `POST /users/:id/activate` and `/deactivate` are routed admin-only |
 | 7.6 | **Search Users** | Search across email, first_name, last_name | `admin-users.spec.ts`: search users | `user_handler_test.go`: TestList_SearchByEmail, TestList_SearchWithSort | -- | -- | **covered** | -- |
 | 7.7 | **Sort Users** | Click column headers to sort | -- | `user_handler_test.go`: TestList_SortByCreatedAtDesc, TestList_SortByInvalidColumn | -- | -- | **partial** | No E2E test |
 | 7.8 | **Filter by Role** | Dropdown to filter by role | `admin-users.spec.ts`: admin can filter users by role (#428) | `user_list_filter_test.go`: TestUserListRoleFilterHandler; `user_role_valid_test.go`: TestUserRoleIsValid; `user_list_filter_test.go` (service): TestUserServiceListFiltered | -- | `user_list_filter_test.go` (repository): TestUserListRoleFilterRepository{SQLite,MySQL}; `user_list_filter_integration_test.go`: TestUserListRoleFilters{SQLite,MySQL} | **covered** | `GET /users?role=` filters server-side (#428): exact role, before pagination, combined with search and sort; an unknown value is 400 `VALIDATION_ERROR` |
-| 7.9 | **My Profile** | `/settings/profile` shows the signed-in account's details read-only and changes the password through `POST /auth/change-password` (row 1.11); it has no form for editing the email or the names. `PUT /users/me` updates email, first and last name for API clients, has no frontend caller, and refuses any body carrying `password` or `new_password` with 400 `PASSWORD_FIELD_NOT_ACCEPTED`, writing nothing (#254). Changing the account's own email, there or through `PUT /users/{id}` on the caller's own id, needs `current_password`: 400 `CURRENT_PASSWORD_REQUIRED` without it, 400 `INVALID_CURRENT_PASSWORD` when it does not match, nothing written (#394); the user edit form asks for it when the signed-in user changes its own email | `settings.spec.ts`: "shows the signed-in account details", "changes the password and the new one works on the next login", "rejects a wrong current password with the server message" (none of them sends `PUT /users/me`); `admin-users.spec.ts`: "an admin changes its own email with its current password" (`PUT /users/{id}`) | `user_handler_test.go`: TestGetMe_Success, TestUpdateMe_Success, TestGet_Forbidden; `user_me_password_test.go`: TestUpdateMeRefusesPasswordFields, TestUpdateMeProfileFieldsStillApply, TestUpdateMeRefusalLogOmitsPassword, TestUpdateMeEmailChangeNeedsCurrentPassword; `user_service_test.go`: TestUserServiceUpdateIgnoresPasswordKey, TestUserServiceCheckOwnEmailChange | `Profile.test.tsx`, `UserForm.ownEmail.test.tsx` | `user_test.go`: TestMeEndpoints; `users_me_password_test.go`: TestUpdateMePasswordRefusedWithoutCurrentPassword, TestUpdateMePasswordRefusedWithCurrentPassword, TestUpdateMeRefusalWritesNoProfileField, TestChangePasswordRemainsTheSessionContract, TestOwnEmailChangeNeedsCurrentPassword, TestOwnProfileUpdateWithoutEmailChangeNeedsNoPassword, TestOtherUsersEmailChangeNeedsNoPassword | **partial** | No profile-edit UI, so `PUT /users/me` has backend tests and no browser coverage |
+| 7.9 | **My Profile** | `/settings/profile` shows the signed-in account's details read-only and changes the password through `POST /auth/change-password` (row 1.11) (more in the notes) | `settings.spec.ts`, `admin-users.spec.ts` (details in the notes) | `user_handler_test.go`, `user_me_password_test.go`, `user_service_test.go` (details in the notes) | `Profile.test.tsx`, `UserForm.ownEmail.test.tsx` | `user_test.go`, `users_me_password_test.go` (details in the notes) | **partial** | No profile-edit UI, so `PUT /users/me` has backend tests and no browser coverage |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **7.5** **Activate/Deactivate**
+  - Description: Toggle user active status from the users list row menu ("More actions for <name>").
+    This is the **reversible** way to suspend access. Deactivating (also `PUT /users/{id}` with
+    `is_active` false) ends every access token and revokes every refresh token and API key of the
+    account in the same transaction; activating it again brings none of them back (#526).
+    Deactivating your own account is disabled in the menu and refused by the API.
+  - Integration Tests: `erasure_test.go`: TestUserDeactivationDoesNotAnonymiseAnything;
+    `erasure_pii_sweep_test.go`: TestDeactivationLeavesThePersonalDataWhereItIs;
+    `auth_credential_revocation_test.go`: `TestCredentialRevocation{SQLite,MySQL}`;
+    `cmd/credential_revocation_wiring_test.go`: `TestCredentialRevocationProductionWiring`.
+- **7.9** **My Profile**
+  - Description: `/settings/profile` shows the signed-in account's details read-only and changes the
+    password through `POST /auth/change-password` (row 1.11); it has no form for editing the email
+    or the names. `PUT /users/me` updates email, first and last name for API clients, has no
+    frontend caller, and refuses any body carrying `password` or `new_password` with 400
+    `PASSWORD_FIELD_NOT_ACCEPTED`, writing nothing (#254). Changing the account's own email, there
+    or through `PUT /users/{id}` on the caller's own id, needs `current_password`: 400
+    `CURRENT_PASSWORD_REQUIRED` without it, 400 `INVALID_CURRENT_PASSWORD` when it does not match,
+    nothing written (#394); the user edit form asks for it when the signed-in user changes its own
+    email.
+  - E2E Tests: `settings.spec.ts`: "shows the signed-in account details", "changes the password and
+    the new one works on the next login", "rejects a wrong current password with the server message"
+    (none of them sends `PUT /users/me`); `admin-users.spec.ts`: "an admin changes its own email
+    with its current password" (`PUT /users/{id}`).
+  - Unit Tests (Backend): `user_handler_test.go`: TestGetMe_Success, TestUpdateMe_Success,
+    TestGet_Forbidden; `user_me_password_test.go`: TestUpdateMeRefusesPasswordFields,
+    TestUpdateMeProfileFieldsStillApply, TestUpdateMeRefusalLogOmitsPassword,
+    TestUpdateMeEmailChangeNeedsCurrentPassword; `user_service_test.go`:
+    TestUserServiceUpdateIgnoresPasswordKey, TestUserServiceCheckOwnEmailChange.
+  - Integration Tests: `user_test.go`: TestMeEndpoints; `users_me_password_test.go`:
+    TestUpdateMePasswordRefusedWithoutCurrentPassword,
+    TestUpdateMePasswordRefusedWithCurrentPassword, TestUpdateMeRefusalWritesNoProfileField,
+    TestChangePasswordRemainsTheSessionContract, TestOwnEmailChangeNeedsCurrentPassword,
+    TestOwnProfileUpdateWithoutEmailChangeNeedsNoPassword, TestOtherUsersEmailChangeNeedsNoPassword.
 
 ---
 
@@ -393,10 +2320,41 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 8.1 | **Generate API Key** | User creates a named API key for CLI access; only a signed-in session (password or single sign-on) creates keys, a request authenticated with an API key is 403 (#525). Since #532 the session's sign-in must be within the last 15 minutes (the access token's `auth_time`; a token from a refresh carries none): otherwise 403 `REAUTHENTICATION_REQUIRED`. Customer accounts hold no keys (403, also under the owner lock; their existing keys were revoked by migration `20261129120003_api_key_lifetime` and the same startup step, and are refused at authentication). A key expires one year after creation by default and at most then (400 for a later `expires_at`); a key stored without an expiry counts as expiring one year after `created_at`, and the migration and startup step capped every existing key at one year | `settings.spec.ts`: "creates a key, reveals it once, then revokes it" | `apikey_handler_test.go`: TestCreate_Success, TestCreate_Error, TestCreate_FromAPIKeyIsForbidden, TestCreate_WithoutAuthMethodIsForbidden, TestCreate_StaleSignInIsForbidden, TestCreate_SignInWindowBoundary, TestCreate_NoSignInTimeIsForbidden, TestCreate_CustomerIsForbidden, TestCreate_ExpiryBeyondOneYear, TestCreate_CustomerRefusedUnderLock; `apikey_owner_lock_test.go`: TestAPIKeyCreateOwnerUnavailableMapping (401 for an owner refused under the lock, #342); `apikey_service_test.go`: TestAPIKeyService_Generate, _Generate_CreateError, _Generate_WithExpiry, _Generate_DefaultExpiry, _Generate_ExpiryCap, _Generate_CustomerOwner (owner lock and transaction-bound insert); `auth_apikey_lifetime_test.go`: TestAccessTokenSignInTime, TestOIDCSessionSignInTime, TestValidateAPIKeyLifetime; `middleware/auth_test.go`: TestAuth_SetsSignedInAt; `credential_issuance_owner_lock_test.go`: TestAPIKeyCreateOwnerLock{Decisions,Atomicity}SQLite | `APIKeys.test.tsx`: one-year helper text and `max`, a later date refused without a request, the sign-in-again message in the dialog | `apikey_integration_test.go`: TestCreateAPIKey, TestAPIKeySessionOnlyRules; `credential_issuance_owner_lock_test.go`: TestCredentialIssuanceOwnerLockAPISQLite; `cmd/apikey_owner_lock_wiring_test.go`: TestAPIKeyOwnerLockProductionWiring (Bearer 201, ApiKey 403); `cmd/apikey_lifetime_wiring_test.go`: TestAPIKeyLifetimeProductionWiring; `api_key_lifetime_step_test.go`: TestAPIKeyLifetimeStep{SQLite,MySQL}; `cmd/migrate/api_key_lifetime_migration_test.go`: TestAPIKeyLifetimeMigration{Files,} | **covered** | -- |
+| 8.1 | **Generate API Key** | User creates a named API key for CLI access (more in the notes) | `settings.spec.ts`: "creates a key, reveals it once, then revokes it" | `apikey_handler_test.go`, `apikey_owner_lock_test.go`, `apikey_service_test.go`, `auth_apikey_lifetime_test.go`, `middleware/auth_test.go` and 1 more file (details in the notes) | `APIKeys.test.tsx`: one-year helper text and `max`, a later date refused without a request, the sign-in-again message in the dialog | `apikey_integration_test.go`, `credential_issuance_owner_lock_test.go`, `cmd/apikey_owner_lock_wiring_test.go`, `cmd/apikey_lifetime_wiring_test.go` and 2 more files (details in the notes) | **covered** | -- |
 | 8.2 | **List API Keys** | View all keys (masked) with last-used info | `settings.spec.ts`: "creates a key, reveals it once, then revokes it" | `apikey_handler_test.go`: TestList_Success, TestList_Error; `apikey_service_test.go`: TestAPIKeyService_GetByUser, _List | -- | `apikey_integration_test.go`: TestListAPIKeys | **covered** | -- |
 | 8.3 | **Revoke API Key** | Delete/revoke an API key; revocation stamps `revoked_at` and is final: `is_active: true` on a revoked key is 409, and from an API-key request 403 (#525) | `settings.spec.ts`: "creates a key, reveals it once, then revokes it" | `apikey_handler_test.go`: TestRevoke_Success, _NotFound, _Forbidden, TestUpdate_SwitchOnRevokedIsConflict, TestUpdate_SwitchOnFromAPIKeyIsForbidden; `apikey_service_test.go`: TestAPIKeyService_Revoke, TestAPIKeyService_Update; `auth_apikey_revocation_test.go`: TestAPIKeyRevocationFinal{SQLite,MySQL} | -- | `apikey_integration_test.go`: TestRevokeAPIKey, TestUpdateAPIKey, TestAPIKeySessionOnlyRules | **covered** | -- |
 | 8.4 | **Keys die with their owner** | Erasing or deactivating a user invalidates their keys, and no key is issued to such an owner (#342). A deactivation (by an administrator or through SCIM), a password change and a password reset revoke every key of the account for good; reactivating the account restores none (#526) | -- | `auth_service_test.go` subtests: key of an erased user is rejected; key of a deactivated user is rejected; `credential_issuance_owner_lock_test.go`: TestAPIKeyCreateOwnerLockConcurrent{SQLite,MySQL} (user- and customer-rooted erasure and deactivation, both orderings); `apikey_repository_test.go`: TestAPIKeyRepository_RevokeAllForUser; `auth_credential_revocation_test.go`: TestCredentialRevocation{SQLite,MySQL} | -- | `erasure_test.go`: TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount, TestAPIKeyOfAnErasedUserCannotAuthenticate, TestAPIKeyOfADeactivatedUserCannotAuthenticate | **covered** | -- |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **8.1** **Generate API Key**
+  - Description: User creates a named API key for CLI access; only a signed-in session (password or
+    single sign-on) creates keys, a request authenticated with an API key is 403 (#525). Since #532
+    the session's sign-in must be within the last 15 minutes (the access token's `auth_time`; a
+    token from a refresh carries none): otherwise 403 `REAUTHENTICATION_REQUIRED`. Customer accounts
+    hold no keys (403, also under the owner lock; their existing keys were revoked by migration
+    `20261129120003_api_key_lifetime` and the same startup step, and are refused at authentication).
+    A key expires one year after creation by default and at most then (400 for a later
+    `expires_at`); a key stored without an expiry counts as expiring one year after `created_at`,
+    and the migration and startup step capped every existing key at one year.
+  - Unit Tests (Backend): `apikey_handler_test.go`: TestCreate_Success, TestCreate_Error,
+    TestCreate_FromAPIKeyIsForbidden, TestCreate_WithoutAuthMethodIsForbidden,
+    TestCreate_StaleSignInIsForbidden, TestCreate_SignInWindowBoundary,
+    TestCreate_NoSignInTimeIsForbidden, TestCreate_CustomerIsForbidden,
+    TestCreate_ExpiryBeyondOneYear, TestCreate_CustomerRefusedUnderLock;
+    `apikey_owner_lock_test.go`: TestAPIKeyCreateOwnerUnavailableMapping (401 for an owner refused
+    under the lock, #342); `apikey_service_test.go`: TestAPIKeyService_Generate,
+    _Generate_CreateError, _Generate_WithExpiry, _Generate_DefaultExpiry, _Generate_ExpiryCap,
+    _Generate_CustomerOwner (owner lock and transaction-bound insert);
+    `auth_apikey_lifetime_test.go`: TestAccessTokenSignInTime, TestOIDCSessionSignInTime,
+    TestValidateAPIKeyLifetime; `middleware/auth_test.go`: TestAuth_SetsSignedInAt;
+    `credential_issuance_owner_lock_test.go`: TestAPIKeyCreateOwnerLock{Decisions,Atomicity}SQLite.
+  - Integration Tests: `apikey_integration_test.go`: TestCreateAPIKey, TestAPIKeySessionOnlyRules;
+    `credential_issuance_owner_lock_test.go`: TestCredentialIssuanceOwnerLockAPISQLite;
+    `cmd/apikey_owner_lock_wiring_test.go`: TestAPIKeyOwnerLockProductionWiring (Bearer 201, ApiKey
+    403); `cmd/apikey_lifetime_wiring_test.go`: TestAPIKeyLifetimeProductionWiring;
+    `api_key_lifetime_step_test.go`: TestAPIKeyLifetimeStep{SQLite,MySQL};
+    `cmd/migrate/api_key_lifetime_migration_test.go`: TestAPIKeyLifetimeMigration{Files,}.
 
 ---
 
@@ -404,11 +2362,31 @@ Free-form colored labels group tasks without a project hierarchy. Screenshots un
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 9.1 | **View Configurations** | Admin sees all system configurations; `/configurations/ui` is open to any authenticated user. The SPA's `ConfigurationProvider` loads `/configurations/ui` only for an established session, keyed by the user id (sign-in loads, sign-out clears, an account switch reloads without showing the previous values), shares that one query with the deal form and the default-currency hook, serves built-in defaults for display values (company name, colour) and exposes the error; the lead-conversion rules are reported as loading or unavailable instead of being defaulted (#117) | `leads-convert-api.spec.ts`: the conversion dialog follows settings saved through the API after a fresh sign-in | `configuration_handler_test.go`: TestGetUIConfigurations_CarriesTheLeadConversionContract | `ConfigurationContext.test.tsx`: configured company/colour/conversion values, no request without a session or while it is restored, sign-in loads, sign-out clears, account switch refetches (also an account switch and a session reload through the real `AuthProvider`), failed fetch and failed refresh leave the rules unavailable, a missing or malformed rule entry is unavailable, a missing owner entry claims nothing, empty status list kept, one shared request, explicit refresh | `configuration_integration_test.go`: TestGetAllConfigurations_AdminOnly, TestGetUIConfigurations, TestGetConfigurationByCategory, TestGetConfigurationByKey, TestUnauthorizedAccess | **partial** | No E2E test of the admin settings page; no configuration service unit test. Company name and primary colour are loaded but no screen displays them yet |
+| 9.1 | **View Configurations** | Admin sees all system configurations (more in the notes) | `leads-convert-api.spec.ts`: the conversion dialog follows settings saved through the API after a fresh sign-in | `configuration_handler_test.go`: TestGetUIConfigurations_CarriesTheLeadConversionContract | `ConfigurationContext.test.tsx` (details in the notes) | `configuration_integration_test.go` (details in the notes) | **partial** | No E2E test of the admin settings page; no configuration service unit test. Company name and primary colour are loaded but no screen displays them yet |
 | 9.2 | **Update Configuration** | Admin can change configuration values; a save on Settings > Configuration refreshes the app-wide UI configuration | -- | -- | `ConfigurationSettings.test.tsx`: refreshes the app-wide configuration after a save, not after a failed one; a view-only role (`settings.view`) sees no Edit or Reset; a refused save shows the server message; typed JSON and array values are saved parsed, and invalid JSON, a non-array or an empty number gets a field error with no request; a malformed list of allowed values still opens the editor; a failed load shows an error with Retry | `configuration_integration_test.go`: TestSetConfiguration, _InvalidValue, _ReadOnly, TestBooleanConfiguration, TestArrayConfiguration | **partial** | No E2E test of the settings page |
 | 9.3 | **Reset Configuration** | Admin can reset to defaults; a reset refreshes the app-wide UI configuration | -- | -- | `ConfigurationSettings.test.tsx`: refreshes the app-wide configuration after a reset; a reset asks for confirmation, Cancel sends nothing and only Confirm resets | `configuration_integration_test.go`: TestResetConfiguration | **partial** | No E2E test of the settings page |
 | 9.4 | **Configuration Transactions** | Multi-step configuration writes are atomic | -- | -- | -- | -- | **untested** | The previous version of this document listed test/integration/configuration_transaction_test.go. **That file does not exist** — no test covers configuration transactionality |
 | 9.5 | **Form retention purge** | `FORM_RETENTION_DAYS` (environment only, off by default; 1 and 2 are raised to the 3-day floor, the ceiling is 36500). When set, spam and never-confirmed form submissions with no linked lead, and their confirmation tokens, are permanently removed at that age, at boot and then every 24 hours. A pending row that still holds a spendable token stays. The first boot with it set removes the existing backlog | -- | `config_test.go`: TestLoadFormRetentionDays; `form_submission_purge_test.go` (repository and service); `form_retention_runtime_test.go`: TestFormRetentionRuntimeLifecycle, TestFormRetentionRuntimeStopDuringChunk | -- | `tests/form_retention_api_test.go`: TestFormRetentionAPISQLite; `cmd/form_retention_runtime_test.go`: TestFormRetentionProductionWiring | **covered** (API level) | No settings screen and no browser test. Both form-delete dialogs still say "Collected submissions are retained" until a separate frontend task merges |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **9.1** **View Configurations**
+  - Description: Admin sees all system configurations; `/configurations/ui` is open to any
+    authenticated user. The SPA's `ConfigurationProvider` loads `/configurations/ui` only for an
+    established session, keyed by the user id (sign-in loads, sign-out clears, an account switch
+    reloads without showing the previous values), shares that one query with the deal form and the
+    default-currency hook, serves built-in defaults for display values (company name, colour) and
+    exposes the error; the lead-conversion rules are reported as loading or unavailable instead of
+    being defaulted (#117).
+  - Unit Tests (Frontend): `ConfigurationContext.test.tsx`: configured company/colour/conversion
+    values, no request without a session or while it is restored, sign-in loads, sign-out clears,
+    account switch refetches (also an account switch and a session reload through the real
+    `AuthProvider`), failed fetch and failed refresh leave the rules unavailable, a missing or
+    malformed rule entry is unavailable, a missing owner entry claims nothing, empty status list
+    kept, one shared request, explicit refresh.
+  - Integration Tests: `configuration_integration_test.go`: TestGetAllConfigurations_AdminOnly,
+    TestGetUIConfigurations, TestGetConfigurationByCategory, TestGetConfigurationByKey,
+    TestUnauthorizedAccess.
 
 ---
 
@@ -434,12 +2412,50 @@ CHANGELOG "Added" for the full behavioural description.
 
 | Feature | Endpoints | Tests |
 |---|---|---|
-| Auth sessions | `POST /auth/refresh`, `/auth/logout`, `/auth/change-password`, `/auth/password-reset`, `/auth/password-reset/confirm`; login returns a rotating refresh token. Reset confirmation is one transaction: conditional token claim, locking owner re-check, password and lockout update, revocation of every refresh token (#102). Refresh rotation is one transaction too: locking owner re-check, conditional single-use claim of the presented token, successor insert and JWT signing, with a committed containment revocation for a dead owner (#103). Password change is one transaction that renews the presenting session and revokes the others (#116). Logout, password change and reset confirmation also increment `users.token_version`, the `token_version` claim of every access JWT, so earlier access tokens are refused at once; logout is one transaction that locks the users row first (#236). User rows are written only by conditional, column-specific updates that never upsert an erased row. The reset request is answered before the lookup and issued by a background queue; a login email change spends the account's unused reset tokens in the same write (#554) | `internal/service/auth_session_test.go`, `internal/service/auth_access_token_revocation_test.go`, `tests/auth_access_token_revocation_test.go` (`TestAccessTokenRevocationAPISQLite`), `internal/service/auth_password_reset_regression_test.go` (`TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}`), `internal/service/auth_password_reset_sso_test.go` (`TestPasswordResetSSOAccount{SQLite,MySQL}`, #444; `TestSSOAccountPasswordPolicy{SQLite,MySQL}`, #457), `cmd/auth_password_reset_sso_wiring_test.go` (`TestPasswordResetSSOAccountWired`, `TestSSOPasswordPolicyWired`), `internal/service/auth_password_reset_queue_test.go` (`TestPasswordResetQueue`), `cmd/password_reset_runtime_test.go` (`TestPasswordResetQueueProductionWiring`), `internal/service/auth_reset_email_change_test.go` (`TestResetLinkEmailChange{SQLite,MySQL}`), `internal/service/auth_reset_owner_race_test.go`, `internal/service/auth_refresh_rotation_regression_test.go` (`TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}`), `internal/repository/refresh_token_repository_test.go` (conditional rotation claim, unconditional logout revocation), `password_reset_token_repository_test.go` (conditional claim), `internal/mailer/mailer_test.go`, `internal/service/auth_change_password_regression_test.go`, `internal/service/auth_login_erasure_regression_test.go` (`TestLoginErasedDuringAuthentication{SQLite,MySQL}`), `tests/auth_session_integration_test.go` (login→refresh→replay-401→logout lifecycle, mailed reset round-trip, password-change renewal, API-key change) |
+| Auth sessions | `POST /auth/refresh`, `/auth/logout`, `/auth/change-password`, `/auth/password-reset`, `/auth/password-reset/confirm` (more in the notes) | `internal/service/auth_session_test.go`, `internal/service/auth_access_token_revocation_test.go`, `tests/auth_access_token_revocation_test.go` and 14 more files (details in the notes) |
 | Dashboard analytics | `GET /dashboard/{leads-by-status,tickets-by-priority,tasks-by-status,sales-performance,activities,upcoming-tasks,recent-tickets,new-leads}`, `GET /tasks/upcoming`. `activities` and `recent-tickets` are scoped to the caller in each source query, before the limit (2026-10, #96): leads admin all / sales own / support none, tickets admin and sales all / support assigned, completed tasks admin all / others assigned; the charts and stats stay system-wide | `dashboard_handler_test.go`, pure Go time-bucketing tests (leap day / quarter rollover), `internal/repository/dashboard_queries_test.go`, service tests; `internal/integration/dashboard_visibility_integration_test.go` on SQLite and MySQL (`TestDashboardActivityVisibility*`, `TestDashboardRecentTicketVisibility*`, `TestDashboardVisibilityBeforeLimit*`) |
 | Bulk status | `POST /{leads,tickets,tasks}/bulk/status` | see section 10 above |
 | API keys | `GET/PUT /api-keys/{id}`, `expires_at` on create (default and maximum one year, #532), expiry enforced at auth (one year after `created_at` for a key stored without one) | `apikey_service_test.go`, `apikey_handler_test.go`, `tests/apikey_integration_test.go` incl. `TestExpiredAPIKeyIsRejectedAtAuth` |
 | Customers | `GET /customers/export` (CSV, admin), `POST /customers/{id}/assign` (new `assigned_to_id` column, survives erasure). The export reads every matching row with one ordered statement: the requested column, then id, both in the requested direction (id ascending without `sort_by`), so a sorted book of any size is complete and deterministic (#105; the previous primary-key batching lost rows under non-id ordering) | handler/service/repo suites + `tests/customer_integration_test.go` (15 new tests) incl. erasure regression; `internal/repository/customer_export_traversal_test.go` (`TestCustomerExportTraversal{SQLite,MySQL}`) and `tests/customer_export_csv_test.go` (`TestCustomerExportCSV{SQLite,MySQL}`): >1,000-row adversarial fixtures, every allowed column in both directions, search, erased rows, CSV quoting, formula prefix, authorization and pre-response failure |
 | Erasure | password-reset tokens purged with the account | `test/integration/erasure_test.go` `TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount` |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **Auth sessions**
+  - Endpoints: `POST /auth/refresh`, `/auth/logout`, `/auth/change-password`,
+    `/auth/password-reset`, `/auth/password-reset/confirm`; login returns a rotating refresh token.
+    Reset confirmation is one transaction: conditional token claim, locking owner re-check, password
+    and lockout update, revocation of every refresh token (#102). Refresh rotation is one
+    transaction too: locking owner re-check, conditional single-use claim of the presented token,
+    successor insert and JWT signing, with a committed containment revocation for a dead owner
+    (#103). Password change is one transaction that renews the presenting session and revokes the
+    others (#116). Logout, password change and reset confirmation also increment
+    `users.token_version`, the `token_version` claim of every access JWT, so earlier access tokens
+    are refused at once; logout is one transaction that locks the users row first (#236). User rows
+    are written only by conditional, column-specific updates that never upsert an erased row. The
+    reset request is answered before the lookup and issued by a background queue; a login email
+    change spends the account's unused reset tokens in the same write (#554).
+  - Tests: `internal/service/auth_session_test.go`,
+    `internal/service/auth_access_token_revocation_test.go`,
+    `tests/auth_access_token_revocation_test.go` (`TestAccessTokenRevocationAPISQLite`),
+    `internal/service/auth_password_reset_regression_test.go`
+    (`TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}`),
+    `internal/service/auth_password_reset_sso_test.go` (`TestPasswordResetSSOAccount{SQLite,MySQL}`, #444;
+    `TestSSOAccountPasswordPolicy{SQLite,MySQL}`, #457),
+    `cmd/auth_password_reset_sso_wiring_test.go` (`TestPasswordResetSSOAccountWired`,
+    `TestSSOPasswordPolicyWired`), `internal/service/auth_password_reset_queue_test.go`
+    (`TestPasswordResetQueue`), `cmd/password_reset_runtime_test.go`
+    (`TestPasswordResetQueueProductionWiring`), `internal/service/auth_reset_email_change_test.go`
+    (`TestResetLinkEmailChange{SQLite,MySQL}`), `internal/service/auth_reset_owner_race_test.go`,
+    `internal/service/auth_refresh_rotation_regression_test.go`
+    (`TestRefreshRotation{Validation,Atomicity,Concurrent}{SQLite,MySQL}`),
+    `internal/repository/refresh_token_repository_test.go` (conditional rotation claim,
+    unconditional logout revocation), `password_reset_token_repository_test.go` (conditional claim),
+    `internal/mailer/mailer_test.go`, `internal/service/auth_change_password_regression_test.go`,
+    `internal/service/auth_login_erasure_regression_test.go`
+    (`TestLoginErasedDuringAuthentication{SQLite,MySQL}`), `tests/auth_session_integration_test.go`
+    (login→refresh→replay-401→logout lifecycle, mailed reset round-trip, password-change renewal,
+    API-key change).
 
 ## 10c. Answer Engine Optimization (AEO) (2026-08)
 
@@ -453,15 +2469,65 @@ row below is unit/integration only, which is why none is marked *covered*.
 | 10c.2 | **Prompts** | `/aeo/prompts`: up to 100 active, ≤500 runes, duplicates rejected case-insensitively over live rows, soft delete keeps the answers | none | `aeo_handler_test.go`, `aeo_service_test.go` | `AEOPrompts.test.tsx` | `aeo_repository_test.go` | **partial** | No unique index on `text` by design — the soft-delete trap; uniqueness is a service-level `LOWER(text)` pre-check |
 | 10c.3 | **Providers** | Six engines behind one interface: Anthropic SDK + one OpenAI-compatible wrapper for OpenAI, Gemini, Kimi, Perplexity and any custom base URL; keyless engine skipped | none | `internal/aeo/anthropic_test.go`, `openai_compat_test.go`, `provider_test.go` (httptest servers: success, empty choices, 429, 500, malformed JSON, perplexity citations) | `AEOSettings.test.tsx` (chips) | -- | **partial** | Live credentials are exercised only by the manual smoke script. Since #98, provider failures record only a category and numeric HTTP status, never the remote message |
 | 10c.4 | **Runs + engine** | `POST /aeo/runs` returns 202 and executes on the service-owned run context, never the request's; worker pool of 4, 60s per query; one answer row per (prompt × provider) including failures; run ends completed/partial/failed | none | `internal/aeo/engine_test.go`, `aeo_service_test.go` | -- | `aeo_repository_test.go` | **partial** | A run is cancelled only by shutdown or by losing its ownership, not by an API call; admission is one insert guarded by the unique `running_lock`, across every replica sharing the database (#229, 10c.5) |
-| 10c.5 | **Run recovery and replicas** | Each run has an owner instance and a heartbeat renewed every 30 s; at boot (`ReconcileRunningRuns`) and before every start, any replica fails only runs whose heartbeat is older than 3 min, legacy rows without one, or runs started over 6 h ago; one running run across replicas (unique `running_lock`); one scheduled run per daily slot (unique `schedule_slot`); finalisation is conditional on the owner (#229) | none | `aeo_service_test.go` (`TestReconcileRunningRuns`, `TestStartRun_SweepsRunsStrandedByACrash`, `TestStartRun_ConcurrentCallsStartExactlyOneRun`); `aeo_replica_test.go` (`TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`, `TestAEORunHeartbeatLifecycle`, `TestAEOReplicaLogsOmitPersonalData`); `internal/aeo` (`TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`, `TestEngineFinalizeRefusedWhenNotOwned`); `TestAEOReplicaAPISQLite` (`tests`); `TestAEOReplicaProductionWiring` (`cmd`) | -- | `aeo_run_ownership_test.go` (`TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`, `TestAEORunClaimContention{SQLite,MySQL}`), `TestAEORunOwnership{SchemaSQLite,SQLiteUpgrade,JSONHidden}` (`internal/models`), `TestAEORunOwnershipMigration` and `TestAEORunOwnershipMigrationFiles` (`cmd/migrate`), `aeo_runtime_test.go` (reconciliation after a failed finalization) | **partial** | Added 2026-08-11 (one stranded row used to reject every later run); replica-safe since #229. A crashed run is recovered up to 3 min after the crash, at the next boot or start; no periodic sweep; several processes on one SQLite file unsupported |
-| 10c.11 | **Run ownership at shutdown** | `service.AEORuntime` owns every run: shutdown closes admission (503 `SHUTTING_DOWN`), cancels scheduler and runs — cancellation reaches provider calls and repository writes via `AEORepository.WithContext` — joins them before the database closes; interrupted runs finalize `failed`/`partial` through a bounded cleanup context; a 15s drain deadline falls back to exit-without-close plus boot reconciliation ([AEO guide](user-guide/aeo.md#shutdown)) | none | `cmd/aeo_runtime_test.go` (`TestAEORuntimeStartup`, `TestAEORuntimeShutdown`), `internal/aeo/engine_test.go`, `internal/aeo/runtime_test.go` | -- | `internal/service/aeo_runtime_test.go` (`TestAEORunLifecycle{SQLite,MySQL}`, `TestAEOConcurrentShutdown{SQLite,MySQL}`: real SQLite and disposable MySQL) | **backend covered** | Added 2026-10 (#111). A provider or database write that ignores cancellation holds the process until the deadline; the row it leaves is recovered at the next boot, its remaining results are lost |
+| 10c.5 | **Run recovery and replicas** | Each run has an owner instance and a heartbeat renewed every 30 s (more in the notes) | none | `aeo_service_test.go`, `aeo_replica_test.go` (details in the notes) | -- | `aeo_run_ownership_test.go`, `aeo_runtime_test.go` (details in the notes) | **partial** | Added 2026-08-11 (one stranded row used to reject every later run) (more in the notes) |
+| 10c.11 | **Run ownership at shutdown** | `service.AEORuntime` owns every run: shutdown closes admission (503 `SHUTTING_DOWN`), cancels scheduler and runs — cancellation reaches provider calls … (more in the notes) | none | `cmd/aeo_runtime_test.go` (`TestAEORuntimeStartup`, `TestAEORuntimeShutdown`), `internal/aeo/engine_test.go`, `internal/aeo/runtime_test.go` | -- | `internal/service/aeo_runtime_test.go` (`TestAEORunLifecycle{SQLite,MySQL}`, `TestAEOConcurrentShutdown{SQLite,MySQL}`: real SQLite and disposable MySQL) | **backend covered** | Added 2026-10 (#111). A provider or database write that ignores cancellation holds the process until the deadline (more in the notes) |
 | 10c.6 | **Mention + citation analysis** | Unicode-aware word-boundary matching for brand/aliases/competitors, first-mention rune offset, URL extraction and domain normalisation (`www.`, port, case) | none | `internal/aeo/analysis_test.go` | `AEOPrompts.test.tsx` (highlighting) | -- | **partial** | Matching is literal: no stemming, no fuzzy matching |
 | 10c.7 | **Dashboard + citations** | `/aeo` and `/aeo/citations`: visibility, per-provider timeline with no gap days, share of voice, citation shares (out of all citations) and brand-mention rates; 7/30/90 windows, range clamped to 90 days | none | `aeo_service_test.go` (arithmetic incl. zero-answer case), `aeo_handler_test.go` | `AEODashboard.test.tsx`, `AEOCitations.test.tsx` | `aeo_repository_test.go` (aggregations + a portability scan for MySQL/SQLite-only SQL) | **partial** | Per-day bucketing is done in Go; no `DATE()`/`strftime` anywhere by design |
 | 10c.8 | **Scheduler** | Daily run at `AEO_SCHEDULE_HOUR`, armed whenever `AEO_SCHEDULE_ENABLED` is on regardless of boot-time keys; engines resolved at the due tick from environment plus stored keys; incomplete configuration logged once per tick at info; panic-recovered; cancelled and joined at shutdown | none | `internal/aeo/scheduler_test.go` (`NextRunAt` boundaries), `internal/aeo/runtime_test.go` (manual clock: due tick, re-arm, join, quiet skips), `cmd/aeo_runtime_test.go` (real wiring: no boot key then stored key, disabled arms nothing) | -- | -- | **backend covered** | Every replica would arm its own scheduler — the module assumes one API process |
 | 10c.9 | **RBAC** | Per-route guards built from `RouteKeys` admit admin/sales/support (customer 403 everywhere); writes admin+sales; prompt delete admin-only; SPA nav and routes mirror it | none | `aeo_handler_test.go` role matrix, `routes_test.go` static/param coexistence | -- | -- | **partial** | Sales/support paths are untestable end-to-end until a role-login helper exists |
-| 10c.12 | **Export (CSV/JSON)** | `GET /aeo/export` (admin, sales, support): one run (`run_id`) or a strictly validated 7/30/90-day window (`days`, default 30) ending at the start of tomorrow UTC on the service clock; CSV (pinned columns, one row per citation, no answer text, every free-text cell through `aeoCSVSafeField`) or JSON (`models.AEOExport` with answer text); at most 10,000 answers (422 `EXPORT_TOO_LARGE`, checked before citations are read); every row read before the first byte; ownership columns never exported (#244). Web UI (#318): Export CSV / Export JSON in the `/aeo` dashboard header (the selected window) and Export run as CSV / JSON in the `/aeo/prompts` answer drawer (the selected run, disabled for "All runs"), admin/sales/support only; client-built filename; status-specific error from the Blob body, no file saved on error | none | `TestAEOExport{HandlerValidation,Roles,ErrorMapping,HandlerLogsOmitPersonalData,CSVShape,CSVFormulaGuard,JSON}` (`internal/handler`), `TestAEOExport{Service,LogsOmitPersonalData}` (`internal/service`), `TestAEOExportAPISQLite` (`tests`) | `aeo.export.test.ts` (`aeoApi.exportResults`), `aeoExport.test.ts` (filenames, error messages), `AEODashboard.export.test.tsx`, `AEOPrompts.export.test.tsx` | `TestAEOExportRepository{SQLite,MySQL}` (`internal/repository`; the MySQL root needs `TEST_MYSQL_DSN`) | **partial** | No browser spec for the download; no threshold alerts or scheduled client reports |
+| 10c.12 | **Export (CSV/JSON)** | `GET /aeo/export` (admin, sales, support): one run (`run_id`) or a strictly validated 7/30/90-day window (`days`, default 30) ending at the start of tomorrow UTC on the service clock (more in the notes) | none | `TestAEOExport{HandlerValidation,Roles,ErrorMapping,HandlerLogsOmitPersonalData,CSVShape,CSVFormulaGuard,JSON}` (`internal/handler`) … (more in the notes) | `aeo.export.test.ts` (`aeoApi.exportResults`), `aeoExport.test.ts` (filenames, error messages), `AEODashboard.export.test.tsx`, `AEOPrompts.export.test.tsx` | `TestAEOExportRepository{SQLite,MySQL}` (`internal/repository`; the MySQL root needs `TEST_MYSQL_DSN`) | **partial** | No browser spec for the download; no threshold alerts or scheduled client reports |
 | 10c.13 | **Public-only egress for webhooks** | `(*egress.Guard).PublicHTTPClient(url)`: https without userinfo, query or fragment; every connection resolves and validates every address (no loopback, RFC 1918, CGNAT, unique-local, link-local, metadata, multicast, unspecified; IPv4-mapped judged as IPv4), dials the literal, no proxy, no redirect; AEO allowlists and local exceptions never widen it (#345) | none | `TestEgressPublicClient` (`internal/egress`) | -- | -- | **backend covered** | Used only by the webhook sender (section 10d) |
 | 10c.10 | **Provider egress + sanitized failures** | Keys reach only each engine's official HTTPS origin unless the environment-only `AEO_EGRESS_ALLOWED_ORIGINS` / `AEO_EGRESS_LOCAL_ORIGINS` policy trusts more; addresses validated and pinned per connection, no redirects, no ambient proxy; failures persisted/logged as bounded categories + status ([AEO_SECURITY.md](AEO_SECURITY.md)) | none | `TestAEOEndpointSyntax`, `TestAEOOperatorEgressConfig`, `TestAEOConfigTrustBoundary`, `TestAEOEndpointTrust`, `TestAEODialPolicy`, `TestAEORedirectPolicy`, `TestAEOFailureSanitization`, `TestAEOFailurePersistence`, `TestAEOGenerationFailureSanitization` (injected resolver/dialer/CA, fake keys, no real network) | -- | -- | **backend covered** | Custom and non-official endpoints need an explicit operator entry after upgrading (#98) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **10c.5** **Run recovery and replicas**
+  - Description: Each run has an owner instance and a heartbeat renewed every 30 s; at boot
+    (`ReconcileRunningRuns`) and before every start, any replica fails only runs whose heartbeat is
+    older than 3 min, legacy rows without one, or runs started over 6 h ago; one running run across
+    replicas (unique `running_lock`); one scheduled run per daily slot (unique `schedule_slot`);
+    finalisation is conditional on the owner (#229).
+  - Unit Tests (Backend): `aeo_service_test.go` (`TestReconcileRunningRuns`,
+    `TestStartRun_SweepsRunsStrandedByACrash`, `TestStartRun_ConcurrentCallsStartExactlyOneRun`);
+    `aeo_replica_test.go`
+    (`TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`,
+    `TestAEORunHeartbeatLifecycle`, `TestAEOReplicaLogsOmitPersonalData`); `internal/aeo`
+    (`TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`,
+    `TestEngineFinalizeRefusedWhenNotOwned`); `TestAEOReplicaAPISQLite` (`tests`);
+    `TestAEOReplicaProductionWiring` (`cmd`).
+  - Integration Tests: `aeo_run_ownership_test.go`
+    (`TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`,
+    `TestAEORunClaimContention{SQLite,MySQL}`),
+    `TestAEORunOwnership{SchemaSQLite,SQLiteUpgrade,JSONHidden}` (`internal/models`),
+    `TestAEORunOwnershipMigration` and `TestAEORunOwnershipMigrationFiles` (`cmd/migrate`),
+    `aeo_runtime_test.go` (reconciliation after a failed finalization).
+  - Known Issues: Added 2026-08-11 (one stranded row used to reject every later run); replica-safe
+    since #229. A crashed run is recovered up to 3 min after the crash, at the next boot or start;
+    no periodic sweep; several processes on one SQLite file unsupported.
+- **10c.11** **Run ownership at shutdown**
+  - Description: `service.AEORuntime` owns every run: shutdown closes admission (503
+    `SHUTTING_DOWN`), cancels scheduler and runs — cancellation reaches provider calls and
+    repository writes via `AEORepository.WithContext` — joins them before the database closes;
+    interrupted runs finalize `failed`/`partial` through a bounded cleanup context; a 15s drain
+    deadline falls back to exit-without-close plus boot reconciliation ([AEO
+    guide](user-guide/aeo.md#shutdown)).
+  - Known Issues: Added 2026-10 (#111). A provider or database write that ignores cancellation holds
+    the process until the deadline; the row it leaves is recovered at the next boot, its remaining
+    results are lost.
+- **10c.12** **Export (CSV/JSON)**
+  - Description: `GET /aeo/export` (admin, sales, support): one run (`run_id`) or a strictly
+    validated 7/30/90-day window (`days`, default 30) ending at the start of tomorrow UTC on the
+    service clock; CSV (pinned columns, one row per citation, no answer text, every free-text cell
+    through `aeoCSVSafeField`) or JSON (`models.AEOExport` with answer text); at most 10,000 answers
+    (422 `EXPORT_TOO_LARGE`, checked before citations are read); every row read before the first
+    byte; ownership columns never exported (#244). Web UI (#318): Export CSV / Export JSON in the
+    `/aeo` dashboard header (the selected window) and Export run as CSV / JSON in the `/aeo/prompts`
+    answer drawer (the selected run, disabled for "All runs"), admin/sales/support only;
+    client-built filename; status-specific error from the Blob body, no file saved on error.
+  - Unit Tests (Backend):
+    `TestAEOExport{HandlerValidation,Roles,ErrorMapping,HandlerLogsOmitPersonalData,CSVShape,CSVFormulaGuard,JSON}`
+    (`internal/handler`), `TestAEOExport{Service,LogsOmitPersonalData}` (`internal/service`),
+    `TestAEOExportAPISQLite` (`tests`).
 
 ---
 
@@ -474,12 +2540,187 @@ the delivery log are managed in Settings > Webhooks (`/settings/webhooks`, #409)
 
 | # | Feature | Behaviour | E2E | Backend tests | Frontend | Integration | Status | Notes |
 |---|---------|-----------|-----|---------------|----------|-------------|--------|-------|
-| 10d.1 | **Endpoint registry** | `/webhooks/endpoints` list/create/read/update/delete, `POST /webhooks/endpoints/:id/test` (one signed `webhook.ping` without `record_id`, synchronous, same egress guard, 10 s timeout and no redirect as deliveries, works on an inactive endpoint, writes nothing; `webhook.ping` is not subscribable) and `POST /webhooks/endpoints/:id/rotate-secret` (#503: a new `whsec_` secret returned once, the replaced one kept sealed as the previous secret until `previous_secret_expires_at` = now + 24 h; one primary-key UPDATE that never opens a stored secret, works on an inactive endpoint; at most two secrets), admin only (403 for sales, support, customer, Bearer and API key); https URL ≤2048 chars without credentials, query or fragment, public IP literal only; any non-empty subset of the twenty-one types `lead.created`, `lead.updated`, `lead.deleted`, `customer.created`, `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`, `deal.created`, `deal.updated`, `deal.deleted`, `task.created`, `task.updated`, `task.deleted`, `company.created`, `company.updated`, `company.deleted`, `quote.created`, `quote.updated`, `quote.deleted` (#437, #515, #516, #517, #518; a raw array of at most 32 entries, raised from 20 by #518, duplicates collapse), stored canonical; `is_active` default true; read-only `consecutive_failures` and `paused_until` (#569, written only by the sender, not by a PUT); `whsec_` secret (32 random bytes) shown once, sealed with SecretBox context `webhook-endpoint-secret`; delete removes the delivery log in one transaction | none | `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation` (`internal/handler`); `TestWebhookEndpointService`, `TestWebhookUpdatedFanOutSQLite` (raw bound), `TestWebhookPing`, `TestWebhookRedeliverSQLite`, `TestWebhookRedeliverMySQL`, `TestWebhookSecretRotationSQLite`, `TestWebhookSecretRotationMySQL` (`internal/service`); `TestWebhookRotateSecretHandler` (`internal/handler`); `TestWebhookPingProductionWiring` (`cmd`); `TestWebhookJSON` (`internal/models`, a 512-byte list fits the `varchar(512)` column and 513 bytes are refused; its literal list of twelve types takes 173; all twenty-one take 302) | -- | `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite`, `TestWebhookDeletedAPISQLite` (`tests`) | **backend covered** | No re-reveal; the rotation window is fixed at 24 h |
-| 10d.2 | **Outbox in the writing transaction** | One pending row per active subscribed endpoint, one event id, due at once. Created events (#345) are written by `LeadService.Create`, form create_lead (new lead only), `CustomerService.Create` (now one transaction), `LeadService.ConvertToCustomer` (inside each retry attempt), `TicketService.Create` and form ticket intake (outcome created only), `DealService.Create` (`deal.created`, #515), and `TaskService.Create` / `CreateWithLabels` and the automation `create_task` step (`task.created`, #516, the latter in the step transaction; a dry run writes none), `CompanyService.Create` (`company.created`, #517), and `QuoteService.Create` / `CreateWithPolicy` (`quote.created`, #518, after the draft history row); a rolled-back create leaves no row. Updated events (#408): `LeadService.Update` and `LeadService.Assign` (`lead.updated`), `LeadService.ConvertToCustomer` (`lead.updated` next to `customer.created`, inside each attempt), the automation `assign_owner` step (`lead.updated` / `ticket.updated` / `deal.updated`), `DealService.Update` and `DealService.ChangeStage` (`deal.updated`, #515, the deal row read through `DealLockingReader`), `TaskService.Update` / `UpdateWithLabels` (`task.updated`, #516, the task row read through `TaskLockingReader` and, when `label_ids` was sent, its label ids through `GetLabelIDsForUpdate`: a different label set is a change, order and repeats are not), `BulkSetTaskStatus` (`task.updated` per task whose status changed, #516), `CompanyService.Update` (`company.updated`, #517, the company row read through `CompanyLockingReader`), the quote writes (`quote.updated`, #518: `QuoteService.Update` against the row `lockDraft` locked, `UpdateLine` against the line read under the quote lock, `AddLine` and `DeleteLine` always, and every committed `ChangeStatus` and `RespondPublic` transition), `CustomerService.Update` (`customer.updated`, always one transaction with a locking read), `TicketService.Update` (`ticket.updated`, transactional when automation or webhooks are wired) and the lead and ticket bulk status batches (one event per record whose status changed, endpoints read once per batch), only when the record's `WebhookState()` differs from that of the row locked in the writing transaction (`TestWebhookStateCoversUpdateColumns` keeps each state equal to the columns its update writes); an unchanged update, an assignment to the current owner, a refusal and a rolled-back write leave no row; customer assignment, delete, comments, the other automation steps, a company delete that unlinks leads, customers and deals (it writes `company.deleted` only), the erasure scrub of deal and quote text, a quote email (`last_emailed_at`), the quote response-token and render-credential writes and a label delete (its purge of `task_labels`) emit no updated event. Deleted events (#437): a ticket delete, a deal delete, a task delete, a company delete, a quote delete and every erasure unit, see 10d.6 | none | `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`, `TestWebhookUpdated{FanOut,Atomicity,Automation}{SQLite,MySQL}`, `TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestTaskWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestCompanyWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestQuoteWebhook{FanOut,Atomicity}{SQLite,MySQL}` (`internal/service`); `TestWebhookStateCoversUpdateColumns` (`internal/repository`); `TestWebhookStateNullableIDs`, `TestWebhookStateTicketDueAt` (`internal/models`); `TestWebhookUpdatedProductionWiring` (`cmd`) | -- | `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite` (`tests`) | **backend covered** | MySQL roots need `TEST_MYSQL_DSN`; the updated roots are in the transaction profile of `scripts/ci/check-go.py` |
-| 10d.3 | **Delivery runtime** | Every 5 s: lease recovery, plain discovery, a pool of 4 workers; one endpoint's due rows are sent one at a time in id order, so a slow endpoint no longer delays the others (#568); conditional claim, one signed POST (Standard Webhooks HMAC-SHA256 over `id.timestamp.body`, thin body; inside a rotation window two space-separated signatures, new first, and the expired previous secret cleared by the next send, #503), fenced finish; the endpoint read and the expired-secret clear of an attempt each bounded by 5 s like the finish write (#561, `TestWebhookRuntimeLifecycle`); 2xx succeeded; non-2xx, redirect, timeout (10 s), connection failure and refused destination retried after min(1 min·2^(n−1), 6 h) up to 10 attempts; inactive endpoint or unreadable secret fails at once; an endpoint whose sent attempts fail 3 times in a row is paused for 1 min, doubling up to 1 h per further failure, its due rows skipped in discovery and the rest of its group in the pass, a 2xx resets it (#569); drained by `combineStops` | none | `TestWebhookSignature`, `TestWebhook{DeliveryAfterCommit,RetryBackoffAndCap,UndeliverableEndpoint,RuntimeLifecycle,EgressRefusal,RequestTimeout,LogsOmitSecrets}`, `TestWebhookSecretRotation{SQLite,MySQL}`, `TestWebhookWorkerPool{SQLite,MySQL}`, `TestWebhookEndpointPause{SQLite,MySQL}` (`internal/service`); `TestWebhookProductionWiring` (`cmd`) | -- | `TestWebhookAPISQLite` | **backend covered** | At least once; per endpoint in id order within one sender's pass, but retries and several replicas can reorder; consumers deduplicate on `webhook-id` |
-| 10d.4 | **Storage and delivery log** | `webhook_endpoints`, `webhook_deliveries` (ids only, no foreign key); `GET /webhooks/deliveries` newest first, filtered by endpoint, status, event type; `POST /webhooks/deliveries/:id/redeliver` (#502) puts a succeeded or failed row back to pending (attempts 0, due now, same event id) with one conditional UPDATE, 409 for a pending or sending row or a deleted or inactive endpoint, 404 for an unknown id; finished rows pruned after 30 days, at most hourly, by primary key in chunks of 500 | none | `TestWebhookDeliveryLogAndPrune`, `TestWebhookRedeliverSQLite`, `TestWebhookRedeliverMySQL` (`internal/service`); `TestWebhookRedeliverHandler` (`internal/handler`); `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`) | -- | `TestWebhookRepository{SQLite,MySQL}` (`internal/repository`); `TestWebhookMigrationFiles`, `TestWebhookMigration`, `TestWebhookSecretRotationMigrationFiles`, `TestWebhookSecretRotationMigration` (`cmd/migrate`, migration `20261127120000_webhook_secret_rotation`); `TestWebhookSecretRotationSQLiteUpgrade` (`internal/models`); `TestWebhookEndpointPauseMigrationFiles`, `TestWebhookEndpointPauseMigration` (`cmd/migrate`, migration `20261129120005_webhook_endpoint_pause`); `TestWebhookEndpointPauseSQLiteUpgrade` (`internal/models`); sweep coverage in `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` | **backend covered** | Erasure and ticket delete leave the ids-only rows |
-| 10d.5 | **Settings > Webhooks screen (#409)** | `/settings/webhooks`, route and Settings entry shown only with `webhooks.manage` of `GET /users/me`. Endpoints tab: URL, subscribed events, active flag and created date, newest first (`sort_by=id&sort_order=desc`), paginated; create and edit dialog with one checkbox per event type, 21 in all (the list in `src/api/endpoints/webhooks.ts`, held equal to the `event_types` enum of `api/swagger.json`), Activate/Deactivate (a `PUT` with `is_active` only) and Delete behind a confirmation that says the delivery log goes with it. The form checks only that a URL and one event are present; the server's 400 is shown as its message plus `details.url` / `details.event_types`, and the form stays open. The signing secret of a new endpoint is shown once in a dialog with a copy control, held in component state only (never in browser storage or the query cache) and dropped on close. Each endpoint row also has "Send test ping" (`POST .../test`, disabled while it runs; a snackbar shows `succeeded` with the HTTP status, or `failed` with the error code and the HTTP status or "no response") and "Rotate secret" (#727): a confirmation that says the current secret keeps verifying for 24 hours, then `POST .../rotate-secret`; the new secret is shown once in a "New signing secret" dialog with the time the previous one stops verifying, held like the create secret and absent from the mutation cache too. Delivery log tab: event type, record id, status, attempts, last attempt and last response code in the API's order, plus an Actions column whose "Redeliver" button (succeeded and failed rows only) calls `POST /webhooks/deliveries/:id/redeliver`, reloads the log and shows a 409's message (#727), paginated on `meta.total`, filtered by endpoint, status and event type (an unset filter is not sent; a changed filter returns to the first page). In both tables an empty page with a non-zero `meta.total` (the last row of a later page deleted or pruned) moves to the last existing page, and the empty-state text shows only when the total is 0 (#423) | `settings-webhooks.spec.ts`: an `http://` URL is refused with the server's text; create, secret shown once and absent from the page and both storages after a reload; edit and delete persist; the log lists three events newest first and narrows by endpoint, event type and status; a rotation cancelled sends nothing, a confirmed one shows a new `whsec_` secret once, different from the create secret, and absent after Done and a reload; a test ping to an inactive `https://localhost` endpoint answers `failed` / `destination_refused` with no status and the page says so | -- | `gocrm-ui/src/api/endpoints/webhooks.test.ts`, `pages/settings/Webhooks.test.tsx`, `WebhookEndpointDialog.test.tsx`, `WebhookDeliveryLog.test.tsx`, `components/OneTimeSecretDialog.test.tsx`; `routes/index.permissions.test.tsx` and `layouts/MainLayout.permissions.test.tsx` (the `webhooks.manage` cases) | -- | **covered** | No API change. The endpoint filter of the log offers the 100 newest endpoints (one API page); the log shows no endpoint column, error code or next attempt; a lost secret is replaced by a rotation, there is no re-reveal; redelivery is covered by Vitest only, because no browser delivery can finish (every spec endpoint is unreachable), so no row can be redelivered; the spec's endpoints use the reserved `.invalid` domain, so a succeeded delivery is not exercised in the browser |
-| 10d.6 | **Deleted events (#437, #531, #515, #516, #517, #518)** | `ticket.deleted` from `TicketService.Delete`, `deal.deleted` from `DealService.Delete` (#515) and `task.deleted` from `TaskService.Delete` (#516, after a locking read of the live task inside the transaction, so a delete that loses a race answers 404 and emits nothing) and `company.deleted` from `CompanyService.Delete` (#517, after `LockLive`, the unlinks and the soft delete; the unlinked leads, customers and deals get no updated event) and `quote.deleted` from `QuoteService.Delete` (#518, after a locking read of the live quote and the draft-only check on that row, so a refused delete writes nothing) (soft delete and enqueue in one transaction when wired); `lead.deleted` and `customer.deleted` from every erasure unit (DELETE of a lead, a customer or a user, governed or not, cascades included) through the erasure listener the lead, customer and user repositories carry, called last inside the unit for the leads and customers whose locked row was live. Every active endpoint subscribed to the deleted type gets a row, whether or not that endpoint received an earlier event for the record (the outbox does not read the delivery log); one event id per record; the row and the thin body are the same for an erasure and a delete; an already soft-deleted record, a second delete, a non-admin refusal and a rolled-back delete or erasure write nothing; a restarted erasure attempt commits one row set | none | `TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`, `TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestTaskWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestCompanyWebhook{FanOut,Atomicity}{SQLite,MySQL}`, `TestQuoteWebhook{FanOut,Atomicity}{SQLite,MySQL}` (`internal/service`); `TestWebhookDeletedProductionWiring`, `TestWebhookUpdatedProductionWiring` (`cmd`) | `gocrm-ui/src/api/endpoints/webhooks.test.ts`, `WebhookEndpointDialog.test.tsx` (the deleted, the deal, the task, the company and the quote checkboxes) | `TestWebhookDeletedAPISQLite`, `TestWebhookAPISQLite` (`tests`) | **backend covered** | No deleted event for users or other entities. The twelve types of #515 took 173 bytes, so migration `20261129120007_widen_webhook_event_types` widens `event_types` to `varchar(512)` (the twenty-one types of #518 take 302 bytes and fit it) (`TestWebhookEventTypesWidthMigrationFiles`, `TestWebhookEventTypesWidthMigration`); its down half refuses while a row is longer than 255 bytes |
+| 10d.1 | **Endpoint registry** | `/webhooks/endpoints` list/create/read/update/delete, `POST /webhooks/endpoints/:id/test` … (more in the notes) | none | `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation` (`internal/handler`) (more in the notes) | -- | `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite`, `TestWebhookDeletedAPISQLite` (`tests`) | **backend covered** | No re-reveal; the rotation window is fixed at 24 h |
+| 10d.2 | **Outbox in the writing transaction** | One pending row per active subscribed endpoint, one event id, due at once (more in the notes) | none | `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`, `TestWebhookUpdated{FanOut,Atomicity,Automation}{SQLite,MySQL}` … (more in the notes) | -- | `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite` (`tests`) | **backend covered** | MySQL roots need `TEST_MYSQL_DSN`; the updated roots are in the transaction profile of `scripts/ci/check-go.py` |
+| 10d.3 | **Delivery runtime** | Every 5 s: lease recovery, plain discovery, a pool of 4 workers (more in the notes) | none | `TestWebhookSignature` … (more in the notes) | -- | `TestWebhookAPISQLite` | **backend covered** | At least once; per endpoint in id order within one sender's pass, but retries and several replicas can reorder; consumers deduplicate on `webhook-id` |
+| 10d.4 | **Storage and delivery log** | `webhook_endpoints`, `webhook_deliveries` (ids only, no foreign key) (more in the notes) | none | `TestWebhookDeliveryLogAndPrune`, `TestWebhookRedeliverSQLite`, `TestWebhookRedeliverMySQL` (`internal/service`) (more in the notes) | -- | `TestWebhookRepository{SQLite,MySQL}` (`internal/repository`) (more in the notes) | **backend covered** | Erasure and ticket delete leave the ids-only rows |
+| 10d.5 | **Settings > Webhooks screen (#409)** | `/settings/webhooks`, route and Settings entry shown only with `webhooks.manage` of `GET /users/me` (more in the notes) | `settings-webhooks.spec.ts` (details in the notes) | -- | `gocrm-ui/src/api/endpoints/webhooks.test.ts`, `pages/settings/Webhooks.test.tsx`, `WebhookEndpointDialog.test.tsx`, `WebhookDeliveryLog.test.tsx` and 3 more files (details in the notes) | -- | **covered** | No API change. The endpoint filter of the log offers the 100 newest endpoints (one API page) (more in the notes) |
+| 10d.6 | **Deleted events (#437, #531, #515, #516, #517, #518)** | `ticket.deleted` from `TicketService.Delete`, `deal.deleted` from `DealService.Delete` (#515) and `task.deleted` from `TaskService.Delete` … (more in the notes) | none | `TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`, `TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}` … (more in the notes) | `gocrm-ui/src/api/endpoints/webhooks.test.ts`, `WebhookEndpointDialog.test.tsx` (the deleted, the deal, the task, the company and the quote checkboxes) | `TestWebhookDeletedAPISQLite`, `TestWebhookAPISQLite` (`tests`) | **backend covered** | No deleted event for users or other entities (more in the notes) |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **10d.1** **Endpoint registry**
+  - Behaviour: `/webhooks/endpoints` list/create/read/update/delete,
+    `POST /webhooks/endpoints/:id/test` (one signed `webhook.ping` without `record_id`, synchronous,
+    same egress guard, 10 s timeout and no redirect as deliveries, works on an inactive endpoint,
+    writes nothing; `webhook.ping` is not subscribable) and
+    `POST /webhooks/endpoints/:id/rotate-secret` (#503: a new `whsec_` secret returned once, the
+    replaced one kept sealed as the previous secret until `previous_secret_expires_at` = now + 24 h;
+    one primary-key UPDATE that never opens a stored secret, works on an inactive endpoint; at most
+    two secrets), admin only (403 for sales, support, customer, Bearer and API key); https URL ≤2048
+    chars without credentials, query or fragment, public IP literal only; any non-empty subset of
+    the twenty-one types `lead.created`, `lead.updated`, `lead.deleted`, `customer.created`,
+    `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`,
+    `deal.created`, `deal.updated`, `deal.deleted`, `task.created`, `task.updated`, `task.deleted`,
+    `company.created`, `company.updated`, `company.deleted`, `quote.created`, `quote.updated`,
+    `quote.deleted` (#437, #515, #516, #517, #518; a raw array of at most 32 entries, raised from 20
+    by #518, duplicates collapse), stored canonical; `is_active` default true; read-only
+    `consecutive_failures` and `paused_until` (#569, written only by the sender, not by a PUT);
+    `whsec_` secret (32 random bytes) shown once, sealed with SecretBox context
+    `webhook-endpoint-secret`; delete removes the delivery log in one transaction.
+  - Backend tests: `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation`
+    (`internal/handler`); `TestWebhookEndpointService`, `TestWebhookUpdatedFanOutSQLite` (raw
+    bound), `TestWebhookPing`, `TestWebhookRedeliverSQLite`, `TestWebhookRedeliverMySQL`,
+    `TestWebhookSecretRotationSQLite`, `TestWebhookSecretRotationMySQL` (`internal/service`);
+    `TestWebhookRotateSecretHandler` (`internal/handler`); `TestWebhookPingProductionWiring`
+    (`cmd`); `TestWebhookJSON` (`internal/models`, a 512-byte list fits the `varchar(512)` column
+    and 513 bytes are refused; its literal list of twelve types takes 173; all twenty-one take 302).
+- **10d.2** **Outbox in the writing transaction**
+  - Behaviour: One pending row per active subscribed endpoint, one event id, due at once. Created
+    events (#345) are written by `LeadService.Create`, form create_lead (new lead only),
+    `CustomerService.Create` (now one transaction), `LeadService.ConvertToCustomer` (inside each
+    retry attempt), `TicketService.Create` and form ticket intake (outcome created only),
+    `DealService.Create` (`deal.created`, #515), and `TaskService.Create` / `CreateWithLabels` and
+    the automation `create_task` step (`task.created`, #516, the latter in the step transaction; a
+    dry run writes none), `CompanyService.Create` (`company.created`, #517), and
+    `QuoteService.Create` / `CreateWithPolicy` (`quote.created`, #518, after the draft history row);
+    a rolled-back create leaves no row. Updated events (#408): `LeadService.Update` and
+    `LeadService.Assign` (`lead.updated`), `LeadService.ConvertToCustomer` (`lead.updated` next to
+    `customer.created`, inside each attempt), the automation `assign_owner` step (`lead.updated` /
+    `ticket.updated` / `deal.updated`), `DealService.Update` and `DealService.ChangeStage`
+    (`deal.updated`, #515, the deal row read through `DealLockingReader`), `TaskService.Update` /
+    `UpdateWithLabels` (`task.updated`, #516, the task row read through `TaskLockingReader` and,
+    when `label_ids` was sent, its label ids through `GetLabelIDsForUpdate`: a different label set
+    is a change, order and repeats are not), `BulkSetTaskStatus` (`task.updated` per task whose
+    status changed, #516), `CompanyService.Update` (`company.updated`, #517, the company row read
+    through `CompanyLockingReader`), the quote writes (`quote.updated`, #518: `QuoteService.Update`
+    against the row `lockDraft` locked, `UpdateLine` against the line read under the quote lock,
+    `AddLine` and `DeleteLine` always, and every committed `ChangeStatus` and `RespondPublic`
+    transition), `CustomerService.Update` (`customer.updated`, always one transaction with a locking
+    read), `TicketService.Update` (`ticket.updated`, transactional when automation or webhooks are
+    wired) and the lead and ticket bulk status batches (one event per record whose status changed,
+    endpoints read once per batch), only when the record's `WebhookState()` differs from that of the
+    row locked in the writing transaction (`TestWebhookStateCoversUpdateColumns` keeps each state
+    equal to the columns its update writes); an unchanged update, an assignment to the current
+    owner, a refusal and a rolled-back write leave no row; customer assignment, delete, comments,
+    the other automation steps, a company delete that unlinks leads, customers and deals (it writes
+    `company.deleted` only), the erasure scrub of deal and quote text, a quote email
+    (`last_emailed_at`), the quote response-token and render-credential writes and a label delete
+    (its purge of `task_labels`) emit no updated event. Deleted events (#437): a ticket delete, a
+    deal delete, a task delete, a company delete, a quote delete and every erasure unit, see 10d.6.
+  - Backend tests: `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`,
+    `TestWebhookUpdated{FanOut,Atomicity,Automation}{SQLite,MySQL}`,
+    `TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestTaskWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestCompanyWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestQuoteWebhook{FanOut,Atomicity}{SQLite,MySQL}` (`internal/service`);
+    `TestWebhookStateCoversUpdateColumns` (`internal/repository`); `TestWebhookStateNullableIDs`,
+    `TestWebhookStateTicketDueAt` (`internal/models`); `TestWebhookUpdatedProductionWiring` (`cmd`).
+- **10d.3** **Delivery runtime**
+  - Behaviour: Every 5 s: lease recovery, plain discovery, a pool of 4 workers; one endpoint's due
+    rows are sent one at a time in id order, so a slow endpoint no longer delays the others (#568);
+    conditional claim, one signed POST (Standard Webhooks HMAC-SHA256 over `id.timestamp.body`, thin
+    body; inside a rotation window two space-separated signatures, new first, and the expired
+    previous secret cleared by the next send, #503), fenced finish; the endpoint read and the
+    expired-secret clear of an attempt each bounded by 5 s like the finish write (#561,
+    `TestWebhookRuntimeLifecycle`); 2xx succeeded; non-2xx, redirect, timeout (10 s), connection
+    failure and refused destination retried after min(1 min·2^(n−1), 6 h) up to 10 attempts;
+    inactive endpoint or unreadable secret fails at once; an endpoint whose sent attempts fail 3
+    times in a row is paused for 1 min, doubling up to 1 h per further failure, its due rows skipped
+    in discovery and the rest of its group in the pass, a 2xx resets it (#569); drained by
+    `combineStops`.
+  - Backend tests: `TestWebhookSignature`,
+    `TestWebhook{DeliveryAfterCommit,RetryBackoffAndCap,UndeliverableEndpoint,RuntimeLifecycle,EgressRefusal,RequestTimeout,LogsOmitSecrets}`,
+    `TestWebhookSecretRotation{SQLite,MySQL}`, `TestWebhookWorkerPool{SQLite,MySQL}`,
+    `TestWebhookEndpointPause{SQLite,MySQL}` (`internal/service`); `TestWebhookProductionWiring`
+    (`cmd`).
+- **10d.4** **Storage and delivery log**
+  - Behaviour: `webhook_endpoints`, `webhook_deliveries` (ids only, no foreign key);
+    `GET /webhooks/deliveries` newest first, filtered by endpoint, status, event type;
+    `POST /webhooks/deliveries/:id/redeliver` (#502) puts a succeeded or failed row back to pending
+    (attempts 0, due now, same event id) with one conditional UPDATE, 409 for a pending or sending
+    row or a deleted or inactive endpoint, 404 for an unknown id; finished rows pruned after 30
+    days, at most hourly, by primary key in chunks of 500.
+  - Backend tests: `TestWebhookDeliveryLogAndPrune`, `TestWebhookRedeliverSQLite`,
+    `TestWebhookRedeliverMySQL` (`internal/service`); `TestWebhookRedeliverHandler`
+    (`internal/handler`); `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`).
+  - Integration: `TestWebhookRepository{SQLite,MySQL}` (`internal/repository`);
+    `TestWebhookMigrationFiles`, `TestWebhookMigration`, `TestWebhookSecretRotationMigrationFiles`,
+    `TestWebhookSecretRotationMigration` (`cmd/migrate`, migration
+    `20261127120000_webhook_secret_rotation`); `TestWebhookSecretRotationSQLiteUpgrade`
+    (`internal/models`); `TestWebhookEndpointPauseMigrationFiles`,
+    `TestWebhookEndpointPauseMigration` (`cmd/migrate`, migration
+    `20261129120005_webhook_endpoint_pause`); `TestWebhookEndpointPauseSQLiteUpgrade`
+    (`internal/models`); sweep coverage in
+    `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`.
+- **10d.5** **Settings > Webhooks screen (#409)**
+  - Behaviour: `/settings/webhooks`, route and Settings entry shown only with `webhooks.manage` of
+    `GET /users/me`. Endpoints tab: URL, subscribed events, active flag and created date, newest
+    first (`sort_by=id&sort_order=desc`), paginated; create and edit dialog with one checkbox per
+    event type, 21 in all (the list in `src/api/endpoints/webhooks.ts`, held equal to the
+    `event_types` enum of `api/swagger.json`), Activate/Deactivate (a `PUT` with `is_active` only)
+    and Delete behind a confirmation that says the delivery log goes with it. The form checks only
+    that a URL and one event are present; the server's 400 is shown as its message plus
+    `details.url` / `details.event_types`, and the form stays open. The signing secret of a new
+    endpoint is shown once in a dialog with a copy control, held in component state only (never in
+    browser storage or the query cache) and dropped on close. Each endpoint row also has "Send test
+    ping" (`POST .../test`, disabled while it runs; a snackbar shows `succeeded` with the HTTP
+    status, or `failed` with the error code and the HTTP status or "no response") and "Rotate
+    secret" (#727): a confirmation that says the current secret keeps verifying for 24 hours, then
+    `POST .../rotate-secret`; the new secret is shown once in a "New signing secret" dialog with the
+    time the previous one stops verifying, held like the create secret and absent from the mutation
+    cache too. Delivery log tab: event type, record id, status, attempts, last attempt and last
+    response code in the API's order, plus an Actions column whose "Redeliver" button (succeeded and
+    failed rows only) calls `POST /webhooks/deliveries/:id/redeliver`, reloads the log and shows a
+    409's message (#727), paginated on `meta.total`, filtered by endpoint, status and event type (an
+    unset filter is not sent; a changed filter returns to the first page). In both tables an empty
+    page with a non-zero `meta.total` (the last row of a later page deleted or pruned) moves to the
+    last existing page, and the empty-state text shows only when the total is 0 (#423).
+  - E2E: `settings-webhooks.spec.ts`: an `http://` URL is refused with the server's text; create,
+    secret shown once and absent from the page and both storages after a reload; edit and delete
+    persist; the log lists three events newest first and narrows by endpoint, event type and status;
+    a rotation cancelled sends nothing, a confirmed one shows a new `whsec_` secret once, different
+    from the create secret, and absent after Done and a reload; a test ping to an inactive
+    `https://localhost` endpoint answers `failed` / `destination_refused` with no status and the
+    page says so.
+  - Frontend: `gocrm-ui/src/api/endpoints/webhooks.test.ts`, `pages/settings/Webhooks.test.tsx`,
+    `WebhookEndpointDialog.test.tsx`, `WebhookDeliveryLog.test.tsx`,
+    `components/OneTimeSecretDialog.test.tsx`; `routes/index.permissions.test.tsx` and
+    `layouts/MainLayout.permissions.test.tsx` (the `webhooks.manage` cases).
+  - Notes: No API change. The endpoint filter of the log offers the 100 newest endpoints (one API
+    page); the log shows no endpoint column, error code or next attempt; a lost secret is replaced
+    by a rotation, there is no re-reveal; redelivery is covered by Vitest only, because no browser
+    delivery can finish (every spec endpoint is unreachable), so no row can be redelivered; the
+    spec's endpoints use the reserved `.invalid` domain, so a succeeded delivery is not exercised in
+    the browser.
+- **10d.6** **Deleted events (#437, #531, #515, #516, #517, #518)**
+  - Behaviour: `ticket.deleted` from `TicketService.Delete`, `deal.deleted` from
+    `DealService.Delete` (#515) and `task.deleted` from `TaskService.Delete` (#516, after a locking
+    read of the live task inside the transaction, so a delete that loses a race answers 404 and
+    emits nothing) and `company.deleted` from `CompanyService.Delete` (#517, after `LockLive`, the
+    unlinks and the soft delete; the unlinked leads, customers and deals get no updated event) and
+    `quote.deleted` from `QuoteService.Delete` (#518, after a locking read of the live quote and the
+    draft-only check on that row, so a refused delete writes nothing) (soft delete and enqueue in
+    one transaction when wired); `lead.deleted` and `customer.deleted` from every erasure unit
+    (DELETE of a lead, a customer or a user, governed or not, cascades included) through the erasure
+    listener the lead, customer and user repositories carry, called last inside the unit for the
+    leads and customers whose locked row was live. Every active endpoint subscribed to the deleted
+    type gets a row, whether or not that endpoint received an earlier event for the record (the
+    outbox does not read the delivery log); one event id per record; the row and the thin body are
+    the same for an erasure and a delete; an already soft-deleted record, a second delete, a
+    non-admin refusal and a rolled-back delete or erasure write nothing; a restarted erasure attempt
+    commits one row set.
+  - Backend tests: `TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestTaskWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestCompanyWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+    `TestQuoteWebhook{FanOut,Atomicity}{SQLite,MySQL}` (`internal/service`);
+    `TestWebhookDeletedProductionWiring`, `TestWebhookUpdatedProductionWiring` (`cmd`).
+  - Notes: No deleted event for users or other entities. The twelve types of #515 took 173 bytes, so
+    migration `20261129120007_widen_webhook_event_types` widens `event_types` to `varchar(512)` (the
+    twenty-one types of #518 take 302 bytes and fit it) (`TestWebhookEventTypesWidthMigrationFiles`,
+    `TestWebhookEventTypesWidthMigration`); its down half refuses while a row is longer than 255
+    bytes.
 
 ---
 
@@ -487,14 +2728,92 @@ the delivery log are managed in Settings > Webhooks (`/settings/webhooks`, #409)
 
 | # | Feature | Description | E2E Tests | Unit Tests (Backend) | Unit Tests (Frontend) | Integration Tests | Status | Known Issues |
 |---|---------|-------------|-----------|----------------------|-----------------------|-------------------|--------|--------------|
-| 11.1 | **Role-Based Access** | Permission catalogue with deny-by-default enforcement on every protected route; four system roles plus custom roles created in Settings (`/settings/roles`, `/settings/roles/new`, `/settings/roles/:id`: list, clone, edit, delete, permission tree with All/Own scopes; #381) and assigned with the role picker of the user form; since #380 the SPA shows routes, navigation entries and buttons by the permission keys of `GET /users/me`, never by role name; last-admin invariant, escalation rule and the audit listing `GET /roles/audit`, shown read-only on Settings → Role audit (`/settings/role-audit`, `roles.audit_view`, #552), which since #552 also lists account activations, deactivations, erasures and login-email changes. Guide: [AUTHORIZATION.md](AUTHORIZATION.md) | `admin-users.spec.ts`: manage user permissions through roles; `roles.spec.ts`: clone a system role, assign it, the holder's navigation follows the role's permissions; `role-audit.spec.ts`: an email change, deactivation, activation and erasure appear on Settings → Role audit, a sales user has no entry; `login.spec.ts`: unauthenticated user is redirected to login | Handler tests cover role checks throughout; `auth_test.go`: 12 middleware tests; `internal/permissions/authorization_guide_test.go`: 4 tests pin the guide to the catalogue; `internal/integration/integration_user_integration_test.go`: TestLeastPrivilegeIntegrationUserSQLite and TestLeastPrivilegeIntegrationUserMySQL (#211: the API key of a user whose custom role holds two keys); `internal/integration/role_audit_integration_test.go`: TestAccountAuditSQLite and TestAccountAuditMySQL (#552: the account rows, their order, NULL states, no address, rollback on a failed audit insert) | `ProtectedRoute.test.tsx`: 7 tests; `ProtectedRoute.permissions.test.tsx`; `routes/index.test.tsx`: blocks non-admins from `/users`; `routes/index.permissions.test.tsx`: custom permission lists; `hooks/usePermissions.test.tsx`; `contexts/AuthContext.permissions.test.tsx`; `layouts/MainLayout.permissions.test.tsx`; `permissions/noRoleGating.test.ts`: no role-name gate in the source; `permissions/systemRoleFixture.test.ts`: the UI fixture equals the golden matrix; `pages/settings/RoleList.test.tsx`; `pages/settings/RoleEditor.test.tsx`; `pages/settings/RoleAudit.test.tsx` and `roleAudit.test.ts` (#552); `pages/users/UserForm.roles.test.tsx` | `auth_integration_test.go`: TestProtectedRoute; `user_test.go`: TestPermissionEnforcement, TestProtectedRoutes | **covered** | -- |
-| 11.2 | **Rate Limiting** | Per-client token buckets (per IPv4 address, per IPv6 /64 network): strict (10/min, burst 5) on public auth and form writes; moderate (120/min, burst 30) on authenticated routes; generous (240/min, burst 40) on public form reads | -- | `rate_limit_live_test.go` tests all live-tier bursts, the `DISABLE_RATE_LIMIT` switch lifting the strict tier and keeping moderate and generous, and the production startup refusal (TestProductionRefusesRateLimitSwitch); normal/tagged build tests prove E2E opt-out isolation; `rate_limit_test.go`: TestRateLimitCapacity, TestRateLimitExpiry, TestRateLimitLifecycle, TestRateLimitConcurrency, TestRateLimitHTTPBehavior, TestRateLimitTrustedProxy, TestRateLimitTierIsolation, TestRateLimitClientKey | -- | -- | **backend covered** | `DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits (token and refusal) in ordinary builds, keeps the moderate and generous tiers, and stops startup when `SERVER_MODE=production`. Functional `make e2e` uses the `gophercrm_e2e` build tag plus an explicit test switch to avoid shared limiter state; ordinary binaries ignore that switch. `make verify-backend` tests both build modes. Each middleware instance tracks at most 10,000 clients (an IPv6 client counts per /64 network); when full, a new client is admitted and the least recently active record is evicted; records expire after five idle minutes once refilled, via bounded per-request cleanup with no goroutine (#99). Limits are process-local and depend on `TRUSTED_PROXIES`. The unwired config-driven `RateLimiter` and its tests were removed. No E2E/integration test |
+| 11.1 | **Role-Based Access** | Permission catalogue with deny-by-default enforcement on every protected route (more in the notes) Guide: [AUTHORIZATION.md](AUTHORIZATION.md) | `admin-users.spec.ts`, `roles.spec.ts`, `role-audit.spec.ts`, `login.spec.ts` (details in the notes) | `auth_test.go`, `internal/permissions/authorization_guide_test.go`, `internal/integration/integration_user_integration_test.go` and 1 more file (details in the notes) | `ProtectedRoute.test.tsx`, `ProtectedRoute.permissions.test.tsx`, `routes/index.test.tsx`, `routes/index.permissions.test.tsx` and 10 more files (details in the notes) | `auth_integration_test.go`: TestProtectedRoute; `user_test.go`: TestPermissionEnforcement, TestProtectedRoutes | **covered** | -- |
+| 11.2 | **Rate Limiting** | Per-client token buckets (per IPv4 address, per IPv6 /64 network): strict (10/min, burst 5) on public auth and form writes (more in the notes) | -- | `rate_limit_live_test.go`, `rate_limit_test.go` (details in the notes) | -- | -- | **backend covered** | `DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits (token and refusal) in ordinary builds, keeps the moderate and generous tiers … (more in the notes) |
 | 11.3 | **Request Logging** | All requests logged with structured JSON | -- | `logger_test.go`: 3 table-driven tests; `request_id_test.go`: 4 tests | -- | -- | **covered** | Logs record the email address on login and on customer create/update — see section 12 |
 | 11.4 | **Error Handling** | Consistent error format across all endpoints | `admin-entity-suite.spec.ts`: admin can handle error scenarios gracefully | `error_handler_test.go`: 6 tests; `recovery_test.go`: 4 tests; `response_test.go`: 27 tests | `ErrorBoundary.test.tsx`: 4 tests (children render, fallback on throw, reload action, routed-page fallback) | `error_handling_test.go`: 6 tests (400, 401, 403, 404, 500, consistent format) | **covered** | -- |
 | 11.5 | **Pagination Parameters** | `page`, `limit`, `offset` parsing via `ParseOffsetLimit` (every list endpoint; `per_page` is no longer read anywhere) | -- | `response_test.go`: TestParseOffsetLimit_Defaults, _Custom, _ExceedsMax, _NeverReturnsZeroLimit, _RejectsNegativeOffset; `task_handler_test.go`: limit-honoured / cap / offset / page-conversion tests | -- | -- | **covered** | `?limit=0` used to reach the pagination arithmetic and panic, turning every list endpoint into a 500 via one query parameter. `TestParseOffsetLimit_NeverReturnsZeroLimit` is the regression test. Tasks previously read `page`/`per_page` and ignored the frontend's `limit` |
 | 11.6 | **Sort Validation** | `sort_by` is validated against per-entity column allowlists | -- | `sort_test.go`: 11 tests; per-handler `TestList_SortByInvalidColumn` | -- | -- | **covered** | -- |
-| 11.7 | **Transactions** | Multi-step operations run in one transaction; a panic rolls back and propagates unchanged; nested calls reuse the active transaction under a savepoint (inner rollback/outer commit, outer rollback discards nested writes); cancellation, commit/rollback failures and retries are reported with `errors.Is` sentinels; a failed savepoint rollback poisons the transaction so a recovered panic or swallowed inner error can never be committed (#106) | -- | `transaction_test.go`: 4 tests; `transaction_regression_test.go`: TestTransactionPanicSQLite/MySQL, TestTransactionNestedSQLite/MySQL, TestTransactionCancellationRetrySQLite/MySQL on one-connection pools with persisted-row assertions; `transaction_failure_test.go`: TestTransactionFinalizationFailures (injected begin/commit/rollback/savepoint failures, poisoned commits across nesting levels); `transaction_recovery_test.go`: TestTransactionRecoveredNestedPanicCannotCommitFailedRollback | -- | `lead_conversion_transaction_test.go`, `user_registration_transaction_test.go`, `erasure_atomicity_test.go` | **covered** | The MySQL roots need `TEST_MYSQL_DSN` and skip without it; acceptance runs reject skips. Since #107 lead conversion, the public form submit/confirm (including the reCAPTCHA call) and the bulk status updates run on the request context — `lead_form_bulk_cancellation_test.go`: TestRequestCancellation{SQLite,MySQL}, TestRequestCancellationMySQLLockWait, TestRequestCancellationCaptchaVerifier, TestRequestRootRequired{SQLite,MySQL} (these entry points refuse to nest inside a transaction); `transaction_handle_test.go`: TestTransactionManagerDB{SQLite,MySQL}; `lead_convert_cancellation_test.go`: TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits. Since #571 the customer, lead and user erasures (`CustomerService.Delete`, `LeadService.Delete`, `UserService.Delete`/`DeleteAs`) run on the request context too and nest under a savepoint inside a caller's transaction (see 12.5). Every other service still passes `context.Background()` |
+| 11.7 | **Transactions** | Multi-step operations run in one transaction (more in the notes) | -- | `transaction_test.go`, `transaction_regression_test.go`, `transaction_failure_test.go`, `transaction_recovery_test.go` (details in the notes) | -- | `lead_conversion_transaction_test.go`, `user_registration_transaction_test.go`, `erasure_atomicity_test.go` | **covered** | The MySQL roots need `TEST_MYSQL_DSN` and skip without it (more in the notes) |
 | 11.8 | **CRM Workflow** | Complete flow: Lead -> Customer -> Ticket -> Task | `admin-entity-suite.spec.ts`: complete CRM workflow: Lead -> Customer -> Task | -- | -- | -- | **partial** | Only E2E; no integration test for the full flow. The E2E title covers Lead -> Customer -> Task, not tickets |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **11.1** **Role-Based Access**
+  - Description: Permission catalogue with deny-by-default enforcement on every protected route;
+    four system roles plus custom roles created in Settings (`/settings/roles`,
+    `/settings/roles/new`, `/settings/roles/:id`: list, clone, edit, delete, permission tree with
+    All/Own scopes; #381) and assigned with the role picker of the user form; since #380 the SPA
+    shows routes, navigation entries and buttons by the permission keys of `GET /users/me`, never by
+    role name; last-admin invariant, escalation rule and the audit listing `GET /roles/audit`, shown
+    read-only on Settings → Role audit (`/settings/role-audit`, `roles.audit_view`, #552), which
+    since #552 also lists account activations, deactivations, erasures and login-email changes.
+    Guide: [AUTHORIZATION.md](AUTHORIZATION.md).
+  - E2E Tests: `admin-users.spec.ts`: manage user permissions through roles; `roles.spec.ts`: clone
+    a system role, assign it, the holder's navigation follows the role's permissions;
+    `role-audit.spec.ts`: an email change, deactivation, activation and erasure appear on Settings →
+    Role audit, a sales user has no entry; `login.spec.ts`: unauthenticated user is redirected to
+    login.
+  - Unit Tests (Backend): Handler tests cover role checks throughout; `auth_test.go`: 12 middleware
+    tests; `internal/permissions/authorization_guide_test.go`: 4 tests pin the guide to the
+    catalogue; `internal/integration/integration_user_integration_test.go`:
+    TestLeastPrivilegeIntegrationUserSQLite and TestLeastPrivilegeIntegrationUserMySQL (#211: the
+    API key of a user whose custom role holds two keys);
+    `internal/integration/role_audit_integration_test.go`: TestAccountAuditSQLite and
+    TestAccountAuditMySQL (#552: the account rows, their order, NULL states, no address, rollback on
+    a failed audit insert).
+  - Unit Tests (Frontend): `ProtectedRoute.test.tsx`: 7 tests;
+    `ProtectedRoute.permissions.test.tsx`; `routes/index.test.tsx`: blocks non-admins from `/users`;
+    `routes/index.permissions.test.tsx`: custom permission lists; `hooks/usePermissions.test.tsx`;
+    `contexts/AuthContext.permissions.test.tsx`; `layouts/MainLayout.permissions.test.tsx`;
+    `permissions/noRoleGating.test.ts`: no role-name gate in the source;
+    `permissions/systemRoleFixture.test.ts`: the UI fixture equals the golden matrix;
+    `pages/settings/RoleList.test.tsx`; `pages/settings/RoleEditor.test.tsx`;
+    `pages/settings/RoleAudit.test.tsx` and `roleAudit.test.ts` (#552);
+    `pages/users/UserForm.roles.test.tsx`.
+- **11.2** **Rate Limiting**
+  - Description: Per-client token buckets (per IPv4 address, per IPv6 /64 network): strict (10/min,
+    burst 5) on public auth and form writes; moderate (120/min, burst 30) on authenticated routes;
+    generous (240/min, burst 40) on public form reads.
+  - Unit Tests (Backend): `rate_limit_live_test.go` tests all live-tier bursts, the
+    `DISABLE_RATE_LIMIT` switch lifting the strict tier and keeping moderate and generous, and the
+    production startup refusal (TestProductionRefusesRateLimitSwitch); normal/tagged build tests
+    prove E2E opt-out isolation; `rate_limit_test.go`: TestRateLimitCapacity, TestRateLimitExpiry,
+    TestRateLimitLifecycle, TestRateLimitConcurrency, TestRateLimitHTTPBehavior,
+    TestRateLimitTrustedProxy, TestRateLimitTierIsolation, TestRateLimitClientKey.
+  - Known Issues: `DISABLE_RATE_LIMIT=true` lifts the strict tier and the two SCIM limits (token and
+    refusal) in ordinary builds, keeps the moderate and generous tiers, and stops startup when
+    `SERVER_MODE=production`. Functional `make e2e` uses the `gophercrm_e2e` build tag plus an
+    explicit test switch to avoid shared limiter state; ordinary binaries ignore that switch.
+    `make verify-backend` tests both build modes. Each middleware instance tracks at most 10,000
+    clients (an IPv6 client counts per /64 network); when full, a new client is admitted and the
+    least recently active record is evicted; records expire after five idle minutes once refilled,
+    via bounded per-request cleanup with no goroutine (#99). Limits are process-local and depend on
+    `TRUSTED_PROXIES`. The unwired config-driven `RateLimiter` and its tests were removed. No
+    E2E/integration test.
+- **11.7** **Transactions**
+  - Description: Multi-step operations run in one transaction; a panic rolls back and propagates
+    unchanged; nested calls reuse the active transaction under a savepoint (inner rollback/outer
+    commit, outer rollback discards nested writes); cancellation, commit/rollback failures and
+    retries are reported with `errors.Is` sentinels; a failed savepoint rollback poisons the
+    transaction so a recovered panic or swallowed inner error can never be committed (#106).
+  - Unit Tests (Backend): `transaction_test.go`: 4 tests; `transaction_regression_test.go`:
+    TestTransactionPanicSQLite/MySQL, TestTransactionNestedSQLite/MySQL,
+    TestTransactionCancellationRetrySQLite/MySQL on one-connection pools with persisted-row
+    assertions; `transaction_failure_test.go`: TestTransactionFinalizationFailures (injected
+    begin/commit/rollback/savepoint failures, poisoned commits across nesting levels);
+    `transaction_recovery_test.go`: TestTransactionRecoveredNestedPanicCannotCommitFailedRollback.
+  - Known Issues: The MySQL roots need `TEST_MYSQL_DSN` and skip without it; acceptance runs reject
+    skips. Since #107 lead conversion, the public form submit/confirm (including the reCAPTCHA call)
+    and the bulk status updates run on the request context — `lead_form_bulk_cancellation_test.go`:
+    TestRequestCancellation{SQLite,MySQL}, TestRequestCancellationMySQLLockWait,
+    TestRequestCancellationCaptchaVerifier, TestRequestRootRequired{SQLite,MySQL} (these entry
+    points refuse to nest inside a transaction); `transaction_handle_test.go`:
+    TestTransactionManagerDB{SQLite,MySQL}; `lead_convert_cancellation_test.go`:
+    TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits. Since #571 the customer, lead and
+    user erasures (`CustomerService.Delete`, `LeadService.Delete`, `UserService.Delete`/`DeleteAs`)
+    run on the request context too and nest under a savepoint inside a caller's transaction (see
+    12.5). Every other service still passes `context.Background()`.
 
 ---
 
@@ -510,8 +2829,8 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | 12.2 | **Non-reversible placeholder email** | Replacement address comes from `crypto/rand` in the reserved `.invalid` domain and is not derived from the original | -- | -- | -- | `erasure_test.go`: TestUserErasureKeepsTheRowSoftDeletedWithAPlaceholderEmail, TestSuccessiveUserErasuresProduceDistinctPlaceholders, TestSuccessiveCustomerErasuresProduceDistinctPlaceholders | **covered** | -- |
 | 12.3 | **Email becomes reusable** | The erased address can be registered again | -- | -- | -- | `erasure_test.go`: TestErasedUserEmailCanBeRegisteredAgain, TestErasedCustomerEmailCanBeUsedAgain | **covered** | -- |
 | 12.4 | **Credentials purged** | API keys, refresh tokens and password-reset tokens are hard-deleted with the account, also when the account is reached as a customer's login | -- | -- | -- | `erasure_test.go`: TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount, TestUserErasureFailsAndRollsBackWhenCredentialsCannotBePurged; `identity_erasure_test.go`: customer and lead roots; `erasure_pii_sweep_test.go`: TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable | **covered** | -- |
-| 12.5 | **Atomicity** | The whole person (every row of the identity graph) is one transaction; through `WithTx` it is a checked savepoint (released on success, rolled back on an error or a panic, issued past GORM's prepared-statement wrapper), so a caller that handles the error or recovers the panic and commits keeps none of it; a failed `ROLLBACK TO SAVEPOINT` aborts the caller's transaction; a request cancelled or timed out before the commit rolls the whole unit back (#571) | -- | -- | -- | `erasure_atomicity_test.go`: 19 tests, incl. TestUserErasureRollsBackEverythingWhenTheSoftDeleteFails and TestAUserErasureCanBeRetriedAfterAFailedAttempt; `identity_erasure_test.go`: fault_rolls_back_the_whole_graph, caller_transaction_commit_after_a_failed_erasure_keeps_only_the_callers_work, failed_savepoint_rollback_aborts_the_caller_transaction, failed_release_rolls_the_unit_back, panic_inside_a_joined_erasure_is_rolled_back_before_the_caller_commits, prepared_statement_transactions_get_a_working_savepoint (SQLite, MySQL); `erasure_cancellation_test.go` (#571): TestErasureCancellation{SQLite,MySQL} — a request cancelled before the call, cancelled or past its deadline after the first scrub, or cancelled inside a caller's transaction, leaves every lead, customer and user of the graph and the login's credentials as seeded; the caller's savepoint is rolled back on an uncancellable context, so its transaction is not poisoned and still commits | **covered** | The erasure runs on the request context (#571): a cancelled or timed-out request rolls the whole unit back and answers the generic 500 |
-| 12.6 | **Identity cascade** | A lead, the customer it became (`leads.customer_id`) and that customer's customer-role login (`customers.user_id`) erase each other from any end, soft-deleted rows included, each row exactly once; staff accounts in `user_id`, owners, assignees and account managers are never followed (#108) | -- | -- | -- | `lead_erasure_test.go`: TestErasingAConvertedLeadAlsoErasesTheCustomerItBecame, TestErasingAConvertedCustomerAlsoErasesTheOriginatingLead, TestErasingACustomerErasesEveryLeadConvertedIntoIt, TestErasureDoesNotReachPeopleWhoAreNotLinked; `identity_erasure_test.go`: TestIdentityErasure{SQLite,MySQL} (every root, plain and WithTx, exactly-once counting, staff links, repeated erasure); `erasure_lock_order_test.go`: TestErasureCrossRootMySQL, TestErasureLockOrder{SQLite,MySQL}, TestErasureGraphChanged{SQLite,MySQL}, TestErasureRetryBoundSQLite; `erasure_credential_order_test.go`: TestErasureVsCredentialFlows{SQLite,MySQL}, TestGovernedUserErasureVsCustomerErasureMySQL, TestGovernedWriteReplaysErasureGraphChange | **covered** | The cascade lives in the plain repositories. Every root locks the graph in one order, re-checks it under the locks and retries within a bound (#385). Still tracked in #183: the governed user write and the password-reset confirm lock against it in the opposite order, and a `customers.user_id` link written while an erasure is in flight |
+| 12.5 | **Atomicity** | The whole person (every row of the identity graph) is one transaction (more in the notes) | -- | -- | -- | `erasure_atomicity_test.go`, `identity_erasure_test.go`, `erasure_cancellation_test.go` (details in the notes) | **covered** | The erasure runs on the request context (#571): a cancelled or timed-out request rolls the whole unit back and answers the generic 500 |
+| 12.6 | **Identity cascade** | A lead, the customer it became (`leads.customer_id`) and that customer's customer-role login (`customers.user_id`) erase each other from any end … (more in the notes) | -- | -- | -- | `lead_erasure_test.go`, `identity_erasure_test.go`, `erasure_lock_order_test.go`, `erasure_credential_order_test.go` (details in the notes) | **covered** | The cascade lives in the plain repositories (more in the notes) |
 | 12.7 | ~~**Bulk isolation**~~ | Removed with the unrouted generic bulk delete (#112); erasure exists only as the single-record `DELETE` paths | -- | -- | -- | -- | **n/a** | A future bulk erasure needs per-item isolation designed afresh |
 | 12.8 | **Cross-table PII sweep** | No personal data of an erased person survives in any migrated table (the retained business free text is listed in DEV_ERASURE.md's erasure matrix) | -- | -- | -- | `erasure_pii_sweep_test.go`: 13 tests, incl. TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates, the three customer-login sweeps and TestUnlinkedSubmissionErasureLeavesNoPersonalDataInAnyTable (an unlinked `create_lead=false` submission, #214); `identity_erasure_test.go` sweeps the full schema on SQLite and MySQL; `unlinked_submission_erasure_test.go`: TestUnlinkedSubmissionErasure{SQLite,MySQL} | **covered** | Ticket text is kept; `tests/ticket_redaction_procedure_test.go` covers the operator redaction procedure |
 | 12.9 | **Business records survive** | Tickets and tasks referencing the erased person still resolve | -- | -- | -- | `erasure_test.go`: TestUserErasureDoesNotCascadeAwayBusinessRecords, TestCustomerErasureDoesNotCascadeAwayTickets | **covered** | -- |
@@ -520,7 +2839,60 @@ rationale. Implementation lives in `internal/repository/erasure.go` and `erasure
 | 12.12 | **Logs and issued tokens** | Erasure does not reach application logs or already-issued JWTs | -- | -- | -- | -- | **gap** | Logs record the email on login and on customer create/update; issued JWTs embed it until expiry. Log retention needs its own policy — this is an operational gap, not a code defect |
 | 12.13 | **A racing write restores nothing** | `PUT /customers/{id}` and `POST /customers/{id}/assign` update only a live row by named columns and never insert, so a write that loses to a customer, converted-lead or customer-role-login delete answers 404 and writes nothing (#256) | -- | `customer_update_errors_test.go`: TestCustomerHandlerUpdateMapsServiceErrors | -- | `erasure_atomicity_test.go`: TestCustomerUpdateLostToErasure, TestCustomerAssignLostToErasure, TestCustomerWriteAfterErasure, TestCustomerWriteConcurrentWithErasure (each on SQLite and MySQL), TestCustomerLostWriteLogsOmitPersonalData | **covered** | -- |
 | 12.14 | **External identity mappings erased** | Every erasure of a customer (the customer, a lead converted into it, its customer-role login) hard-deletes its `customer_external_ids` rows in the same unit; a rolled-back erasure keeps them, and the triple can then be mapped again (#212) | -- | -- | -- | `customer_external_id_erasure_test.go` (repository): TestCustomerExternalIDErasure{SQLite,MySQL,WithoutTable}; `test/integration/customer_external_id_erasure_test.go`: TestCustomerExternalIDErasureLeavesNoPersonalDataInAnyTable | **covered** | Customers erased before this change have no mappings to repair |
-| 12.15 | **Quote response links of an erased customer die** | Every erasure of a customer (the customer, a lead converted into it, its customer-role login) stamps `used_at` (`decision` stays NULL) on the unused `quote_response_tokens` rows of the quotes addressed to it, in the same unit, after the unit's update of those quotes and by primary key only; a link mailed before the erasure gets the generic 400 on both public routes and the quote stays `sent`; spent rows, other customers' quotes and a quote that only shares the erased customer's deal are unchanged; a rolled-back erasure hands the link back (#395); since #557 the public read requires a live customer and the answer re-reads it under the quote lock, so a link minted while the erasure runs, which its stamp does not see, is refused too, and a mint after the erasure stores and sends nothing | -- | -- | `quote_response_erasure_test.go`: TestQuoteResponseAfterCustomerErasure{SQLite,MySQL} | `erasure_quote_tokens_test.go` (repository): TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}, TestErasureQuoteTokenWritesLeaveGapsFreeMySQL | **covered** | The MySQL root skips without `TEST_MYSQL_DSN` |
+| 12.15 | **Quote response links of an erased customer die** | Every erasure of a customer (the customer, a lead converted into it, its customer-role login) stamps `used_at` (`decision` stays NULL) on the unused … (more in the notes) | -- | -- | `quote_response_erasure_test.go`: TestQuoteResponseAfterCustomerErasure{SQLite,MySQL} | `erasure_quote_tokens_test.go` (repository): TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}, TestErasureQuoteTokenWritesLeaveGapsFreeMySQL | **covered** | The MySQL root skips without `TEST_MYSQL_DSN` |
+
+**Notes to the table above**: the full text of the cells shortened in the table, row by row.
+
+- **12.5** **Atomicity**
+  - Description: The whole person (every row of the identity graph) is one transaction; through
+    `WithTx` it is a checked savepoint (released on success, rolled back on an error or a panic,
+    issued past GORM's prepared-statement wrapper), so a caller that handles the error or recovers
+    the panic and commits keeps none of it; a failed `ROLLBACK TO SAVEPOINT` aborts the caller's
+    transaction; a request cancelled or timed out before the commit rolls the whole unit back
+    (#571).
+  - Integration Tests: `erasure_atomicity_test.go`: 19 tests, incl.
+    TestUserErasureRollsBackEverythingWhenTheSoftDeleteFails and
+    TestAUserErasureCanBeRetriedAfterAFailedAttempt; `identity_erasure_test.go`:
+    fault_rolls_back_the_whole_graph,
+    caller_transaction_commit_after_a_failed_erasure_keeps_only_the_callers_work,
+    failed_savepoint_rollback_aborts_the_caller_transaction, failed_release_rolls_the_unit_back,
+    panic_inside_a_joined_erasure_is_rolled_back_before_the_caller_commits,
+    prepared_statement_transactions_get_a_working_savepoint (SQLite, MySQL);
+    `erasure_cancellation_test.go` (#571): TestErasureCancellation{SQLite,MySQL} — a request
+    cancelled before the call, cancelled or past its deadline after the first scrub, or cancelled
+    inside a caller's transaction, leaves every lead, customer and user of the graph and the login's
+    credentials as seeded; the caller's savepoint is rolled back on an uncancellable context, so its
+    transaction is not poisoned and still commits.
+- **12.6** **Identity cascade**
+  - Description: A lead, the customer it became (`leads.customer_id`) and that customer's
+    customer-role login (`customers.user_id`) erase each other from any end, soft-deleted rows
+    included, each row exactly once; staff accounts in `user_id`, owners, assignees and account
+    managers are never followed (#108).
+  - Integration Tests: `lead_erasure_test.go`:
+    TestErasingAConvertedLeadAlsoErasesTheCustomerItBecame,
+    TestErasingAConvertedCustomerAlsoErasesTheOriginatingLead,
+    TestErasingACustomerErasesEveryLeadConvertedIntoIt,
+    TestErasureDoesNotReachPeopleWhoAreNotLinked; `identity_erasure_test.go`:
+    TestIdentityErasure{SQLite,MySQL} (every root, plain and WithTx, exactly-once counting, staff
+    links, repeated erasure); `erasure_lock_order_test.go`: TestErasureCrossRootMySQL,
+    TestErasureLockOrder{SQLite,MySQL}, TestErasureGraphChanged{SQLite,MySQL},
+    TestErasureRetryBoundSQLite; `erasure_credential_order_test.go`:
+    TestErasureVsCredentialFlows{SQLite,MySQL}, TestGovernedUserErasureVsCustomerErasureMySQL,
+    TestGovernedWriteReplaysErasureGraphChange.
+  - Known Issues: The cascade lives in the plain repositories. Every root locks the graph in one
+    order, re-checks it under the locks and retries within a bound (#385). Still tracked in #183:
+    the governed user write and the password-reset confirm lock against it in the opposite order,
+    and a `customers.user_id` link written while an erasure is in flight.
+- **12.15** **Quote response links of an erased customer die**
+  - Description: Every erasure of a customer (the customer, a lead converted into it, its
+    customer-role login) stamps `used_at` (`decision` stays NULL) on the unused
+    `quote_response_tokens` rows of the quotes addressed to it, in the same unit, after the unit's
+    update of those quotes and by primary key only; a link mailed before the erasure gets the
+    generic 400 on both public routes and the quote stays `sent`; spent rows, other customers'
+    quotes and a quote that only shares the erased customer's deal are unchanged; a rolled-back
+    erasure hands the link back (#395); since #557 the public read requires a live customer and the
+    answer re-reads it under the quote lock, so a link minted while the erasure runs, which its
+    stamp does not see, is refused too, and a mint after the erasure stores and sends nothing.
 
 ---
 

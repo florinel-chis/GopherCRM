@@ -33,7 +33,9 @@ a server they control, without per-seat licence fees.
   deleting a person erases their personal data (GDPR Art. 17), with account lockout and rate
   limiting built in.
 
-The full list, with test coverage and known gaps, is in [docs/FEATURES.md](docs/FEATURES.md).
+Everything GopherCRM can do, area by area, is in [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+Contributors find the test-coverage matrix, with every feature's tests and known gaps, in
+[docs/FEATURES.md](docs/FEATURES.md).
 
 ## Quick start (SQLite, no database server)
 
