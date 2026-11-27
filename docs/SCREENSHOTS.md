@@ -2,19 +2,10 @@
 
 > **For:** Anyone who wants to see the screens. Part of the [documentation index](README.md).
 
-Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). Each image was
-captured from the running application by the Playwright suite in `gocrm-ui/e2e/screenshots/`, at a
-1440x900 viewport with `deviceScaleFactor: 2`.
-86 captures, taken in five groups:
-
-- 38 regenerated 2026-08-08, when tasks gained labels, against a MySQL-backed backend and the Vite
-  dev server;
-- the five AEO captures, added 2026-08-11 with the module itself, from fixed demo data;
-- the ten products and quotes captures, added 2026-10-28 against the e2e driver's SQLite backend;
-- the eight follow-up automation captures, added 2026-10-29 against a SQLite backend;
-- 25 taken 2026-11-24 against the e2e driver's SQLite backend: the forgot-password and
-  reset-password forms, the six settings captures (three of them recaptured), companies, deals,
-  forms, the administration screens and the public quote response page.
+Reference images of every user-facing screen in the React frontend (`gocrm-ui/`). The Playwright
+suite in `gocrm-ui/e2e/screenshots/` captures each image from the running application, at a
+1440x900 viewport with `deviceScaleFactor: 2`. How to run the suite is described in
+[Capturing the screenshots](DEV_TESTING_CI.md#documentation-screenshots).
 
 The captures record the application as it actually is. Where a screen is a placeholder or a control
 does not exist yet, the image shows that rather than a mock-up, and the difference is noted in the
@@ -22,33 +13,6 @@ caption or under [Known gaps](#known-gaps).
 
 Sections below map to [docs/FEATURES.md](FEATURES.md), which carries the feature and test-coverage
 detail for each area.
-
-## Regenerating
-
-The suite drives the real API, so the backend must be running first. From the repository root:
-
-```bash
-DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run ./cmd
-```
-
-Then, from `gocrm-ui/`:
-
-```bash
-npm run screenshots
-```
-
-The Vite dev server is started automatically by the `webServer` block in
-`playwright.config.screenshots.ts` (an already-running one is reused), and the admin account the
-specs log in as is seeded by `e2e/global-setup.ts`. Images are written straight to
-`docs/screenshots/<area>/`, overwriting the previous run.
-
-The suite creates records through the UI so lists and detail pages are not empty. It never confirms
-a delete dialog — deleting a user, customer or lead is an irreversible erasure (see FEATURES.md
-section 12), and deleting a label detaches it from every task at once.
-
-The label captures reuse fixed names (`Onboarding`, `Escalation`, `Follow-up`) and create them only
-when missing. Labels are unique by name and hard deleted rather than soft deleted, so run-scoped
-names would pile up on the very screen being photographed.
 
 ## Authentication
 
@@ -76,9 +40,6 @@ the Send Reset Link button and the link back to sign-in.
 The Reset Password form opened from a reset link (`/reset-password?token=...`; the capture uses a
 placeholder token), with the new password typed twice and not submitted, the show-password
 toggles and the link back to sign-in.
-
-To regenerate only the authentication images, on free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/01-auth.spec.ts`.
 
 ## Dashboard
 
@@ -117,7 +78,7 @@ The list filtered by a search term, which matches across name, email, company, p
 FEATURES.md section 4.
 
 ![Customers list](screenshots/customers/01-list.png)
-The customers table with company, primary contact, email, phone and customer-since date. Every row carries its own actions; for admin and support the row menu also offers "Create Ticket" for that customer. Note: this image predates #186 and still shows the removed Total Revenue column until it is recaptured.
+The customers table with company, primary contact, email, phone and customer-since date. Every row carries its own actions; for admin and support the row menu also offers "Create Ticket" for that customer. Note: the image still shows the removed Total Revenue column until it is recaptured.
 
 ![Create customer form](screenshots/customers/02-create.png)
 The create form with contact details and full address, filled in and not submitted.
@@ -136,10 +97,7 @@ customer was converted from.
 
 Companies are FEATURES.md section 4b, deals section 4c (4c.9 for the board). The suite seeds three
 companies, a customer and a lead of the first company, and five deals across the pipeline through
-the API, each with a fixed name or email and created only when missing; nothing is deleted. These
-five were captured against the e2e driver's SQLite backend. To regenerate only these images, on
-free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/13-companies-deals.spec.ts`.
+the API, each with a fixed name or email and created only when missing; nothing is deleted.
 
 ![Companies list](screenshots/companies/01-list.png)
 The companies table at `/companies` with name, domain, industry, city, owner and created date, the
@@ -175,8 +133,7 @@ FEATURES.md section 4d (4d.9 for the screens). The suite seeds a product catalog
 three deals and quotes in every status through the API, then walks one quote through the UI: it
 is started from its deal's Quotes section, given two lines, marked as sent, printed and accepted.
 The catalogue entries use fixed names and are created only when missing; the quotes and deals are
-created on every run. These ten were captured against the e2e driver's SQLite backend. To regenerate only these images, on free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/11-quotes.spec.ts`.
+created on every run.
 
 ![Products list](screenshots/quotes/01-products-list.png)
 The product catalogue at `/products`: name, SKU, price formatted with its currency and the
@@ -232,10 +189,8 @@ The public page a client reaches from the link in a quote email (`/quote-respons
 without a session and captured before any answer: quote number, valid-until date, the lines with
 quantity, unit price, discount, tax rate and total, the subtotal, discount, net, tax and gross,
 and the Decline and Accept buttons. The page removes the token from the address bar once it has
-read it. Captured on 2026-11-24 against the e2e driver's SQLite backend by its own spec, which
-seeds a customer, two products and a sent quote with fixed names and gets the link from
-`scripts/e2e/quote-response-link`, so it runs only under `scripts/e2e/run.sh`:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/16-quote-response.spec.ts`.
+read it. The page has its own spec, which seeds a customer, two products and a sent quote with
+fixed names.
 
 ## Follow-up automation
 
@@ -247,10 +202,7 @@ disabled "Daily nudge for stale contacted leads" (a daily schedule at 08:00 UTC)
 by the admin are then created, and the suite polls `GET /automation/runs` until the worker has run
 each of them up to its wait step, so the run list, the step log, the lead section and the
 notifications show real data. The worker polls every `AUTOMATION_POLL_INTERVAL_SECONDS`
-(default 30); these eight were captured against a SQLite backend on :8090 started with
-`AUTOMATION_POLL_INTERVAL_SECONDS=2`. A backend with `AUTOMATION_ENABLED=false` fails the
-run-dependent captures. To regenerate only these images, on free ports against the e2e database:
-`AUTOMATION_POLL_INTERVAL_SECONDS=2 scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/12-automation.spec.ts`.
+(default 30).
 
 ![Automation rules list](screenshots/automation/01-rules-list.png)
 The admin-only rule list at `/automation/rules`: name, entity, a readable trigger summary, the
@@ -373,9 +325,7 @@ has GopherCRM as the tracked brand, three fictional competitors on reserved `.ex
 six prompts (one switched off ten days ago), and a daily run for 30 days on a single self-hosted
 engine. Only the answers are simulated: every figure is aggregated from them with the backend's
 own rules, so the pages agree with each other. With more engines configured, the
-per-engine cards and timeline series multiply accordingly. To regenerate only these images, on
-free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/10-aeo.spec.ts`.
+per-engine cards and timeline series multiply accordingly.
 
 ![AEO dashboard](screenshots/aeo/aeo-dashboard.png)
 The dashboard at `/aeo`: brand-visibility gauge over the selected window, per-engine summary cards,
@@ -423,12 +373,10 @@ account's API keys and refresh tokens.
 
 ## Settings
 
-Profile relates to FEATURES.md 7.9, API Keys to section 8, and Configuration to section 9. The six
-settings captures were taken on 2026-11-24 against the e2e driver's SQLite backend. The listed API
-key is created through the API with a fixed name, only when missing, so no generated key is ever
-on screen; the create, edit and reset dialogs are captured open and then cancelled, so nothing is
-saved. To regenerate only these images, on free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/08-settings.spec.ts`.
+Profile relates to FEATURES.md 7.9, API Keys to section 8, and Configuration to section 9. The
+listed API key is created through the API with a fixed name, only when missing, so no generated key
+is ever on screen; the create, edit and reset dialogs are captured open and then cancelled, so
+nothing is saved.
 
 ![Profile settings](screenshots/settings/01-profile.png)
 The Profile screen at `/settings/profile`: the signed-in account's details (name, email, role
@@ -468,9 +416,7 @@ and created only when missing: two webhook endpoints on the reserved `.invalid` 
 resolves, so no delivery leaves the machine), a lead whose creation and update fill the delivery
 log, a sales user when the role audit would be empty, and a SCIM token. Endpoints and the token are
 created through the API, so their one-time secret dialogs never open. Nothing is saved, revoked,
-sent or deleted from the screens. These eight were captured on 2026-11-24 against the e2e
-driver's SQLite backend. To regenerate only these images, on free ports against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/15-administration.spec.ts`.
+sent or deleted from the screens.
 
 ![Roles](screenshots/administration/01-roles.png)
 The role list at `/settings/roles`: the four system roles (Admin, Sales, Support, Customer) with
@@ -519,10 +465,7 @@ Embeddable web forms. FEATURES.md has no section of its own for them (form reten
 the forms module is described in [DEV_RUNTIMES.md](DEV_RUNTIMES.md). The suite seeds a published
 contact form and a draft webinar form through the API with fixed names, created only when missing,
 and sends the contact form one submission through the public API, the way an embedding site does,
-while it has none. The builder is captured as loaded and never saved. These three were captured on
-2026-11-24 against the e2e driver's SQLite backend. To regenerate only these images, on free ports
-against the e2e database:
-`scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/14-forms.spec.ts`.
+while it has none. The builder is captured as loaded and never saved.
 
 ![Forms list](screenshots/forms/01-list.png)
 The form list at `/forms` with name, status chip (Draft, Published), submission count and created

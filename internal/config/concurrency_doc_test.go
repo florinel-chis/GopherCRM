@@ -1453,14 +1453,7 @@ func leadErasurePlanBody(t *testing.T, rel string) string {
 func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	// docs/README.md is the only docs index: the guide has exactly one bullet
 	// there, and README.md lists it neither in a table row nor in a bullet.
-	const indexLink = "[CONCURRENCY.md](CONCURRENCY.md)"
-	indexBullets := 0
-	for _, line := range strings.Split(readRepositoryFile(t, "docs/README.md"), "\n") {
-		if strings.HasPrefix(strings.TrimRight(line, "\r"), "- "+indexLink) {
-			indexBullets++
-		}
-	}
-	assert.Equal(t, 1, indexBullets, "docs/README.md has exactly one bullet starting %q", "- "+indexLink)
+	assertOneLabelledIndexBullet(t, docLines(readRepositoryFile(t, "docs/README.md")), "CONCURRENCY.md")
 	const readmeLink = "[docs/CONCURRENCY.md](docs/CONCURRENCY.md)"
 	for _, line := range strings.Split(readRepositoryFile(t, "README.md"), "\n") {
 		line = strings.TrimRight(line, "\r")

@@ -557,5 +557,5 @@ Both ticket and existing-PR workflows use the
 same selector; review, CI, repair/retest and merge gates remain mandatory. Configurations
 without this field use `legacy` and retain the original v0.3 behavior and policy hashes.
 Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs, or explicitly stop and preserve a superseded execution with its remaining
-budgets, before migrating to a fresh contextual configuration/state directory and fresh checks. See the [policy, release runbook and
-lessons](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.
+budgets, before migrating to a fresh contextual configuration/state directory and fresh checks. See the [policy and release
+runbook](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.

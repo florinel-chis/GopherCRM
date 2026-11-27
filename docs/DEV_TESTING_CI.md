@@ -3,8 +3,8 @@
 > **For:** Developers changing tests, CI jobs or their gates. Part of the [documentation index](README.md).
 
 Where the tests live and how they run, the CI jobs and their gates, the documentation checks,
-the system-role route matrix, the sign-in and SCIM characterisation gate, the Vitest timeouts
-and the API docs gate. The validation profiles are in
+the system-role route matrix, the sign-in and SCIM characterisation gate, the Vitest timeouts,
+the documentation screenshots and the API docs gate. The validation profiles are in
 [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md). Part of the developer guide; the index is in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Testing
@@ -493,6 +493,63 @@ whole suite.
   `FormBuilder.ticket.test.tsx`) and the rest of the suite keep the default timeouts and rely on
   the worker cap. A machine loaded well beyond one busy process per core can still time them
   out; give a file that does so the same explicit timeouts.
+
+### Documentation screenshots
+
+The images in [SCREENSHOTS.md](SCREENSHOTS.md) come from the Playwright suite in
+`gocrm-ui/e2e/screenshots/`, configured by `gocrm-ui/playwright.config.screenshots.ts`. It is not
+part of the regular end-to-end run.
+
+The full run drives the real API, so the backend must be running first. From the repository root:
+
+```bash
+DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run ./cmd
+```
+
+Then, from `gocrm-ui/`:
+
+```bash
+npm run screenshots
+```
+
+The Vite dev server is started by the `webServer` block in `playwright.config.screenshots.ts` (an
+already-running one is reused), and the admin account the specs sign in as is seeded by
+`e2e/global-setup.ts`. Images are written straight to `docs/screenshots/<area>/`, overwriting the
+previous run.
+
+The suite creates records through the UI so lists and detail pages are not empty. It never confirms
+a delete dialog: deleting a user, customer or lead is an irreversible erasure (FEATURES.md
+section 12), and deleting a label detaches it from every task at once. The label captures reuse
+fixed names (`Onboarding`, `Escalation`, `Follow-up`) and create them only when missing. Labels are
+unique by name and hard deleted rather than soft deleted, so run-scoped names would pile up on the
+very screen being photographed.
+
+To capture one area only, run its spec from `gocrm-ui/` through `scripts/e2e/run.sh`, which starts
+its own backend and Vite server on free ports against the e2e database:
+
+- Authentication:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/01-auth.spec.ts`
+- Settings:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/08-settings.spec.ts`
+- AEO:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/10-aeo.spec.ts`
+- Products and quotes:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/11-quotes.spec.ts`
+- Follow-up automation:
+  `AUTOMATION_POLL_INTERVAL_SECONDS=2 scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/12-automation.spec.ts`.
+  The short poll interval lets the automation worker reach each run's wait step while the suite
+  polls `GET /automation/runs`; a backend with `AUTOMATION_ENABLED=false` fails the run-dependent
+  captures.
+- Companies and deals:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/13-companies-deals.spec.ts`
+- Forms:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/14-forms.spec.ts`
+- Administration:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/15-administration.spec.ts`
+- Public quote response page:
+  `scripts/e2e/run.sh --config=playwright.config.screenshots.ts e2e/screenshots/16-quote-response.spec.ts`.
+  This spec runs only under `scripts/e2e/run.sh`, because it gets the quote link from
+  `scripts/e2e/quote-response-link`.
 
 ## API docs gate
 

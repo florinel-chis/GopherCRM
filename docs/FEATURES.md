@@ -113,14 +113,14 @@ Status meanings:
 | 1.9 | **Token Storage** | The session is one record under `gophercrm_session` (session id, access token, refresh token or null, account, persistence choice), in … (more in the notes) | -- | -- | `client.sessionRecord.test.ts`, `client.test.ts`, `client.refresh.test.ts` (details in the notes) | -- | **covered** | Frontend-only behaviour; no E2E test asserts token lifetime across a tab close |
 | 1.10 | **Password reset** | `/forgot-password` requests a reset email (more in the notes) | -- | `auth_session_test.go`, `auth_password_reset_regression_test.go`, `auth_reset_owner_race_test.go`, `password_reset_token_repository_test.go` and 7 more files (details in the notes) | `ForgotPassword.test.tsx`, `ResetPassword.test.tsx`: validation, submission, confirmation, request failure and missing token | `auth_session_integration_test.go`, `auth_access_token_revocation_test.go` (details in the notes) | **partial** | Browser reset journey has no E2E test; production delivery requires SMTP configuration |
 | 1.11 | **Password change** | `/settings/profile` changes the password with the current one (more in the notes) | `settings.spec.ts` (details in the notes) | `auth_change_password_regression_test.go`, `auth_session_test.go`, `auth_credential_revocation_test.go`, `auth_handler_test.go` (details in the notes) | `Profile.test.tsx`, `client.refresh.test.ts` (details in the notes) | `auth_session_integration_test.go`: `TestChangePasswordRenewsCurrentSession`, `TestChangePasswordWithAPIKeyNeverIssuesSession` | **covered** | None for logins racing the change (#336) |
-| 1.12 | **OpenID Connect sign-in, backend (#435)** | `POST /auth/oidc/start` returns the issuer's authorization URL … (more in the notes) | `sso.spec.ts` (details in the notes) | `auth_oidc_signout_test.go`, `auth_oidc_logout_test.go`, `cmd/auth_oidc_wiring_test.go` and 13 more files (details in the notes) | -- | `TestOIDCRoutesWired` (the production router) | **covered** | The SPA half is row 1.13 (#436). SCIM is rows 1.15 to 1.20. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435) |
+| 1.12 | **OpenID Connect sign-in, backend (#435)** | `POST /auth/oidc/start` returns the issuer's authorization URL … (more in the notes) | `sso.spec.ts` (details in the notes) | `auth_oidc_signout_test.go`, `auth_oidc_logout_test.go`, `cmd/auth_oidc_wiring_test.go` and 13 more files (details in the notes) | -- | `TestOIDCRoutesWired` (the production router) | **covered** | The SPA half is row 1.13 (#436). SCIM is rows 1.15 to 1.20. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in) |
 | 1.13 | **OpenID Connect sign-in, SPA (#436)** | `GET /auth/registration` also returns `sso_enabled` (the effective switch; false when it cannot be read) (more in the notes) | `login.spec.ts`, `sso.spec.ts` (details in the notes) | `auth_registration_test.go`, `cmd/auth_oidc_wiring_test.go` (details in the notes) | `Login.test.tsx`, `AuthCallback.test.tsx`, `AuthContext.test.tsx`, `client.test.ts`, `MainLayout.test.tsx`, `SSOSettings.test.tsx` and 3 more files (details in the notes) | -- | **covered** | The browser tests use the local test issuer (more in the notes) |
 | 1.14 | **Sign-in audit log (#454, #455, #466, #468, #470, #471, #550, #551, #553)** | One pseudonymous `auth_audit_log` row per successful password sign-in, single sign-on callback and successful refresh that passes request validation … (more in the notes) | `sign-in-audit.spec.ts` (details in the notes) | `auth_audit_test.go`, `auth_audit_aggregate_test.go`, `auth_oidc_test.go`, `request_context_test.go`, `auth_audit_apikey_test.go` and 12 more files (details in the notes) | `signInAudit.test.ts`, `SignInAudit.test.tsx`, `index.permissions.test.tsx`, `MainLayout.permissions.test.tsx` (details in the notes) | `cmd/auth_audit_wiring_test.go` (details in the notes) | **covered** | No CSV export and no sort parameter. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log) |
 | 1.15 | **SCIM 2.0 provider tokens and discovery (#468, #490)** | `/scim/v2` outside the API prefix, authenticated by SCIM provider tokens sent as `Authorization: Bearer` (scheme case-insensitive, token not trimmed) (more in the notes) | `settings-scim-tokens.spec.ts` (details in the notes) | `scim_auth_test.go`, `scim_token_handler_test.go`, `scim_handler_test.go`, `scim_token_test.go` (details in the notes) | `scimTokens.test.ts`, `SCIMTokens.test.tsx`, `index.permissions.test.tsx`, `MainLayout.permissions.test.tsx` (details in the notes) | `auth_scim_token_test.go`, `cmd/scim_wiring_test.go`, `cmd/migrate/scim_tokens_migration_test.go` (details in the notes) | **covered** | The Users read is row 1.16, the Groups row 1.20 (more in the notes) |
 | 1.16 | **SCIM 2.0 user read (#469)** | Behind the same rate limits and SCIM token: `GET /scim/v2/Users/{id}` … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_users_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | Create and replace are row 1.17, patch row 1.18, delete row 1.19, the Groups row 1.20 (more in the notes) |
 | 1.17 | **SCIM 2.0 user create and replace (#470)** | Behind the same rate limits and SCIM token: `POST /scim/v2/Users` (201, `Location` = `meta.location`) and `PUT /scim/v2/Users/{id}` (200), any Content-Type (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_writes_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | PUT takes `active` as a JSON boolean only (PATCH, row 1.18, also takes Entra's string) (more in the notes) |
 | 1.18 | **SCIM 2.0 user patch (#471)** | Behind the same rate limits and SCIM token: `PATCH /scim/v2/Users/{id}` (200 with the resource) applies an RFC 7644 PatchOp, body one JSON object up … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_patch_test.go`, `auth_scim_user_writes_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | DELETE is row 1.19, the Groups row 1.20 (more in the notes) |
-| 1.19 | **SCIM 2.0 user delete (#504)** | Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers 204 with an empty body (the request body is not read) and deactivates … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_delete_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | The Groups are row 1.20; erasure stays the administrator's `DELETE /users/{id}`. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504) |
+| 1.19 | **SCIM 2.0 user delete (#504)** | Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers 204 with an empty body (the request body is not read) and deactivates … (more in the notes) | - | `scim_user_handler_test.go` (details in the notes) | - | `auth_scim_user_delete_test.go`, `cmd/scim_wiring_test.go` (details in the notes) | **covered** | The Groups are row 1.20; erasure stays the administrator's `DELETE /users/{id}`. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#users-delete) |
 | 1.20 | **SCIM 2.0 Groups (#506)** | Behind the same rate limits and SCIM token: the groups are the distinct `groups`-claim values of the effective SSO role mapping (roles rows are not groups), ordered by bytes (more in the notes) | - | `scim_group_handler_test.go`, `scim_handler_test.go`, `scim_group_member_test.go` (details in the notes) | - | `auth_scim_groups_test.go`, `cmd/scim_wiring_test.go`, `cmd/credential_revocation_wiring_test.go` and 1 more file (details in the notes) | **covered** | A group patch maps the groups claim and a Users write the roles claim, so the last write sets the role (more in the notes) |
 
 **Notes to the table above**: the full text of the cells shortened in the table, row by row.
@@ -409,7 +409,7 @@ Status meanings:
     `allow_password` switch and its offboarding warning); `routes/index.test.tsx`,
     `routes/index.permissions.test.tsx`, `layouts/MainLayout.permissions.test.tsx`.
   - Known Issues: The browser tests use the local test issuer; a live Entra ID or Okta check stays
-    manual. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#spa-sign-in-and-settings-436).
+    manual. Guide: [AUTHORIZATION.md](AUTHORIZATION.md#spa-sign-in-and-settings).
 - **1.14** **Sign-in audit log (#454, #455, #466, #468, #470, #471, #550, #551, #553)**
   - Description: One pseudonymous `auth_audit_log` row per successful password sign-in, single
     sign-on callback and successful refresh that passes request validation, per successful SCIM user
@@ -601,7 +601,7 @@ Status meanings:
   - Known Issues: Create and replace are row 1.17, patch row 1.18, delete row 1.19, the Groups row
     1.20; still later slices are `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for
     unknown paths. The SCIM token limit (row 1.15) bounds a provider's sync per token. Guide:
-    [AUTHORIZATION.md](AUTHORIZATION.md#users-read-469).
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-read).
 - **1.17** **SCIM 2.0 user create and replace (#470)**
   - Description: Behind the same rate limits and SCIM token: `POST /scim/v2/Users` (201, `Location` =
     `meta.location`) and `PUT /scim/v2/Users/{id}` (200), any Content-Type. The body is read up to
@@ -643,7 +643,7 @@ Status meanings:
     audit rows with `scim` and a NULL actor).
   - Known Issues: PUT takes `active` as a JSON boolean only (PATCH, row 1.18, also takes Entra's
     string); DELETE is row 1.19; `roles` is accepted but not served or advertised. Guide:
-    [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace).
 - **1.18** **SCIM 2.0 user patch (#471)**
   - Description: Behind the same rate limits and SCIM token: `PATCH /scim/v2/Users/{id}` (200 with
     the resource) applies an RFC 7644 PatchOp, body one JSON object up to 64 KiB with a non-empty
@@ -693,7 +693,7 @@ Status meanings:
     `internal/config`: `TestConcurrencyDocSCIMUserPatch`.
   - Known Issues: DELETE is row 1.19, the Groups row 1.20; the default Entra ID and Okta attribute
     mappings can stay, the unstored attributes they send are skipped. Guide:
-    [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
+    [AUTHORIZATION.md](AUTHORIZATION.md#users-patch).
 - **1.19** **SCIM 2.0 user delete (#504)**
   - Description: Behind the same rate limits and SCIM token: `DELETE /scim/v2/Users/{id}` answers
     204 with an empty body (the request body is not read) and deactivates a managed account (linked
@@ -785,7 +785,7 @@ Status meanings:
   - Known Issues: A group patch maps the groups claim and a Users write the roles claim, so the last
     write sets the role; a mapping edit recomputes no role until the person's next group patch; the
     Users writes keep `invalidValue` for their last-admin refusal. Guide:
-    [AUTHORIZATION.md](AUTHORIZATION.md#groups-506).
+    [AUTHORIZATION.md](AUTHORIZATION.md#groups).
 
 ---
 
