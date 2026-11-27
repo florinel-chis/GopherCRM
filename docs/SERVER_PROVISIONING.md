@@ -716,7 +716,8 @@ The release tarball carries the SQL half as well: `bin/migrate` and the `migrati
 the tool at `/srv/gophercrm/current/bin/migrate`. receive-release does not run them: no deploy
 step calls `bin/migrate` or reads `current/migrations`. On MySQL and MariaDB the SQL migrations are
 applied with golang-migrate as described in
-[UPGRADING.md](UPGRADING.md), which also links the rules on version order in a fork. `bin/migrate` reads the same settings as the backend
+[UPGRADING.md](UPGRADING.md); the rules on version order and the populated-database rehearsal are
+in [FORKING.md §7.4](FORKING.md#74-migration-versions). `bin/migrate` reads the same settings as the backend
 through `config.Load`, so it needs this environment file. This path does not automate the step:
 run it yourself after a deploy that brings new files under `migrations/`, and keep the pre-deploy
 backup until it has succeeded.
@@ -732,7 +733,7 @@ systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gopher
 - **Order.** The command runs after the deploy, never before it: the new SQL files reach the
   server only when `receive-release` unpacks the revision into `releases/<sha>` and points
   `current` at it. By then the restart has already run `MigrateDatabase`, and the SQL files are
-  written for that order (`CREATE TABLE IF NOT EXISTS`, see [UPGRADING.md](UPGRADING.md#upgrade-order)).
+  written for that order (`CREATE TABLE IF NOT EXISTS`, see [FORKING.md §7.4](FORKING.md#74-migration-versions)).
 - **Not after a rollback.** When the deploy reports `deploy of <sha> rolled back to <previous>`,
   skip the step: `current` points at the previous release again, not at the revision you meant to
   migrate.

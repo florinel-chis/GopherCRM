@@ -33,8 +33,8 @@ server from a published release). What each release changes is in `CHANGELOG.md`
    from; check it as visitors reach it, through the proxy
    ([SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#verify-the-deploy)).
 
-Version numbering of SQL migrations in a fork, and the rule that an upstream migration older
-than your newest fork migration is skipped, are in
+Version numbering of SQL migrations in a fork, the rule that an upstream migration older
+than your newest fork migration is skipped, and the populated-database upgrade rehearsal are in
 [FORKING.md §7.4](FORKING.md#74-migration-versions).
 
 ## A failed SQL migration
