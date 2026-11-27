@@ -493,8 +493,9 @@ whole suite.
   to reproduce the original timeouts.
 - **What remains:** the sibling files (`MainLayout.branding.test.tsx`,
   `MainLayout.permissions.test.tsx` and `routes/index.permissions.test.tsx`) and the rest of the
-  suite keep the default timeouts and rely on the worker cap. A machine loaded well beyond one busy process per core can still time them
-  out; give a file that does so the same explicit timeouts.
+  suite keep the default timeouts and rely on the worker cap. A machine loaded well beyond one
+  busy process per core can still time them out; give a file that does so the same explicit
+  timeouts.
 
 ### Documentation screenshots
 
