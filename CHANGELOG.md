@@ -168,6 +168,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `docs/development/extending.md` now lists the same responses that are not the envelope as the
+  "Unified API response" paragraph of the developer guide (#808): the envelope rule row adds the
+  AEO answer export, the quote PDF, the CORS preflight and refused-origin answers, and `/scim/v2`
+  (`application/scim+json`), each cited by symbol and path. Docs only.
 - `gocrm-ui/src/pages/forms/FormBuilder.ticket.test.tsx` no longer relies on Vitest's 5 s test
   default or Testing Library's 1 s query default (#811). Each test renders the whole MUI form
   builder, and the ticket title field cases add field cards and open a dropdown, which took
