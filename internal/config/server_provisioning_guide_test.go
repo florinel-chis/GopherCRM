@@ -979,6 +979,7 @@ var provisioningGuideHeadings = []string{
 	"## Reverse proxy and TLS",
 	"## Bootstrap and first deploy",
 	"## Schema migrations",
+	"## Verify the deploy",
 	"## First admin",
 	"## Backups",
 }
@@ -1115,9 +1116,24 @@ func TestServerProvisioningGuideSteps(t *testing.T) {
 	assert.Len(t, fencesWithInfo(proxyFences, "nginx"), 2, "Reverse proxy and TLS holds both nginx sites")
 	assert.Len(t, fencesContaining(proxyFences, "certbot certonly --webroot"), 1, "Reverse proxy and TLS holds the certbot block")
 
-	assert.Contains(t, norm("## Bootstrap and first deploy"), "scripts/deploy/bootstrap.sh")
+	bootstrap := norm("## Bootstrap and first deploy")
+	assert.Contains(t, bootstrap, "scripts/deploy/bootstrap.sh")
+	assert.Contains(t, bootstrap, "not complete until", "the local health wait does not finish the deploy (#795)")
+
+	verify := section("## Verify the deploy")
+	var curlLines []string
+	for _, line := range strings.Split(verify, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "curl -fsS https://crm.example.com/health") {
+			curlLines = append(curlLines, line)
+		}
+	}
+	require.Len(t, curlLines, 1, "Verify the deploy holds one external curl of /health")
+	assert.Contains(t, curlLines[0], "/health")
+	assert.Contains(t, verify, "revision", "Verify the deploy names the revision the JSON must carry")
+	assert.Contains(t, normalizeDocText(verify), "complete", "Verify the deploy says when the deploy is complete")
 
 	admin := section("## First admin")
+	assert.Contains(t, admin, "https://crm.example.com/login", "First admin ends with the sign-in")
 	assert.True(t, lineWithAll(admin, "systemd-run", "--pty", "--uid=gophercrm",
 		"-p EnvironmentFile="+d.EnvFile, d.Root+"/bin/create-admin"), "First admin has one systemd-run line")
 	assert.NotContains(t, admin, "--password")
@@ -1163,7 +1179,7 @@ func assertGuideSchemaSection(t *testing.T) {
 	} {
 		assert.Contains(t, schema, phrase, "Schema migrations")
 	}
-	assert.Regexp(t, regexp.MustCompile(`\]\(FORKING\.md#74-migration-versions\)`), raw, "links FORKING §7.4")
+	assert.Regexp(t, regexp.MustCompile(`\]\(UPGRADING\.md[)#]`), raw, "links UPGRADING.md (#795)")
 
 	for _, wrong := range []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(tarball|release)[^.\n]*(does not|doesn't|do not|no longer)[^.\n]*(ship|contain|include)[^.\n]*migrations`),
@@ -1299,12 +1315,19 @@ func TestServerProvisioningGuideMigrationCommand(t *testing.T) {
 		"founder decision",
 		"is live",
 		"rolled back",
-		"dirty",
-		"-command force",
-		"last version that applied cleanly",
 		"backup",
 	} {
 		assert.Contains(t, schema, phrase, "Schema migrations")
+	}
+
+	// The dirty-state recovery moved to the upgrade page (#795).
+	upgrading := normalizeDocText(readRepositoryFile(t, "docs/UPGRADING.md"))
+	for _, phrase := range []string{
+		"dirty",
+		"-command force",
+		"last version that applied cleanly",
+	} {
+		assert.Contains(t, upgrading, phrase, "docs/UPGRADING.md")
 	}
 
 	assertGuideSchemaSection(t)

@@ -99,7 +99,8 @@ CI, start with [docs/FORKING.md](docs/FORKING.md).
 
 - [docs/README.md](docs/README.md): the full documentation index, grouped by reader.
 - [docs/SETUP.md](docs/SETUP.md): backend and frontend setup from source.
-- [docs/DOCKER.md](docs/DOCKER.md): Docker Compose with MySQL or SQLite, backups and upgrades.
+- [docs/DOCKER.md](docs/DOCKER.md): Docker Compose with MySQL or SQLite; backups and upgrades are in
+  [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) and [docs/UPGRADING.md](docs/UPGRADING.md).
 - [docs/FORKING.md](docs/FORKING.md): running your own copy, from the first run to staying in sync
   with upstream.
 - [docs/user-guide/README.md](docs/user-guide/README.md): the user guide and the administrator

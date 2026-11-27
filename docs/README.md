@@ -3,6 +3,15 @@
 This page lists every document in `docs/`, grouped by reader, with one line on what each one
 answers. Start with one of the three paths below. If you already know your role, go to its section.
 
+To run GopherCRM, pick the deployment first:
+
+| Deployment | When to choose it | Prerequisites | Guide |
+|---|---|---|---|
+| Local evaluation | trying GopherCRM on one machine, or developing it | Docker with Compose, or Go 1.25 and Node.js 22 | [DOCKER.md](DOCKER.md#sqlite-flavor-no-database-server), [SETUP.md](SETUP.md) |
+| Production Compose | one host running the Compose stack behind your own TLS proxy | Docker Compose 2.24.4 or later, a TLS reverse proxy, the public URLs | [DOCKER.md](DOCKER.md#production-override-example) |
+| Systemd server from a published release | a Linux server running a published release tarball on MySQL or MariaDB | systemd, MySQL 8 or MariaDB 10.11, nginx or Apache 2.4, root SSH access | [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) |
+| Fork's automated release pipeline | your fork builds, publishes and deploys its own releases through the shipped workflows | a server provisioned as in SERVER_PROVISIONING.md, a `gh` login with admin rights, `main` protected | [FORKING.md](FORKING.md#52-release-tarball-and-systemd-through-the-shipped-workflows) |
+
 ## Start here
 
 - **What can it do**: [CAPABILITIES.md](CAPABILITIES.md) describes, in plain language, what
@@ -29,8 +38,15 @@ answers. Start with one of the three paths below. If you already know your role,
 ## Running it: install and operate
 
 - [SETUP.md](SETUP.md): setting up the backend and the frontend for local development.
-- [DOCKER.md](DOCKER.md): running GopherCRM with Docker Compose, its configuration, the SQLite
-  flavor, backups and running Compose beyond localhost.
+- [DOCKER.md](DOCKER.md): running GopherCRM with Docker Compose, its Compose settings, the SQLite
+  flavor and running Compose beyond localhost.
+- [CONFIGURATION.md](CONFIGURATION.md): every backend environment variable, the secrets and what
+  rotating them does, the public URLs, TLS, trusted proxies and CORS, and the build-time `VITE_*`
+  values.
+- [BACKUP_RESTORE.md](BACKUP_RESTORE.md): backing up and restoring the database, for MySQL or
+  MariaDB and for SQLite, from source, with Compose and on a systemd server.
+- [UPGRADING.md](UPGRADING.md): the upgrade order, the SQL migrations on MySQL and MariaDB and
+  what each release changes in a SQLite file.
 - [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md): preparing a fresh Linux server, once, before
   the first release-tarball deploy.
 - [AEO_SECURITY.md](AEO_SECURITY.md): the outbound trust policy for AEO provider endpoints, the

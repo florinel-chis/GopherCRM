@@ -13,6 +13,15 @@ Every file shown here is an example with placeholders. Nothing in this guide shi
 the repository, and nothing under `scripts/deploy` reads this page. When a step and a script
 disagree, the script wins: re-check the functions and lines cited below against your checkout.
 
+Which deployment this guide is for:
+
+| Deployment | When to choose it | Prerequisites | Guide |
+|---|---|---|---|
+| Local evaluation | trying GopherCRM on one machine, or developing it | Docker with Compose, or Go 1.25 and Node.js 22 | [DOCKER.md](DOCKER.md#sqlite-flavor-no-database-server), [SETUP.md](SETUP.md) |
+| Production Compose | one host running the Compose stack behind your own TLS proxy | Docker Compose 2.24.4 or later, a TLS reverse proxy, the public URLs | [DOCKER.md](DOCKER.md#production-override-example) |
+| Systemd server from a published release | a Linux server running a published release tarball on MySQL or MariaDB | systemd, MySQL 8 or MariaDB 10.11, nginx or Apache 2.4, root SSH access | [Scope](#scope), below |
+| Fork's automated release pipeline | your fork builds, publishes and deploys its own releases through the shipped workflows | a server provisioned as on this page, a `gh` login with admin rights, `main` protected | [FORKING.md](FORKING.md#52-release-tarball-and-systemd-through-the-shipped-workflows) |
+
 ## Scope
 
 - **Host.** A Linux server with systemd and nginx or Apache 2.4, reachable over SSH as root from the machine
@@ -141,7 +150,7 @@ CORS_ALLOWED_ORIGINS=https://crm.example.com
 JWT_SECRET=CHANGE_THIS_TO_THE_OUTPUT_OF_OPENSSL_RAND
 LOG_LEVEL=info
 LOG_FORMAT=json
-# Optional: a separate key for API keys, tokens and stored settings (FORKING section 4.2).
+# Optional: a separate key for API keys, tokens and stored settings (docs/CONFIGURATION.md).
 # API_KEY_SECRET=
 # Mail: with SMTP_HOST empty every mail is only logged.
 # SMTP_HOST=
@@ -179,7 +188,7 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
 - **`TRUSTED_PROXIES`.** The rate limiter keys on the client address. Behind nginx on the same
   host every request arrives from `127.0.0.1`; trusting that address makes the backend take the
   client address nginx forwards, instead of putting every visitor in one rate-limit bucket
-  ([FORKING.md](FORKING.md) section 4.2). nginx below overwrites `X-Forwarded-For` with the
+  ([CONFIGURATION.md](CONFIGURATION.md#trusted-proxies-and-tls)). nginx below overwrites `X-Forwarded-For` with the
   address it sees, so a client cannot inject one.
 - **`SERVER_HOST=127.0.0.1`** keeps port 8080 off the network; only nginx reaches it.
 - **URLs.** `APP_BASE_URL` builds password-reset links, `PUBLIC_BASE_URL` form confirmation links,
@@ -694,6 +703,8 @@ workflow runs `receive-release deploy <sha>`, which unpacks the tarball into
 `http://127.0.0.1:8080/health` to report the new revision, rolling back on failure. Watch the
 first start with `journalctl -u gophercrm -f`.
 
+That local health wait does not finish the deploy: it is not complete until the schema migrations below have run and the external check under [Verify the deploy](#verify-the-deploy) has passed.
+
 ## Schema migrations
 
 The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`main` (`cmd/main.go`)),
@@ -705,8 +716,8 @@ The release tarball carries the SQL half as well: `bin/migrate` and the `migrati
 the tool at `/srv/gophercrm/current/bin/migrate`. receive-release does not run them: no deploy
 step calls `bin/migrate` or reads `current/migrations`. On MySQL and MariaDB the SQL migrations are
 applied with golang-migrate as described in
-[FORKING.md, section 7.4](FORKING.md#74-migration-versions), including the rules on version
-order and the populated-database rehearsal. `bin/migrate` reads the same settings as the backend
+[UPGRADING.md](UPGRADING.md); the rules on version order and the populated-database rehearsal are
+in [FORKING.md §7.4](FORKING.md#74-migration-versions). `bin/migrate` reads the same settings as the backend
 through `config.Load`, so it needs this environment file. This path does not automate the step:
 run it yourself after a deploy that brings new files under `migrations/`, and keep the pre-deploy
 backup until it has succeeded.
@@ -722,7 +733,7 @@ systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gopher
 - **Order.** The command runs after the deploy, never before it: the new SQL files reach the
   server only when `receive-release` unpacks the revision into `releases/<sha>` and points
   `current` at it. By then the restart has already run `MigrateDatabase`, and the SQL files are
-  written for that order (`CREATE TABLE IF NOT EXISTS`, see FORKING §7.4).
+  written for that order (`CREATE TABLE IF NOT EXISTS`, see [FORKING.md §7.4](FORKING.md#74-migration-versions)).
 - **Not after a rollback.** When the deploy reports `deploy of <sha> rolled back to <previous>`,
   skip the step: `current` points at the previous release again, not at the revision you meant to
   migrate.
@@ -733,14 +744,22 @@ systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gopher
 - **The whole environment file.** `bin/migrate` loads its settings through `config.Load`, which
   refuses to start without a valid `JWT_SECRET`, so it needs the same `EnvironmentFile=` as the
   service, not only the `DB_*` keys.
-- **A failed migration leaves the schema dirty.** golang-migrate then records the failed version
-  as dirty and refuses every further `up` until it is resolved. Keep the pre-deploy backup under
-  `/srv/gophercrm/backups` and inspect the schema. Either restore the backup (see *Backups*), or
-  revert the partial changes of the failed migration by hand and run the same `systemd-run` line
-  with `-command force -version <V>` in place of `-command up`, where `<V>` is the last version
-  that applied cleanly (the one before the dirty version). Force the failed version itself only if
-  you completed its statements by hand; forcing it otherwise skips it for good. Then rerun the
-  command with `-command up`.
+- **A failed migration leaves the schema dirty.** Keep the pre-deploy backup under
+  `/srv/gophercrm/backups` until the command has succeeded; the recovery is in
+  [UPGRADING.md](UPGRADING.md#a-failed-sql-migration).
+
+## Verify the deploy
+
+Check `/health` as visitors reach it, through the proxy and the CDN if there is one:
+
+```bash
+curl -fsS https://crm.example.com/health
+```
+
+The JSON must carry `"revision":"<sha>"` with the revision you deployed (the fields are listed
+under [Health check](#health-check)). The Deploy workflow runs the same check in its
+`Verify from outside` step (`.github/workflows/deploy.yml`). Only now, with the schema migrations
+applied and this check passed, is the deploy complete.
 
 ## First admin
 
@@ -758,6 +777,8 @@ required. Type the password at the prompt. Do not use create-admin's flag mode
 list and the shell history can see it. The link `/srv/gophercrm/bin/create-admin` exists once the
 first deploy has run.
 
+Then sign in with that account at `https://crm.example.com/login`.
+
 ## Backups
 
 Before every deploy `receive-release` writes
@@ -766,7 +787,6 @@ environment file (`backup_database` in `scripts/deploy/receive-release.sh`). The
 the newest 10 dumps are kept (`GOPHERCRM_KEEP_BACKUPS`). A failed dump aborts the deploy before
 anything changes.
 
-These dumps are taken only when a deploy runs, and they stay on the same server. Schedule your own
-`mysqldump` for regular backups and copy the files to another machine. Restoring is manual, for
-example `gunzip -c <file> | mysql -h 127.0.0.1 -u gophercrm -p gophercrm` with the service stopped.
-A restored database needs the secrets it was written with ([FORKING.md](FORKING.md) section 4.2).
+These dumps are taken only when a deploy runs, and they stay on the same server. Regular
+backups, copying them off the host and restoring are in
+[BACKUP_RESTORE.md](BACKUP_RESTORE.md#release-tarball-on-a-systemd-server).

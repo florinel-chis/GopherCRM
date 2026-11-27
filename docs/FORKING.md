@@ -123,72 +123,33 @@ roles and permissions, API keys, webhooks, single sign-on and SCIM provisioning,
 
 ### 2.1 SQLite, from source
 
-No database server is needed. Requires Go 1.25 (the `go` directive of `go.mod`), Node.js 22 or later, and `jq` for the
-API example in section 2.4.
+No database server is needed. Follow [SETUP.md](SETUP.md) with `DB_DRIVER=sqlite`: its
+[Configuration](SETUP.md#configuration), [Start](SETUP.md#start) and
+[Create the first admin](SETUP.md#create-the-first-admin) steps, each command in its own
+terminal. The API example in section 2.4 also needs `jq`.
 
-```bash
-cp .env.example .env
-# Edit .env:
-#   JWT_SECRET=<output of: openssl rand -base64 32>
-#   DB_DRIVER=sqlite
-go run ./cmd                     # or: make run
-```
-
-The backend listens on `http://localhost:8080` and creates `gophercrm.db` in the working
-directory (`DB_PATH`, `Load` (`internal/config/config.go`)). The schema is created by auto-migration at
-startup. `cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
-
-In a second terminal, create the first admin. Self-service registration only ever creates
-`customer` accounts:
-
-```bash
-make build-tools                 # builds bin/create-admin
-make create-admin                # interactive
-# or scripted:
-bin/create-admin -non-interactive -email admin@example.com -name "Admin" -password 'ChangeMe!2345'
-```
-
-Then the UI:
-
-```bash
-cd gocrm-ui
-npm ci
-npm run dev                      # Vite on http://localhost:5173
-```
-
-The UI calls `http://localhost:8080/api/v1` unless `VITE_API_BASE_URL` says otherwise
-(`API_BASE_URL` in `gocrm-ui/src/api/client.ts`, `VITE_API_BASE_URL=` in `gocrm-ui/.env.example`).
+The backend creates `gophercrm.db` in the working directory (`DB_PATH`, `Load` (`internal/config/config.go`)).
+`cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
 
 ### 2.2 MySQL or MariaDB
 
-```bash
-make create-db                   # mysql -u root < scripts/create_database.sql
-```
-
-`scripts/create_database.sql` creates `gocrm`, the default `DB_NAME` (read by `Load` (`internal/config/config.go`), and
-`.env.example`). A fork that renames the database changes both together; a hygiene test fails when
-they differ. Then set `DB_DRIVER=mysql` and the `DB_*` credentials and run `go run ./cmd`.
+[SETUP.md](SETUP.md#configuration) creates the database with `make create-db` and sets
+`DB_DRIVER=mysql` and the `DB_*` credentials. `scripts/create_database.sql` creates `gocrm`, the
+default `DB_NAME` (read by `Load` (`internal/config/config.go`), and `.env.example`). A fork that
+renames the database changes both together; a hygiene test fails when they differ.
 
 The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an nginx-served UI. See
-[DOCKER.md](DOCKER.md) and section 5.1 below before using it beyond a laptop.
+[DOCKER.md](DOCKER.md#quick-start) and section 5.1 below before using it beyond a laptop.
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret stops the app.** `Load` (`internal/config/config.go`) rejects an empty
-   value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
-   placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
-   `.env.example` does not start. Replace the secret with the output of
-   `openssl rand -base64 32`.
-2. **CORS.** The backend accepts browser requests from `localhost`/`127.0.0.1` on 5173 and 3000,
-   and `localhost:8080` (`defaultAllowedOrigins` (`internal/middleware/cors.go`)). Any other cross-origin UI needs
-   `CORS_ALLOWED_ORIGINS`. An unlisted origin gets a bare 403, which the login page shows as a
-   failed sign-in. The one exception: the pinned `github.com/gin-contrib/cors` v1.7.5 (the `require` block of `go.mod`)
-   skips the allowlist when `Origin` is exactly `http://` or `https://` plus the request's `Host`,
-   so a UI proxied to the API under the same origin passes without being listed. The shipped
-   nginx forwards `Host $host` (`proxy_set_header Host $host` in `gocrm-ui/docker/nginx.conf`), which drops a non-standard port,
-   so the exception holds on ports 80 and 443 but not on `localhost:3000`. `curl` without an
-   `Origin` header does not reproduce any of this; add
-   `-H 'Origin: https://your-ui.example'` when you smoke-test.
+1. **The example JWT secret stops the app.** A copied `.env.example` does not start: replace the
+   secret with the output of `openssl rand -base64 32`. The values `Load` refuses are listed in
+   [CONFIGURATION.md](CONFIGURATION.md#first-run-settings).
+2. **CORS.** A cross-origin UI outside the localhost defaults needs `CORS_ALLOWED_ORIGINS`. An
+   unlisted origin gets a bare 403, which the login page shows as a failed sign-in, and `curl`
+   without an `Origin` header does not reproduce it. The same-origin exception and how to
+   smoke-test are in [CONFIGURATION.md](CONFIGURATION.md#cors).
 3. **Public registration ships off** (`DefaultConfigurations` (`internal/models/configuration.go`)). Sign-up stays
    hidden until an admin enables it under Settings.
 
@@ -320,113 +281,11 @@ Keep `automation/langflow/THIRD_PARTY_NOTICES.md` while you ship that directory.
 
 ## 4. Configuration that matters
 
-Configuration comes from three places:
-
-1. **Build-time Vite variables** (`gocrm-ui/.env`), inlined into the static UI by `npm run build`:
-   `VITE_API_BASE_URL`, `VITE_APP_NAME`. Changing them needs a rebuild. The Docker UI image does
-   not read `gocrm-ui/.env` (`gocrm-ui/.dockerignore` excludes it); pass both as build arguments
-   instead, for example `docker build --build-arg VITE_APP_NAME=Acme gocrm-ui` (#303; see
-   [DOCKER.md](DOCKER.md)). Without the argument the image shows `GoCRM` before sign-in. The
-   shipped Compose files forward `VITE_APP_NAME` from the shell or the repo-root `.env` through
-   `build.args` (#308).
-2. **Environment variables** for the backend, read once at startup by `internal/config/config.go`
-   (and loaded from `.env` by godotenv). `.env.example` documents each one.
-3. **Persisted settings** in the `configurations` table, edited under Settings. The AEO provider
-   keys, models and base URLs resolve settings first and fall back to the environment, re-read on
-   each call (`internal/service/aeo_credentials.go`).
-
-### 4.1 Variables to decide before production
-
-`Load` in the "Read in" column is `internal/config/config.go` `Load`, which reads every variable once at
-startup.
-
-| Variable | Default | Read in | Notes |
-|---|---|---|---|
-| `JWT_SECRET` | none (required) | `Load` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `Load`, `formTokenSecret` (`internal/service/form_service.go`) | see the rotation callout below |
-| `DB_DRIVER` | `mysql` | `Load` | `mysql` or `sqlite`; anything else stops startup |
-| `DB_PATH` | `gophercrm.db` | `Load` | SQLite only; no `?`; local filesystem (WAL) |
-| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `Load` | MySQL only |
-| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `Load` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `Load` | `production` switches Gin to release mode (`setupRouter` (`cmd/main.go`)) and refuses to start with `DISABLE_RATE_LIMIT=true` (`CheckRateLimitSwitch` (`internal/middleware/rate_limit.go`)) |
-| `TRUSTED_PROXIES` | trust none | `Load` | see below |
-| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `Load` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host; also the single sign-on redirect URI `APP_BASE_URL/auth/callback` and post-logout redirect URI `APP_BASE_URL/login` |
-| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `Load` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output)) |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `Load` | this backend's public origin; form confirmation links, the SCIM base URL `PUBLIC_BASE_URL/scim/v2` (outside `API_PREFIX`; the proxy must forward `/scim/v2/`) and each SCIM user's `meta.location` |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `Load` | empty host means log-only mail |
-| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `Load` | both or the layer is skipped |
-| `FORM_RETENTION_DAYS` | off | `Load` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
-| `AUTH_AUDIT_RETENTION_DAYS` | `90` | `Load` | days a sign-in audit row (`auth_audit_log`, #454) is kept; unset, empty, zero, negative or unparseable keeps 90, 36500 ceiling. Pruned at boot and every 15 minutes by the stale bulk operation sweep; safe on every replica |
-| `OIDC_ENABLED`, `OIDC_ALLOW_PASSWORD`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_ROLE_MAPPING` | SSO off, password sign-in for linked accounts off, scopes `openid profile email`, the rest empty | `loadSSOConfig` (`internal/config/sso.go`) | fallbacks behind Settings → Single sign-on, which wins per field; register `APP_BASE_URL/auth/callback`, `APP_BASE_URL/login` and the front-channel logout URL `<API origin>/api/v1/auth/oidc/frontchannel-logout` with the identity provider ([single sign-on](user-guide/permissions-access/single-sign-on.md#values-to-exchange-with-the-identity-provider)) |
-| `OIDC_GRAPH_MAX_PAGES` | `10` | `loadSSOConfig` (`internal/config/sso.go`) | environment only; Microsoft Graph pages read per Entra ID sign-in with group overage, 1 to 50 |
-| `OIDC_ENTRA_APP_SIGNING_KEYS` | `false` | `loadSSOConfig` (`internal/config/sso.go`) | environment only; Entra ID app registrations with claims mapping |
-| `SCIM_RATE_LIMIT_PER_MINUTE`, `SCIM_RATE_LIMIT_BURST` | `1500`, `150` | `loadSCIMConfig` (`internal/config/scim.go`) | environment only; requests per SCIM token (maximum 6000 and 1000) |
-| `AUTOMATION_ENABLED` | `true` | `Load` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
-| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `Load` | daily AEO run |
-| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `Load` | environment only; see `docs/AEO_SECURITY.md` |
-| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `Load` | SQL statements only at debug/trace |
-
-The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
-environment. `docs/AEO_SECURITY.md` explains why. So can `OIDC_GRAPH_MAX_PAGES`,
-`OIDC_ENTRA_APP_SIGNING_KEYS`, `SCIM_RATE_LIMIT_*` and `AUTH_AUDIT_RETENTION_DAYS`; the other
-`OIDC_*` variables are fallbacks behind Settings → Single sign-on.
-
-### 4.2 Choices that are irreversible or easy to get wrong
-
-> - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`setupDependencies` (`cmd/main.go`), passed to `NewAPIKeyService`), refresh and password-reset tokens (passed to
->   the auth service in `setupDependencies`), form confirmation tokens and time-trap signatures
->   (`formTokenSecret` (`internal/service/form_service.go`)), and the encryption of sensitive settings
->   (the `configuration-secret` box built in `setupDependencies`, `internal/utils/secretbox.go`). Rotating
->   it invalidates every API key, refresh token, reset link and pending form confirmation, and
->   leaves stored AEO provider keys unreadable (they are treated as unset). The same secret, in
->   `setupDependencies`, also keys:
->   - SCIM tokens (`NewSCIMTokenService`): after a rotation every SCIM token is refused; create
->     new ones in Settings → SCIM tokens and give them to the identity provider;
->   - webhook signing secrets (`webhookBox`, sealed with `webhook.WebhookSecretContext`);
->   - the stored single sign-on client secret, client certificate and private key, and role
->     mapping (the `configuration-secret` box): an unreadable value counts as not set, an
->     unreadable client certificate makes the client secret apply, and an unreadable role mapping
->     becomes empty;
->   - pending quote response links (`quoteTokenSecret`), which stop working.
->
->   Rotating `JWT_SECRET`
->   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
->   unchanged, refresh tokens stay valid (they are hashed with it,
->   `authService.sessionTokenSecret` (`internal/service/auth_tokens.go`)) and the UI silently trades them for new access
->   tokens signed with the new secret (the 401 handling in `setupInterceptors` and `refreshFor`, `gocrm-ui/src/api/client.ts`). To end every session,
->   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
->   change, a password reset and a deactivation revoke that user's refresh tokens and end the access
->   tokens issued before them (they increment `users.token_version`, #236); a password change, a
->   password reset and a deactivation also revoke every API key of the user (#526), and a
->   reactivation brings none of them back. Restoring a database backup needs the secrets it was written with; a backup also brings
->   back older `token_version` values, so access tokens ended after it was taken pass again until
->   they expire.
-> - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. With it the server refuses to
->   start while `DISABLE_RATE_LIMIT=true` is set in production (environment or `.env`), so the
->   test-only switch cannot lift the `/auth` tier of a deployment. The only cookie the application
->   sets is the short-lived sign-in cookie of single sign-on (`gophercrm_oidc_state`, #528), which
->   carries no credential, and authentication is header-only.
-> - **`TRUSTED_PROXIES`.** The rate limiter keys on `c.ClientIP()`
->   (`rateLimiter.middlewareWith` (`internal/middleware/rate_limit.go`)). Behind a reverse proxy or CDN with no trusted
->   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
->   noisy user locks out everyone on `/auth`. An IPv6 client is counted per /64 network
->   (`rateLimitClientKey`), so the addresses of one IPv6 /64 share a bucket. SCIM requests without
->   a valid token are limited per client address too.
-> - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
-> - **`PUBLIC_BASE_URL` versus `APP_BASE_URL`.** The first is the API's public origin, used in form
->   confirmation links and the SCIM base URL `PUBLIC_BASE_URL/scim/v2`; the second is the UI's,
->   used in password-reset links, in the client response link of a quote email and in the single
->   sign-on redirect URI `APP_BASE_URL/auth/callback` and post-logout redirect URI
->   `APP_BASE_URL/login`. The front-channel logout URL is the API origin followed by
->   `/api/v1/auth/oidc/frontchannel-logout`. Left at their
->   defaults, both send recipients to `localhost`.
-> - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
->   reports success ([KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)); form mail and ticket comment mail
->   (`email_customer`, #219) are then recorded `log_only`. A form mail
->   that fails is recorded per mail and shown to staff (`GET /forms/deliveries`), and admin and
->   sales retry it by hand; nothing retries automatically.
+Where configuration comes from, every backend variable with its default, and the choices that
+are irreversible or easy to get wrong (the secrets and what rotating them does, `SERVER_MODE`,
+`TRUSTED_PROXIES`, CORS, `PUBLIC_BASE_URL` versus `APP_BASE_URL`, SMTP) are in
+[CONFIGURATION.md](CONFIGURATION.md). Decide them before production. The two sections below keep
+their numbers.
 
 ### 4.3 Settings
 
@@ -436,10 +295,9 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
   (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)).
-- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `Load` (`internal/config/config.go`), used in
-  `authService.GenerateJWT` (`internal/service/auth_tokens.go`)) and the refresh-token lifetime from
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `Load`). `JWT_ACCESS_TOKEN_MINUTES` is read
-  (`Load`) but used by nothing.
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` and
+  the refresh-token lifetime from `REFRESH_TOKEN_EXPIRY_DAYS`, both environment variables
+  ([CONFIGURATION.md](CONFIGURATION.md#backend-variables) has their defaults).
 
 The company name and colour settings are covered in
 section 3.1.
@@ -484,10 +342,9 @@ local machine. Before you put either on the internet:
 - The SQLite stack is two containers with a fixed project name (`gophercrm-sqlite`), fixed host
   port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,51-52,74-81`). Several installs on
   one host need separate project names, ports, subnets, volumes and secrets.
-- Back up SQLite by stopping the backend and copying the file with its `-wal` and `-shm`
-  siblings (restore all three together), or with `VACUUM INTO` (see [DOCKER.md](DOCKER.md)).
-  Back up before every upgrade: on
-  SQLite the schema only moves forward through startup auto-migration.
+- Back up SQLite as [BACKUP_RESTORE.md](BACKUP_RESTORE.md#compose-sqlite-stack) shows, and before
+  every upgrade ([UPGRADING.md](UPGRADING.md)): on SQLite the schema only moves forward through
+  startup auto-migration.
 
 Validate the merged result with every file named (an explicit `-f` also turns off the automatic
 pick-up of a `docker-compose.override.yml`), then start with the same pair:

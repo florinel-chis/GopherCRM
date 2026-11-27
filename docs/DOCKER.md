@@ -45,9 +45,9 @@ export JWT_SECRET="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```
 
-Then open http://localhost:3000. Schema is created automatically by the
-backend's auto-migration on startup; the MySQL image creates the `gocrm`
-database itself, so no SQL seed script is needed.
+Schema is created automatically by the backend's auto-migration on startup;
+the MySQL image creates the `gocrm` database itself, so no SQL seed script is
+needed.
 
 Create the first admin account (interactive prompt, or pass flags):
 
@@ -60,6 +60,17 @@ docker compose exec backend create-admin -non-interactive \
 
 Public registration (`POST /auth/register`) only ever creates `customer`
 accounts, so this step is how you bootstrap an elevated role.
+
+Then open http://localhost:3000 and sign in with that account.
+
+Check the backend, which this stack publishes on port 8080:
+
+```bash
+curl http://localhost:8080/health
+```
+
+The answer is `200` with `"status":"healthy"` under `data`
+([SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#health-check) lists the fields).
 
 ## Data persistence
 
@@ -79,7 +90,7 @@ Compose interpolates these from the shell or the repo-root `.env`:
 | Variable           | Default                  | Notes                                        |
 | ------------------ | ------------------------ | -------------------------------------------- |
 | `JWT_SECRET`       | *(required)*             | ≥ 32 chars; startup fails otherwise          |
-| `API_KEY_SECRET`   | falls back to JWT_SECRET | key for API keys, tokens and stored secrets ([FORKING.md](FORKING.md) section 4.2) |
+| `API_KEY_SECRET`   | falls back to JWT_SECRET | key for API keys, tokens and stored secrets ([CONFIGURATION.md](CONFIGURATION.md#secrets-and-rotation)) |
 | `DB_PASSWORD`      | `gocrm-dev-password`     | app user password (`gocrm`)                  |
 | `DB_ROOT_PASSWORD` | `gocrm-dev-root-password`| MySQL root password                          |
 | `UI_PORT`          | `3000`                   | host port for the UI (set it if 3000 is busy)|
@@ -327,7 +338,7 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
 - `FORM_RETENTION_DAYS`: the form retention purge stays off, so spam and
   never-confirmed submissions are kept. To enable it, add the variable to the
   backend environment; the first boot with it set permanently removes the
-  existing backlog, so take a backup first (see the backup section below).
+  existing backlog, so take a backup first (see [BACKUP_RESTORE.md](BACKUP_RESTORE.md)).
 - `AUTOMATION_ENABLED`, `AUTOMATION_POLL_INTERVAL_SECONDS`: the worker runs
   with its defaults.
 - `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR`, `AEO_EGRESS_*`, the
@@ -347,6 +358,12 @@ SQLite stack the backend also loads `/data/.env` from its volume
 (`WORKDIR /data` in `Dockerfile`); variables set in `environment` take precedence over it.
 
 ### Production override example
+
+Requirements, all mandatory before the stack faces a network:
+- Compose 2.24.4 or later (`docker compose version`), for the `!override` port tag described below;
+- a TLS-terminating reverse proxy in front of the UI port on the same host;
+- real `APP_BASE_URL`, `PUBLIC_BASE_URL` and `CORS_ALLOWED_ORIGINS` values for your public origin;
+- the localhost `PUBLIC_BASE_URL` copied from `.env.example` replaced by your UI proxy origin.
 
 `docker-compose.production.example.yml` at the repository root is an override
 for either stack. Compose never loads it on its own (unlike a
@@ -508,7 +525,7 @@ are limited per client address.
 
 Rotating `API_KEY_SECRET` invalidates every SCIM token and leaves the stored
 single sign-on client secret and client certificate unreadable; see
-[FORKING.md](FORKING.md) section 4.2.
+[CONFIGURATION.md](CONFIGURATION.md#secrets-and-rotation).
 
 ### Several installations on one host
 
@@ -586,92 +603,13 @@ Differences from the MySQL stack worth knowing:
 
 ### Backing up the SQLite database
 
-WAL mode means the database is `gophercrm.db` **plus** `gophercrm.db-wal` and
-`gophercrm.db-shm`. Copying `gophercrm.db` alone while the backend is running
-yields a stale or torn file.
-
-The volume's full Docker name is `gophercrm-sqlite_gophercrm-sqlite-data`
-(project name plus volume name), which is what a throwaway container mounts.
-
-Two safe options:
-
-```bash
-# 1. Offline copy: stop the app, then copy the file and its WAL siblings.
-#    The glob assumes the database exists — on a stack that has never booted
-#    there is nothing to copy and cp reports "no such file".
-docker compose -f docker-compose.sqlite.yml stop backend
-docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup" \
-  alpine:3.20 sh -c 'cp -a /data/gophercrm.db* /backup/'
-docker compose -f docker-compose.sqlite.yml start backend
-```
-
-```bash
-# 2. Online snapshot, nothing stopped: VACUUM INTO writes one consistent file
-#    (the sqlite3 CLI comes from the throwaway container, not the app image).
-docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data -v "$PWD:/backup" \
-  alpine:3.20 sh -c "apk add --no-cache sqlite >/dev/null && \
-    sqlite3 /data/gophercrm.db \"VACUUM INTO '/backup/gophercrm-backup.db'\""
-```
-
-Restore with the backend stopped, and match the restore to the backup:
-
-- **Offline copy (option 1):** put back `gophercrm.db` together with the
-  `gophercrm.db-wal` and `gophercrm.db-shm` copied with it, replacing all
-  three. The WAL can hold committed transactions that are not yet in the main
-  file — the backend can exit without a final checkpoint (`main` (`cmd/main.go`)
-  calls `models.CloseDatabase` only after a clean drain) — so deleting it, or mixing it with another backup's main file, loses data.
-- **`VACUUM INTO` snapshot (option 2):** it is one self-contained file. Put it
-  back as `/data/gophercrm.db` and delete any `-wal`/`-shm` left in the
-  volume, which belong to the database you are replacing.
-
-A file written by a root container lands root-owned — the throwaway container
-runs as root, the backend runs as `gophercrm` (uid 10001) — so hand the
-restored files back before starting the backend, in the same root container
-that put them in place:
-
-```bash
-docker run --rm -v gophercrm-sqlite_gophercrm-sqlite-data:/data \
-  alpine:3.20 sh -c 'chown 10001 /data/gophercrm.db*'
-```
-
-Without it the backend opens the database read-only and fails on the first
-write ("attempt to write a readonly database").
+The offline copy and the online snapshot of the volume, and how to restore each, are in
+[BACKUP_RESTORE.md](BACKUP_RESTORE.md#compose-sqlite-stack).
 
 ### Upgrading the SQLite database
 
-These notes apply to the image and to a backend binary run from source alike.
-Take a backup before upgrading — one of the two above for the image; for a
-binary, stop the backend and copy the file with its `-wal` and `-shm` siblings,
-or take a `VACUUM INTO` snapshot. The schema advances only through
-auto-migration on startup, which is not reversible (the `migrations/` SQL is
-MySQL-only). The release after 1.2.0 adds the company link to `leads` and
-`customers`, and the SQLite driver adds a foreign key by rebuilding the table —
-drop and copy. The two rebuilds run one after the other, each in its own
-transaction, so the first start needs free space for a full copy of one table
-at a time — in the `/data` volume for the image, in the directory of `DB_PATH`
-for a binary — while the WAL file accumulates both rebuilds until the next
-checkpoint. Auto-migration runs with foreign-key enforcement switched off, as
-SQLite prescribes for table rebuilds, checks every foreign key once it is done
-and refuses to start if the check finds a dangling reference. A refused start
-has already committed the schema change; only the data violation is left. The
-startup log (`docker compose -f docker-compose.sqlite.yml logs backend` for the
-image) names the tables involved as `child -> parent`; either restore the
-backup or fix those rows, then start again. The 1.2.0 image or binary still
-opens the upgraded file — it ignores the extra tables and columns — so the
-image or binary can be rolled back even though the schema is not. The deals
-release adds the `deals` and `deal_stage_changes` tables only: it rebuilds no
-existing table, and the previous image or binary still opens the file. The
-quotes release does the same with `products`, `quotes`, `quote_lines` and
-`quote_status_changes`: four new tables, no existing table touched, and the
-previous image or binary still opens the file. The task-to-deal link release
-does touch one: it adds `tasks.deal_id` and rebuilds `tasks` — drop and copy,
-in one transaction with enforcement off — to add `fk_tasks_deal`, so the first
-start needs free space (the `/data` volume, or the directory of `DB_PATH`) for
-a full copy of `tasks`, and the WAL file holds that copy until the next
-checkpoint. Every existing task keeps `deal_id` NULL. The previous image or
-binary still opens the upgraded file: it ignores the extra column, so it
-neither shows nor removes a stored link, and the link is back when the newer
-release returns.
+Take a backup first, then read what each release changes in the file and the free disk its first
+start needs in [UPGRADING.md](UPGRADING.md#sqlite-release-by-release).
 
 ## Rebuilding after code changes
 
