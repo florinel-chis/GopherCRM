@@ -34,7 +34,7 @@ PR, explain unchanged documents, and require the existing reviewer to assess eac
 After merge, document contents are verified before completion. Include needed doc paths in
 the frozen task scope; the map never grants extra write permission. Existing configurations
 omitting the field keep legacy evidence and must migrate explicitly after active work finishes.
-See the [documentation workflow](../../docs/DOCUMENTATION_WORKFLOW.md).
+See the [documentation workflow](../../docs/development/documentation.md).
 If a merged ticket fails documentation verification, inspect its evidence and either restore
 verification prerequisites or explicitly use `abandon-issue` with a reason. This retains the
 unverified result and leaves the queue stopped; it does not close issues or claim a successful
@@ -71,7 +71,7 @@ confirmation records operator inspection without changing acceptance or merge ga
 
 Version 0.8.3 lets proven comment-only edits in the root `.env.example` accompany a
 bounded profile. Active settings and ambiguous dotenv syntax retain full fallback;
-see [validation policy](../../docs/VALIDATION_RELEASE.md) for the conservative proof.
+see [validation policy](../../docs/maintainers/validation-and-releases.md) for the conservative proof.
 
 Version 0.9.1 adds the bounded mailer profile shared by local execution and CI. It requires
 SMTP transport/header/TLS/privacy regressions and affected mail callers, with health smoke.
@@ -558,4 +558,4 @@ same selector; review, CI, repair/retest and merge gates remain mandatory. Confi
 without this field use `legacy` and retain the original v0.3 behavior and policy hashes.
 Explicit `full` requires the entire local browser/database matrix even for UI-only changes. Finish admitted runs, or explicitly stop and preserve a superseded execution with its remaining
 budgets, before migrating to a fresh contextual configuration/state directory and fresh checks. See the [policy and release
-runbook](../../docs/VALIDATION_RELEASE.md). Release validation always runs the full matrix.
+runbook](../../docs/maintainers/validation-and-releases.md). Release validation always runs the full matrix.

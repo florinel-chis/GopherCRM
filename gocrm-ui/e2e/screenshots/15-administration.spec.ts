@@ -6,7 +6,7 @@ import { API_BASE_URL } from '../helpers/env';
 
 /**
  * Documentation captures for the administration screens under Settings
- * (FEATURES.md sections 7b, 9b, 9c, 9d and 9e): roles and the role editor,
+ * (docs/reference/features.md sections 7b, 9b, 9c, 9d and 9e): roles and the role editor,
  * webhooks and their delivery log, single sign-on, the sign-in and role
  * audits, and SCIM tokens.
  *

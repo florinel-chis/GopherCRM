@@ -16,7 +16,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
   `analysis.go`, `engine.go`, `scheduler.go`, `runtime.go`
 - `internal/egress/` — `egress.go`, `public.go` (the dial-time checks the provider guard builds on)
 - `internal/errors/errors.go`, `internal/config/config.go`, `internal/config/aeo_egress.go`
-- [AEO_SECURITY.md](../AEO_SECURITY.md) — egress policy and sanitized failure contract
+- [aeo-egress.md](../operations/aeo-egress.md) — egress policy and sanitized failure contract
 - `gocrm-ui/src/pages/aeo/AEODashboard.tsx`, `AEOPrompts.tsx`, `AEOCitations.tsx`,
   `AEOSettings.tsx`
 - `gocrm-ui/src/api/endpoints/aeo.ts`, `gocrm-ui/src/routes/index.tsx`,
@@ -35,7 +35,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
   LM Studio) and every hosted key unset, which is also what makes the run deterministic. The stub
   needs an explicit operator exception, for example
   `AEO_EGRESS_LOCAL_ORIGINS=custom=http://127.0.0.1:<port>`; without it every answer records
-  `endpoint_not_permitted` (see [AEO_SECURITY.md](../AEO_SECURITY.md)).
+  `endpoint_not_permitted` (see [aeo-egress.md](../operations/aeo-egress.md)).
 - **`/aeo` is closed to `customer`.** `SetupAEORoutes` guards the whole group with
   `RequireRole(admin, sales, support)`; writes (profile, prompts, generate, run) additionally
   require admin or sales, and prompt deletion requires admin. The SPA mirrors this: one pathless

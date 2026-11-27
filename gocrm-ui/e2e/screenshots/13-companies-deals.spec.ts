@@ -5,7 +5,7 @@ import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
 
 /**
- * Documentation captures for companies and deals (FEATURES.md sections 4b and
+ * Documentation captures for companies and deals (docs/reference/features.md sections 4b and
  * 4c): the company list and detail, the deal list, the pipeline board and one
  * deal's detail page with its stage history.
  *

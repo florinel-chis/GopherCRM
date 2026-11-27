@@ -439,11 +439,11 @@ func dockerProductionOverrideSubsection(t *testing.T, doc string) string {
 	start := -1
 	for i, line := range lines {
 		if line == heading {
-			require.Equal(t, -1, start, "docs/DOCKER.md has the heading %q twice", heading)
+			require.Equal(t, -1, start, "docs/operations/docker.md has the heading %q twice", heading)
 			start = i
 		}
 	}
-	require.NotEqual(t, -1, start, "docs/DOCKER.md lacks the heading %q", heading)
+	require.NotEqual(t, -1, start, "docs/operations/docker.md lacks the heading %q", heading)
 
 	inFence := false
 	end := len(lines)
@@ -463,7 +463,7 @@ func dockerProductionOverrideSubsection(t *testing.T, doc string) string {
 
 // TestComposeProductionExampleDocumented pins AC-6.
 func TestComposeProductionExampleDocumented(t *testing.T) {
-	section := normalizeDocText(dockerProductionOverrideSubsection(t, readRepositoryFile(t, "docs/DOCKER.md")))
+	section := normalizeDocText(dockerProductionOverrideSubsection(t, readRepositoryFile(t, "docs/operations/docker.md")))
 	for _, phrase := range []string{
 		"docker-compose.production.example.yml",
 		"docker compose -f docker-compose.yml -f docker-compose.production.example.yml config -q",
@@ -474,10 +474,10 @@ func TestComposeProductionExampleDocumented(t *testing.T) {
 		".env.example sets PUBLIC_BASE_URL",
 		"keep every value as a ${...} interpolation",
 	} {
-		assert.Contains(t, section, phrase, "docs/DOCKER.md Production override example")
+		assert.Contains(t, section, phrase, "docs/operations/docker.md Production override example")
 	}
 
-	docs := []string{"docs/DOCKER.md", "docs/FORKING.md", "docs/USE_CASES.md", "CHANGELOG.md"}
+	docs := []string{"docs/operations/docker.md", "docs/development/forking.md", "docs/reference/use-cases.md", "CHANGELOG.md"}
 	for _, rel := range docs[1:] {
 		assert.Contains(t, normalizeDocText(readRepositoryFile(t, rel)), composeProductionExampleFile, rel)
 	}

@@ -58,7 +58,7 @@ services:
       # Quote PDF output is off in this stack: the image's browser would have
       # to open APP_BASE_URL, and http://localhost:<UI_PORT> is this container
       # itself, not the UI. Quote emails go out as text only and GET
-      # /quotes/:id/pdf answers 503 PDF_UNAVAILABLE. See docs/DOCKER.md.
+      # /quotes/:id/pdf answers 503 PDF_UNAVAILABLE. See docs/operations/docker.md.
       QUOTE_PDF_CHROME_PATH: ""
       # The UI is same-origin behind nginx, but browsers still send the
       # Origin header on API calls, and the backend 403s unlisted origins.

@@ -6,7 +6,7 @@ import { API_BASE_URL } from '../helpers/env';
 import { expectedAmountText } from '../pages/deals.page';
 
 /**
- * Documentation captures for products and quotes (FEATURES.md 4d): the product
+ * Documentation captures for products and quotes (docs/reference/features.md 4d): the product
  * list and form, the quote list, and one quote walked from the deal's Quotes
  * section through a two-line draft, the sent state and the print page to
  * acceptance.

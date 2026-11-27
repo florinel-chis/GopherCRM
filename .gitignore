@@ -141,8 +141,8 @@ docs/_build/
 # ---------------------------------------------------------------------------
 # Keep documentation images tracked (referenced from README.md and the user guide)
 # ---------------------------------------------------------------------------
-!docs/img/
-!docs/img/**
+!docs/assets/
+!docs/assets/**
 
 # Machine-local notes (model evaluations, environment quirks) - never shipped
 docs/local/

@@ -1,7 +1,7 @@
 # Settings — Test Cases
 
-Test cases for the Settings section: API key management (FEATURES.md section 8, extended by
-section 10b "API keys") and Configuration Settings (FEATURES.md section 9). Every Expected field
+Test cases for the Settings section: API key management (reference/features.md section 8, extended by
+section 10b "API keys") and Configuration Settings (reference/features.md section 9). Every Expected field
 below records what the current build does, including the places where it is defective or
 surprising; those carry a "Known issue" line. Both screens are complete pages:
 `ConfigurationSettings.tsx`, and `APIKeys.tsx`, which lists the caller's own keys and creates,
@@ -38,8 +38,8 @@ it"). The page offers no rename or reactivate control, so those API key cases ar
   `tests/configuration_integration_test.go`
 - `gocrm-ui/e2e/screenshots/08-settings.spec.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/screenshots/helpers/login.ts`
-- `docs/FEATURES.md` sections 8, 9, 10b and the Gap Summary (G13, G14, G34);
-  `docs/ROADMAP.md`; `docs/SCREENSHOTS.md` (`docs/screenshots/settings/`)
+- `docs/reference/features.md` sections 8, 9, 10b and the Gap Summary (G13, G14, G34);
+  `docs/reference/roadmap.md`; `docs/reference/screenshots.md` (`docs/assets/settings/`)
 
 ## Constraints
 
@@ -602,7 +602,7 @@ it"). The page offers no rename or reactivate control, so those API key cases ar
 - **Expected:** Undetermined. `BulkUpsert` (used only by `InitializeDefaults` at startup) runs inside
   `db.Transaction`, but no HTTP route writes more than one key, so there is nothing to exercise from
   a test session.
-- **Known issue:** FEATURES.md 9.4 — the row previously cited
+- **Known issue:** reference/features.md 9.4 — the row previously cited
   a configuration_transaction_test.go under test/integration, which does not exist; configuration
   transactionality is untested.
 - **Automation:** blocked — no endpoint writes multiple configurations, so there is no user-facing
@@ -768,7 +768,7 @@ the two admin-only permissions (`settings.sso_manage`, `settings.scim_manage`). 
 
 The screen at `/settings/webhooks` (#409) manages the outbound webhook endpoints and shows their
 delivery log; the events, the signature and the retry schedule are in the
-[webhooks user guide](../user-guide/permissions-access/webhooks.md). The browser spec registers its endpoints under the reserved `.invalid`
+[webhooks user guide](../integrations/webhooks.md). The browser spec registers its endpoints under the reserved `.invalid`
 domain, which never resolves, so nothing is delivered outside the machine and no delivery of it
 can succeed. Its test-ping endpoint is `https://localhost/e2e-hooks-ping`, registered inactive: the
 egress guard refuses the loopback address when the ping dials, so the ping fails with

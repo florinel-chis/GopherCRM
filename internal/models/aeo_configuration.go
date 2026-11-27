@@ -27,7 +27,7 @@ func defaultAEOProviderConfigurations() []Configuration {
 // These settings are visible to administrators. Credentials belong in the
 // encrypted API-key settings, never URLs. A stored base URL must be HTTPS: an
 // override can only select an origin the operator's environment egress policy
-// already trusts for that engine (see docs/AEO_SECURITY.md), so passing this
+// already trusts for that engine (see docs/operations/aeo-egress.md), so passing this
 // syntax check never widens where credentials may be sent.
 func validateAEOProviderSetting(key, value string) (string, error) {
 	for _, provider := range aeoConfigProviders {

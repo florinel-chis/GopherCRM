@@ -94,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The documentation sits in audience folders with lowercase hyphenated file names (#798):
+  `docs/administration/`, `docs/operations/`, `docs/integrations/`, `docs/development/`,
+  `docs/reference/`, `docs/maintainers/` and `docs/assets/`, next to the unchanged
+  `docs/user-guide/` and `docs/testing/`. `docs/DEV_ENTITIES.md` and `docs/DEV_RUNTIMES.md` are
+  split by topic (entities, quotes, mail, reads and filters; background jobs, the AEO runtime, the
+  automation runtime, outbound webhooks and form background work), and
+  the index of every page is `docs/README.md`. The documentation screenshot capture writes to
+  `docs/assets/<area>/`. The pre-commit hook, the documentation impact map, the citation and
+  user-guide checkers, the remediation runner and the documentation tests follow the new paths.
+
 - Five documentation pages describe current behaviour in the present tense, without delivery
   history (#796). `docs/AUTHORIZATION.md` drops the phased-plan table and every ticket reference,
   and its single sign-on section is `## Single sign-on` with a `### Security rules` subsection;

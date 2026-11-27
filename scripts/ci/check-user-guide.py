@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Check that the permissions-and-access user guide names only things that exist.
+"""Check that the permissions-and-access guide pages name only things that exist.
 
-The administrator guide under docs/user-guide/permissions-access quotes names
-an administrator types or looks for: environment variables, error codes,
+The administrator guide under docs/administration and the API key and webhook
+pages under docs/integrations quote names an administrator types or looks for: environment variables, error codes,
 setting and permission keys, API routes and SPA paths. Prose drifts silently
 when the code renames one of them, so this check resolves every such name
 against the code and fails when one no longer exists.
@@ -47,7 +47,7 @@ identifiers in var actions = []Action{...} (`<Ident> Action = "<value>"`). A
 missing file, no defaultCatalogue, an identifier without a constant or no
 action is reported as a problem, never treated as an empty set.
 
-The sign-in audit page (sign-in-audit.md) has one more rule. Inside its
+The sign-in audit page (administration/sign-in-audit.md) has one more rule. Inside its
 section headed `## Methods and reason codes` (up to the next `## ` heading),
 every backtick span matching ^[a-z][a-z_]*$ must be the value of an
 AuthAuditMethod*, AuthAuditOutcome* or AuthAuditReason* constant in
@@ -58,8 +58,9 @@ no reason, is a problem.
 
 Tokens that match no class (`openid profile email`, `CRM.Admin`, lower-case
 reason codes outside that section) are not checked. The check fails when any of
-the ten pages is missing and when any class resolved zero tokens, so an
-extractor broken by a rewrite of the guide cannot pass empty. It uses the
+the ten pages is missing and when any class, or the sign-in audit section,
+resolved zero tokens, so an extractor broken by a rewrite of the guide, or an
+AUDIT_PAGE that no longer names a page, cannot pass empty. It uses the
 standard library only.
 
 Usage: python3 scripts/ci/check-user-guide.py [--guide-dir DIR] [--repo-root DIR]
@@ -73,19 +74,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Paths relative to the guide directory (the docs root by default).
 PAGES = (
-    'overview.md',
-    'roles-and-permissions.md',
-    'single-sign-on.md',
-    'how-to-microsoft-entra-id.md',
-    'testing-single-sign-on.md',
-    'faq.md',
-    'scim-provisioning.md',
-    'api-keys.md',
-    'sign-in-audit.md',
-    'webhooks.md',
+    'administration/overview.md',
+    'administration/roles-and-permissions.md',
+    'administration/single-sign-on.md',
+    'administration/how-to-microsoft-entra-id.md',
+    'administration/testing-single-sign-on.md',
+    'administration/faq.md',
+    'administration/scim-provisioning.md',
+    'integrations/api-keys.md',
+    'administration/sign-in-audit.md',
+    'integrations/webhooks.md',
 )
-DEFAULT_GUIDE_DIR = 'docs/user-guide/permissions-access'
+DEFAULT_GUIDE_DIR = 'docs'
 CLASSES = ('constant', 'dotted key', 'route', 'path')
 
 CONSTANT = re.compile(r'^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$')
@@ -109,7 +111,7 @@ WEBHOOK_ACTIONS = re.compile(r'^var actions = \[\]Action\{([^}]*)\}', re.M)
 WEBHOOK_ENTITY_CONST = re.compile(r'^\s*([A-Za-z_]\w*)\s+Entity\s*=\s*"([^"]*)"', re.M)
 WEBHOOK_ACTION_CONST = re.compile(r'^\s*([A-Za-z_]\w*)\s+Action\s*=\s*"([^"]*)"', re.M)
 GO_IDENT = re.compile(r'[A-Za-z_]\w*')
-AUDIT_PAGE = 'sign-in-audit.md'
+AUDIT_PAGE = 'administration/sign-in-audit.md'
 AUDIT_SECTION = '## Methods and reason codes'
 AUDIT_VOCABULARY_FILE = 'internal/service/auth_audit_vocabulary.go'
 AUDIT_CONST = re.compile(r'^\s*AuthAudit(Method|Outcome|Reason)\w*\s*=\s*"([^"]*)"', re.M)
@@ -406,6 +408,9 @@ def check(guide_dir, repo_root):
     for kind in CLASSES:
         if counts[kind] == 0:
             problems.append('%s: no %s token found; the extractor or the guide is broken' % (guide_dir, kind))
+    if counts['sign-in audit code'] == 0:
+        problems.append('%s: no sign-in audit code checked; AUDIT_PAGE (%s) is not a page or its section is empty'
+                        % (guide_dir, AUDIT_PAGE))
     return problems, counts
 
 

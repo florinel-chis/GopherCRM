@@ -10,7 +10,7 @@ Go backend, React UI, SQLite or MySQL.
 **Who it's for:** small sales and support teams that want leads, deals and tickets in one place, on
 a server they control, without per-seat licence fees.
 
-![GopherCRM dashboard](docs/img/gophercrm-dashboard.png)
+![GopherCRM dashboard](docs/assets/gophercrm-dashboard.png)
 
 ## Features
 
@@ -33,9 +33,9 @@ a server they control, without per-seat licence fees.
   deleting a person erases their personal data (GDPR Art. 17), with account lockout and rate
   limiting built in.
 
-Everything GopherCRM can do, area by area, is in [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+Everything GopherCRM can do, area by area, is in [docs/reference/capabilities.md](docs/reference/capabilities.md).
 Contributors find the test-coverage matrix, with every feature's tests and known gaps, in
-[docs/FEATURES.md](docs/FEATURES.md).
+[docs/reference/features.md](docs/reference/features.md).
 
 ## Quick start (SQLite, no database server)
 
@@ -64,7 +64,7 @@ To run from source instead, start from `.env.example`. If there is no `.env` yet
 `.env.example` to `.env` and replace the example `JWT_SECRET`: `Load` (`internal/config/config.go`)
 refuses the placeholder at startup. If the quick start already wrote `.env`, do not copy over it:
 add the `.env.example` settings you need to it and keep its two secrets. The walkthrough is
-[docs/SETUP.md](docs/SETUP.md).
+[docs/development/local-setup.md](docs/development/local-setup.md).
 
 The full documentation is listed in the [Documentation](#documentation) section below.
 
@@ -85,27 +85,27 @@ The first line is the quick start's `.env` step: it writes the two secrets once,
 has to be kept across restarts and upgrades.
 
 UI at http://localhost:3000, API at http://localhost:8080/api/v1. Configuration, persistence and
-the SQLite flavor are in [docs/DOCKER.md](docs/DOCKER.md).
+the SQLite flavor are in [docs/operations/docker.md](docs/operations/docker.md).
 
 ## Deploying
 
-To run GopherCRM on a server of your own, [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md)
+To run GopherCRM on a server of your own, [docs/operations/systemd.md](docs/operations/systemd.md)
 prepares a fresh Linux server (systemd, MySQL or MariaDB) for the release-tarball deploy, and its
-[Reverse proxy and TLS](docs/SERVER_PROVISIONING.md#reverse-proxy-and-tls) section sets up nginx or
+[Reverse proxy and TLS](docs/operations/systemd.md#reverse-proxy-and-tls) section sets up nginx or
 Apache 2.4 in front of it. To run it under your own name, with your own branding, configuration and
-CI, start with [docs/FORKING.md](docs/FORKING.md).
+CI, start with [docs/development/forking.md](docs/development/forking.md).
 
 ## Documentation
 
 - [docs/README.md](docs/README.md): the full documentation index, grouped by reader.
-- [docs/SETUP.md](docs/SETUP.md): backend and frontend setup from source.
-- [docs/DOCKER.md](docs/DOCKER.md): Docker Compose with MySQL or SQLite; backups and upgrades are in
-  [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) and [docs/UPGRADING.md](docs/UPGRADING.md).
-- [docs/FORKING.md](docs/FORKING.md): running your own copy, from the first run to staying in sync
+- [docs/development/local-setup.md](docs/development/local-setup.md): backend and frontend setup from source.
+- [docs/operations/docker.md](docs/operations/docker.md): Docker Compose with MySQL or SQLite; backups and upgrades are in
+  [docs/operations/backup-and-restore.md](docs/operations/backup-and-restore.md) and [docs/operations/upgrades.md](docs/operations/upgrades.md).
+- [docs/development/forking.md](docs/development/forking.md): running your own copy, from the first run to staying in sync
   with upstream.
 - [docs/user-guide/README.md](docs/user-guide/README.md): the user guide and the administrator
   guide.
-- [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md): what the shipped code does not do yet.
+- [docs/reference/limitations.md](docs/reference/limitations.md): what the shipped code does not do yet.
 - [api/index.html](api/index.html): the offline API reference.
 - [Releases](https://github.com/florinel-chis/GopherCRM/releases): published releases and their
   artifacts.
@@ -116,11 +116,11 @@ The API reference is generated into `api/`. [api/index.html](api/index.html) is 
 works offline; GitHub shows its source, so download it or open it from a checkout.
 [api/swagger.yaml](api/swagger.yaml) and [api/swagger.json](api/swagger.json) are the Swagger 2.0
 spec, for client generators. Conventions and regeneration are in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#api-reference).
+[docs/development/README.md](docs/development/README.md#api-reference).
 
 ## Contributing
 
-Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) first — it documents the layering and the patterns
+Read [docs/development/README.md](docs/development/README.md) first — it documents the layering and the patterns
 the codebase enforces (unified response envelope, sentinel errors, sort allowlists, role assignment
 rules, erasure-on-delete). Then:
 

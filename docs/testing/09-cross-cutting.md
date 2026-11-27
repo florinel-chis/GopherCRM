@@ -11,9 +11,9 @@ coverage matrix.
 
 **Sources**
 
-- `docs/FEATURES.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
+- `docs/reference/features.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
   6.5, 7.5, 7.8 for the shared list conventions; Gap Summary G22, G34
-- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
+- `docs/reference/roadmap.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
   session-ending events, live session updates across tabs)
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`, `gocrm-ui/src/components/Breadcrumbs.tsx`,
@@ -31,8 +31,8 @@ coverage matrix.
 - `gocrm-ui/e2e/tests/*.spec.ts`, `gocrm-ui/e2e/screenshots/02-dashboard.spec.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/global-setup.ts`,
   `gocrm-ui/e2e/fixtures/admin-user.ts`
-- Visual reference: `docs/screenshots/misc/01-unauthorized.png`, `misc/02-not-found.png`,
-  `docs/screenshots/dashboard/01-overview.png`
+- Visual reference: `docs/assets/misc/01-unauthorized.png`, `misc/02-not-found.png`,
+  `docs/assets/dashboard/01-overview.png`
 
 **Constraints**
 

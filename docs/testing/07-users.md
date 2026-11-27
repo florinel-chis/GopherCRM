@@ -11,8 +11,8 @@ Expected field still describes it and a **Known issue** line records the defect.
 
 **Sources consulted**
 
-- `docs/FEATURES.md` section 7 (rows 7.1–7.9) and the Gap Summary (G19, G20, G33, G34)
-- `docs/DEVELOPMENT.md`, "Defects found while documenting the API" (known API defects)
+- `docs/reference/features.md` section 7 (rows 7.1–7.9) and the Gap Summary (G19, G20, G33, G34)
+- `docs/development/README.md`, "Defects found while documenting the API" (known API defects)
 - `gocrm-ui/src/pages/users/UserList.tsx`, `UserForm.tsx`, `UserDetail.tsx`
 - `gocrm-ui/src/pages/settings/Profile.tsx`
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
@@ -27,7 +27,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   `gocrm-ui/e2e/screenshots/07-users.spec.ts`, `gocrm-ui/e2e/pages/users.page.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/src/pages/settings/Profile.test.tsx`
-- Reference captures: `docs/screenshots/users/01-list.png` … `05-delete-confirm.png`
+- Reference captures: `docs/assets/users/01-list.png` … `05-delete-confirm.png`
 
 **Constraints**
 
@@ -120,7 +120,7 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** The Username column header is present but every cell is empty. `DataTable` renders
   `row['username']` and neither the `User` type (`src/types/index.ts`) nor the API payload has a
   `username` field. Nothing else is affected — the identity shown to the user is Name plus Email.
-- **Known issue:** Cosmetic dead column; not tracked in FEATURES.md.
+- **Known issue:** Cosmetic dead column; not tracked in reference/features.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-006 — Show the server's user total in the pagination footer
@@ -172,7 +172,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   "Recent Tasks" list capped at five entries. Statistics shows Total Tasks, Total Tickets and a
   Completion Rate percentage; the tab is rendered only for an admin or for the viewer's own record.
 - **Known issue:** Duplicate Email row is a copy/paste defect in the Overview list; harmless but
-  visible in `docs/screenshots/users/03-detail.png`.
+  visible in `docs/assets/users/03-detail.png`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -238,7 +238,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   unsorted listing — the visible order changes (the previous Created-desc ordering is lost) but is
   not sorted by the clicked column. The header still paints its sort arrow, so the UI claims a sort
   that did not happen.
-- **Known issue:** FEATURES.md row 7.7 records the missing E2E coverage; the header/allowlist
+- **Known issue:** reference/features.md row 7.7 records the missing E2E coverage; the header/allowlist
   mismatch is not recorded anywhere.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
@@ -278,7 +278,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   "All"). The backend ignores `is_active`, no client-side filtering runs, and the same mix of Active
   and Inactive rows stays on screen. Only the toggle's own pressed state changes.
 - **Known issue:** `UserHandler.List` does not read `is_active` at all (gap G34); the status toggle
-  is not even mentioned in FEATURES.md row 7.8.
+  is not even mentioned in reference/features.md row 7.8.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
@@ -522,7 +522,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   — only another admin or the `create-admin` CLI can.
 - **Known issue:** An admin can still demote itself here while another active admin remains (the
   case's precondition); `POST /users/{id}/deactivate` refuses the caller's own account, this route
-  does not (`docs/DEVELOPMENT.md`, "Defects found while documenting the API"). The last active
+  does not (`docs/development/README.md`, "Defects found while documenting the API"). The last active
   admin is protected since #348: the same request answers 409 `LAST_ADMIN` and writes nothing. Since #381 the form stays open on that answer and shows
   "The last active administrator cannot be given another role or be deactivated." above its
   buttons instead of only a snackbar (Vitest `src/pages/users/UserForm.roles.test.tsx`).
@@ -809,12 +809,12 @@ Expected field still describes it and a **Known issue** line records the defect.
   3. Read the confirmation dialog, then click "Delete".
 - **Expected:** The dialog is titled "Delete User" and reads `Are you sure you want to delete the
   user "<first> <last>"? This action cannot be undone.` with a red "Delete" button (see
-  `docs/screenshots/users/05-delete-confirm.png`). Confirming issues `DELETE /api/v1/users/<id>`,
+  `docs/assets/users/05-delete-confirm.png`). Confirming issues `DELETE /api/v1/users/<id>`,
   which returns **204 No Content**. The snackbar reads "User deleted successfully", the users query
   is invalidated and the row disappears from the list and from the same search. Re-searching the
   original email returns no rows: erasure overwrote the address with a random
   `deleted-<32 hex>@anonymized.invalid` placeholder before the soft delete.
-- **Known issue:** Gap G20 / FEATURES.md row 7.4 — there is no delete test in
+- **Known issue:** Gap G20 / reference/features.md row 7.4 — there is no delete test in
   `admin-users.spec.ts` today, despite an earlier version of the document claiming one.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
@@ -892,7 +892,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   server message, and the dialog stays open. The account is untouched — reloading `/users` still
   shows the admin row and the session keeps working.
 - **Known issue:** The UI offers an action it knows will fail and hides the server's explanation.
-  FEATURES.md row 7.4 records that the self-deletion E2E test claimed previously does not exist.
+  reference/features.md row 7.4 records that the self-deletion E2E test claimed previously does not exist.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-037 — Open the detail page of a user id that does not exist
@@ -932,7 +932,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   `tests/users_me_password_test.go`) — has no caller anywhere in the frontend. The route is
   deliberately outside the admin-guarded layout route, so every role can reach the page.
 - **Known issue:** There is no profile-edit UI, so `PUT /users/me` has no browser coverage;
-  FEATURES.md row 7.9 stays partial for that reason.
+  reference/features.md row 7.9 stays partial for that reason.
 - **Automation:** automated for the page — `gocrm-ui/e2e/tests/settings.spec.ts` "shows the signed-in
   account details" (as the seeded admin), "changes the password and the new one works on the next
   login" and "rejects a wrong current password with the server message" (as a registered customer),

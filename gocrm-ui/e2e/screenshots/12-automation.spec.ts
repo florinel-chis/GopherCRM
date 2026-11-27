@@ -6,7 +6,7 @@ import { API_BASE_URL } from '../helpers/env';
 
 /**
  * Documentation captures for follow-up automation and notifications
- * (FEATURES.md 4e.17): the rule list, the rule form, the dry-run dialog, the
+ * (docs/reference/features.md 4e.17): the rule list, the rule form, the dry-run dialog, the
  * run list and a run's step log, the Automation section on a lead, the
  * notification bell's menu and the notifications page.
  *

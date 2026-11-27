@@ -2,7 +2,8 @@
 
 The real guide must pass against the real repository; each token class is shown
 to report an unknown name in a small fixture guide, and to pass once the name
-is right; a missing page and a class with no token fail. Webhook event types
+is right; a missing page, a class with no token and a sign-in audit section
+with no code fail. Webhook event types
 resolve from the event catalogue, and the sign-in audit page must name exactly
 the methods and reason codes of the Go vocabulary.
 """
@@ -30,6 +31,9 @@ and open `/settings/sso`. The redirect URI is `APP_BASE_URL/auth/callback`.
 OIDC_ENABLED=true
 ```
 """
+
+
+OVERVIEW = 'administration/overview.md'
 
 
 def run(guide_dir, repo_root=ROOT):
@@ -85,9 +89,10 @@ class UserGuideCheckTest(unittest.TestCase):
 
     def write_guide(self, extra='', base=BASE_PAGE):
         for page in gate.PAGES:
+            (self.dir / page).parent.mkdir(parents=True, exist_ok=True)
             (self.dir / page).write_text('# %s\n' % page, encoding='utf-8')
         (self.dir / gate.AUDIT_PAGE).write_text(audit_page(), encoding='utf-8')
-        (self.dir / 'overview.md').write_text(base + extra, encoding='utf-8')
+        (self.dir / OVERVIEW).write_text(base + extra, encoding='utf-8')
 
     def assert_fails_naming(self, extra, token, kind):
         self.write_guide(extra)
@@ -95,7 +100,7 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('`%s`' % token, out)
         self.assertIn('unknown %s' % kind, out)
-        self.assertIn('overview.md', out)
+        self.assertIn(OVERVIEW, out)
 
     def test_real_guide_passes(self):
         code, out = run(ROOT / gate.DEFAULT_GUIDE_DIR)
@@ -103,7 +108,7 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertTrue(out.startswith('OK'), out)
 
     def test_testing_page_is_checked(self):
-        self.assertIn('testing-single-sign-on.md', gate.PAGES)
+        self.assertIn('administration/testing-single-sign-on.md', gate.PAGES)
 
     def test_fixture_with_known_names_passes(self):
         self.write_guide('\n`OIDC_GRAPH_MAX_PAGES`, `roles.audit_view`, `PUT /settings/sso`, '
@@ -142,10 +147,10 @@ class UserGuideCheckTest(unittest.TestCase):
 
     def test_missing_page_fails(self):
         self.write_guide()
-        (self.dir / 'faq.md').unlink()
+        (self.dir / 'administration/faq.md').unlink()
         code, out = run(self.dir)
         self.assertEqual(code, 1, out)
-        self.assertIn('faq.md: missing page', out)
+        self.assertIn('administration/faq.md: missing page', out)
 
     def test_empty_directory_reports_every_page(self):
         code, out = run(self.dir)
@@ -154,7 +159,7 @@ class UserGuideCheckTest(unittest.TestCase):
             self.assertIn('%s: missing page' % page, out)
 
     def test_scim_page_is_checked(self):
-        self.assertIn('scim-provisioning.md', gate.PAGES)
+        self.assertIn('administration/scim-provisioning.md', gate.PAGES)
 
     def test_known_scim_names_pass(self):
         self.write_guide('\n`GET /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `PUT /scim/v2/Users/:id`, '
@@ -231,8 +236,17 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertIn('no route token found', out)
 
     def test_new_pages_are_checked(self):
-        for page in ('api-keys.md', 'sign-in-audit.md', 'webhooks.md'):
+        for page in ('integrations/api-keys.md', 'administration/sign-in-audit.md', 'integrations/webhooks.md'):
             self.assertIn(page, gate.PAGES)
+
+    def test_pages_are_the_administration_and_integrations_pages(self):
+        for page in gate.PAGES:
+            self.assertTrue((ROOT / gate.DEFAULT_GUIDE_DIR / page).is_file(), page)
+            self.assertIn(page.split('/')[0], ('administration', 'integrations'), page)
+
+    def test_audit_page_is_one_of_the_pages(self):
+        # check() runs the audit rule only for the PAGES entry equal to AUDIT_PAGE.
+        self.assertIn(gate.AUDIT_PAGE, gate.PAGES)
 
     def test_parsed_event_types_are_the_catalogue(self):
         types, problems = gate.webhook_event_types(ROOT)
@@ -274,6 +288,21 @@ class UserGuideCheckTest(unittest.TestCase):
         out = self.assert_audit_page_fails(audit_page(drop=('token_reuse',)),
                                            'missing sign-in audit code `token_reuse`')
         self.assertEqual(out.count('sign-in audit code'), 1, out)
+
+    def test_sign_in_audit_section_without_codes_fails(self):
+        page = '# Sign-in audit\n\n%s\n\nNo codes here.\n\n## Next\n' % gate.AUDIT_SECTION
+        self.assert_audit_page_fails(page, 'no sign-in audit code checked')
+
+    def test_audit_page_that_is_not_a_page_fails(self):
+        self.write_guide()
+        saved = gate.AUDIT_PAGE
+        gate.AUDIT_PAGE = 'sign-in-audit.md'
+        try:
+            code, out = run(self.dir)
+        finally:
+            gate.AUDIT_PAGE = saved
+        self.assertEqual(code, 1, out)
+        self.assertIn('no sign-in audit code checked', out)
 
     def test_sign_in_audit_page_without_section_fails(self):
         page = audit_page().replace(gate.AUDIT_SECTION, '## Codes')

@@ -22,7 +22,7 @@
 # (seen with 2.19.0) accepts this file but ignores !override and keeps the
 # shipped all-interfaces UI publication next to the loopback one. Check
 # `docker compose version`, then read the merged ports with `config` (without
-# -q): backend must have none, ui only 127.0.0.1. See docs/DOCKER.md,
+# -q): backend must have none, ui only 127.0.0.1. See docs/operations/docker.md,
 # "Production override example".
 
 services:

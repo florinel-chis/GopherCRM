@@ -209,9 +209,9 @@ class MiddleStageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_specification_checks_context_refs_against_the_base_worktree(self):
         self.commands.outputs['specification'] = fixtures.specification()
-        self.commands.outputs['specification']['manifest']['context_refs'].append('docs/datamodel.md')
+        self.commands.outputs['specification']['manifest']['context_refs'].append('docs/reference/data-model.md')
         run, outputs = await self.through('specification')
-        self.assertIn("context_refs missing at the base commit: ['docs/datamodel.md']", outputs['specification'].notes)
+        self.assertIn("context_refs missing at the base commit: ['docs/reference/data-model.md']", outputs['specification'].notes)
 
     async def test_review_receives_draft_and_runner_findings(self):
         self.commands.outputs['analysis'] = fixtures.analysis_output(words=' '.join(['word'] * 520))

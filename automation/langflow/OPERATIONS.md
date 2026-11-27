@@ -106,7 +106,7 @@ commands. The frozen acceptance checks and database matrix remain mandatory. A m
 selected spec or unqualified shared path still forces full coverage. Token-repository changes
 are not reclassified as service-only auth merely to shorten a run. Version 0.8.1 adds a separate
 auth-persistence profile with candidate test-availability and shared-interface scope proofs,
-real SQL boundaries and focused auth browsers; see the [validation policy](../../docs/VALIDATION_RELEASE.md).
+real SQL boundaries and focused auth browsers; see the [validation policy](../../docs/maintainers/validation-and-releases.md).
 
 History reads exact issue/PR journal filenames and ignores backups. It groups completed
 validation durations by profile and policy, preserves failures and reused-check counts, and
@@ -144,7 +144,7 @@ fresh-policy migration. Explicit full/release policy remains available. The defa
 false, preserving previously admitted configuration hashes.
 
 Version 0.8.2 adds this hold and the shared AEO profile in
-[VALIDATION_RELEASE](../../docs/VALIDATION_RELEASE.md). Install only reviewed main, verify
+[validation-and-releases](../../docs/maintainers/validation-and-releases.md). Install only reviewed main, verify
 module identity, then prepare a fresh application state after the prerequisite merges.
 
 Version 0.8.3 adds a committed proof for comment-only edits to the root `.env.example`.
@@ -157,7 +157,7 @@ delivery callers. Its checker rejects missing/skipped tests; it does not need a 
 for SMTP fixtures. The local browser set is SQLite health smoke; CI retains all-engine health
 and migration gates. Include operational SMTP documentation and environment-example comments
 before freezing. Other application changes retain full fallback; explicit full/release runs
-remain complete. See the exact [scope and commands](../../docs/VALIDATION_RELEASE.md).
+remain complete. See the exact [scope and commands](../../docs/maintainers/validation-and-releases.md).
 
 ### Recover a change outside the frozen scope
 

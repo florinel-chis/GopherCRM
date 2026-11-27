@@ -28,7 +28,7 @@ names the Go test that already pins its API behaviour.
 - `migrations/20260930120000_add_deals.{up,down}.sql`
 - `gocrm-ui/src/pages/deals/`, `gocrm-ui/src/api/endpoints/deals.ts`,
   `gocrm-ui/e2e/tests/admin-deals.spec.ts`, `gocrm-ui/e2e/pages/deals.page.ts`
-- `docs/FEATURES.md` section 4c
+- `docs/reference/features.md` section 4c
 
 **Constraints**
 

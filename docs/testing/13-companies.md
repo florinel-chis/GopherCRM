@@ -26,7 +26,7 @@ accounts come from `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`), 0 b
 - `gocrm-ui/src/pages/companies/CompanyList.tsx`, `CompanyForm.tsx`, `CompanyDetail.tsx`,
   `gocrm-ui/src/components/CompanyAutocomplete.tsx`, `gocrm-ui/src/api/endpoints/companies.ts`
 - `gocrm-ui/e2e/tests/admin-companies.spec.ts`, `gocrm-ui/e2e/pages/companies.page.ts`
-- `docs/FEATURES.md` section 4b; `docs/ROADMAP.md` (companies follow-ups)
+- `docs/reference/features.md` section 4b; `docs/reference/roadmap.md` (companies follow-ups)
 
 **Constraints**
 

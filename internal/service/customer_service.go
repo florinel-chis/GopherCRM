@@ -179,7 +179,7 @@ func (s *customerService) Update(ctx context.Context, customer *models.Customer)
 // at the locking read is the same not-found answer as a write that lost to an
 // erasure. A failed write or outbox insert rolls everything back.
 //
-// Lock order (docs/CONCURRENCY.md: companies -> leads -> customers -> deals):
+// Lock order (docs/development/concurrency.md: companies -> leads -> customers -> deals):
 // the one customers row is the only row lock this transaction takes. The
 // duplicate-email and company checks ran before it, as plain reads; nothing
 // here may take a locking read on companies or leads, which would invert the

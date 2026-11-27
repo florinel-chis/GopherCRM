@@ -15,8 +15,8 @@ from .validation import changed_paths
 
 
 POLICY_VERSION = 1
-PRODUCT = ('README.md', 'CHANGELOG.md', 'docs/FEATURES.md', 'docs/ROADMAP.md')
-WORKFLOW = (*PRODUCT, 'docs/DEVELOPMENT.md', 'docs/DEV_TESTING_CI.md', 'docs/VALIDATION_RELEASE.md', 'docs/DOCUMENTATION_WORKFLOW.md',
+PRODUCT = ('README.md', 'CHANGELOG.md', 'docs/reference/features.md', 'docs/reference/roadmap.md')
+WORKFLOW = (*PRODUCT, 'docs/development/README.md', 'docs/development/testing.md', 'docs/maintainers/validation-and-releases.md', 'docs/development/documentation.md',
             'automation/langflow/README.md', 'automation/langflow/BATCHES.md')
 FEATURE_DOCS = {
     'auth': '01-authentication', 'dashboard': '02-dashboard', 'lead': '03-leads',
@@ -27,8 +27,8 @@ FEATURE_DOCS = {
 # Fork and extension guides: routes, schema and configuration change what a fork
 # merges and how it extends the code; forms, automation, tickets and quotes are the
 # modules the use-case recipes build on.
-FORK_GUIDES = ('docs/FORKING.md', 'docs/EXTENDING.md')
-USE_CASES = 'docs/USE_CASES.md'
+FORK_GUIDES = ('docs/development/forking.md', 'docs/development/extending.md')
+USE_CASES = 'docs/reference/use-cases.md'
 # Matched on feature directories and file-name prefixes, never as a substring, so
 # UserForm.tsx, CompanyForm.tsx, dealFormat.ts or the shared components/form/
 # widgets do not count as the forms module.
@@ -109,7 +109,7 @@ def suggestions(paths):
             add(API_REFERENCE, 'generated API reference; run make swagger when annotations change')
         if ('docker' in lower or path in {'.github/workflows/deploy.yml', 'scripts/deploy/bootstrap.sh'}
                 or path.startswith('scripts/deploy/')):
-            add(('docs/DOCKER.md', 'docs/SETUP.md'), 'container or deployment operations')
+            add(('docs/operations/docker.md', 'docs/development/local-setup.md'), 'container or deployment operations')
         if path.startswith(('automation/langflow/', '.github/', 'scripts/ci/', 'scripts/release/',
                             'scripts/deploy/')) or path == 'Makefile':
             add(WORKFLOW, 'development or delivery workflow')
@@ -119,7 +119,7 @@ def suggestions(paths):
                 if feature in lower:
                     add((f'docs/testing/{name}.md',), 'affected feature guidance')
             if path.startswith(('internal/models/', 'internal/database/', 'cmd/migrate/')):
-                add(('docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+                add(('docs/reference/data-model.md', 'docs/development/local-setup.md', 'docs/operations/docker.md'), 'schema or upgrade behavior')
                 add(FORK_GUIDES, 'fork upgrade and extension guidance')
             if (path.startswith('internal/config/') or path == 'cmd/main.go'
                     or (path.startswith('internal/handler/') and path.endswith('routes.go'))):
@@ -127,17 +127,17 @@ def suggestions(paths):
             if is_use_case_path(path):
                 add((USE_CASES,), 'use-case recipes')
             if 'aeo' in lower:
-                add(('docs/AEO_SECURITY.md',), 'AEO operations and security')
+                add(('docs/operations/aeo-egress.md',), 'AEO operations and security')
             if path.startswith('internal/middleware/') or 'auth' in lower:
-                add(('docs/DEVELOPMENT.md', 'docs/DEV_AUTH.md', 'docs/DEV_RBAC.md', 'docs/testing/09-cross-cutting.md'),
+                add(('docs/development/README.md', 'docs/development/auth.md', 'docs/development/roles.md', 'docs/testing/09-cross-cutting.md'),
                     'security or shared behavior')
             if path.startswith(('cmd/', 'internal/config/')):
-                add(('docs/SETUP.md', '.env.example'), 'runtime configuration')
+                add(('docs/development/local-setup.md', '.env.example'), 'runtime configuration')
         elif path.startswith('migrations/'):
-            add((*PRODUCT, 'docs/datamodel.md', 'docs/SETUP.md', 'docs/DOCKER.md'), 'schema or upgrade behavior')
+            add((*PRODUCT, 'docs/reference/data-model.md', 'docs/development/local-setup.md', 'docs/operations/docker.md'), 'schema or upgrade behavior')
             add(FORK_GUIDES, 'fork upgrade and extension guidance')
         else:
-            add((*PRODUCT, 'docs/DEVELOPMENT.md'), 'unmapped change; assess conservatively')
+            add((*PRODUCT, 'docs/development/README.md'), 'unmapped change; assess conservatively')
     return [{'path': p, 'reasons': sorted(reasons)} for p, reasons in sorted(selected.items())]
 
 

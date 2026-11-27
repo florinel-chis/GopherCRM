@@ -161,7 +161,7 @@ Every case carries a stable ID (`TC-<AREA>-NNN`, unique within its document) and
 - **Steps** — concrete UI actions with real field names and selectors where they matter.
 - **Expected** — the observed behaviour, with HTTP statuses for API-visible effects.
 - **Known issue** — present only when the behaviour is defective or surprising, citing
-  `docs/FEATURES.md` / `docs/ROADMAP.md` or the code location. Cite the code by file plus symbol,
+  `docs/reference/features.md` / `docs/reference/roadmap.md` or the code location. Cite the code by file plus symbol,
   never by line number: Go code as `` `internal/handler/lead_handler.go` `LeadHandler.Create` ``
   (full repository path, then the function, method, type or `Suite.TestName` that holds the
   behaviour), other files by full path plus a function, component or const name, a route path or a
@@ -178,7 +178,7 @@ DISABLE_RATE_LIMIT=true SERVER_PORT=8090 go run ./cmd
 
 # E2E, from gocrm-ui/ (Vite is auto-started by the Playwright webServer block)
 npm run test:e2e          # existing suite
-npm run screenshots       # documentation screenshot suite (docs/SCREENSHOTS.md)
+npm run screenshots       # documentation screenshot suite (docs/reference/screenshots.md)
 ```
 
 The standard run is `make e2e` from the repository root, which starts a disposable backend and
@@ -186,7 +186,7 @@ database; [gocrm-ui/e2e/README.md](../../gocrm-ui/e2e/README.md) covers running 
 the seeded admin account and the cleanup script.
 
 Tests share one MySQL database and must run serially (`workers: 1`). See
-[docs/SCREENSHOTS.md](../SCREENSHOTS.md) for the visual reference captures the cases cite.
+[docs/reference/screenshots.md](../reference/screenshots.md) for the visual reference captures the cases cite.
 
 ## Lessons learned
 
@@ -239,7 +239,7 @@ fail in ways that look like application bugs.
    again: leftovers are permanently visible on `/labels` and leak into the documentation captures.
    `e2e/tests/labels.spec.ts` does both; `e2e/screenshots/09-labels.spec.ts` deliberately does the
    opposite — fixed names, created only when missing — so the captures stay stable.
-10. **The code outranks the docs.** Cataloguing found `docs/FEATURES.md` rows 1.3/1.4 stale (session
+10. **The code outranks the docs.** Cataloguing found `docs/reference/features.md` rows 1.3/1.4 stale (session
    refresh and logout exist since the 2026-08 build-out) and a ROADMAP defect already fixed
    (`/dashboard/stats` is guarded now). Every claim in these documents was traced to code, and new
    cases should be grounded the same way.

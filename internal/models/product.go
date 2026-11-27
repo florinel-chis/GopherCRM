@@ -18,7 +18,7 @@ type Product struct {
 	// SKU is an optional stock-keeping code. It is indexed for the search and
 	// deliberately not unique: a unique index over a soft-deleted table would
 	// either block the reuse of a code or, scoped by deleted_at, stop meaning
-	// anything (see the gotchas in docs/DEVELOPMENT.md).
+	// anything (see the gotchas in docs/development/README.md).
 
 	// Optional stock-keeping code, trimmed, at most 64 characters; empty when
 	// not set. Not unique.

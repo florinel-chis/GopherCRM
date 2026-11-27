@@ -19,7 +19,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - `gocrm-ui/src/api/endpoints/labels.ts`, `gocrm-ui/src/api/endpoints/tasks.ts`
 - `gocrm-ui/e2e/tests/labels.spec.ts`, `gocrm-ui/e2e/pages/labels.page.ts`,
   `gocrm-ui/e2e/pages/tasks.page.ts`, `gocrm-ui/e2e/screenshots/09-labels.spec.ts`
-- `docs/SCREENSHOTS.md` (`docs/screenshots/labels/`)
+- `docs/reference/screenshots.md` (`docs/assets/labels/`)
 
 **Constraints**
 
@@ -199,7 +199,7 @@ where the behaviour is surprising a **Known issue** line names it.
   2. Click "Cancel".
   3. Reload `/labels`.
 - **Expected:** The dialog closes, no `POST /labels` is issued and the list is unchanged.
-- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/labels.spec.ts` "a label name that already exists is rejected" cancels the dialog and re-asserts the row count; a cancel from a *clean* dialog is not covered. The screenshot capture `docs/screenshots/labels/02-create-dialog.png` is also taken from a filled, never-submitted dialog.
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/labels.spec.ts` "a label name that already exists is rejected" cancels the dialog and re-asserts the row count; a cancel from a *clean* dialog is not covered. The screenshot capture `docs/assets/labels/02-create-dialog.png` is also taken from a filled, never-submitted dialog.
 
 ## 10.3 Editing a Label
 
@@ -405,7 +405,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Find the task in `/tasks` and read its Labels cell.
   2. Open its detail page.
-- **Expected:** The cell is empty (the column formatter returns `null` for an empty array) and the detail page renders no "Labels" heading at all, rather than an empty block. Visible in `docs/screenshots/tasks/01-list.png`, where no row on the first page carries a label.
+- **Expected:** The cell is empty (the column formatter returns `null` for an empty array) and the detail page renders no "Labels" heading at all, rather than an empty block. Visible in `docs/assets/tasks/01-list.png`, where no row on the first page carries a label.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-036 — More than three labels collapse into a "+N" indicator

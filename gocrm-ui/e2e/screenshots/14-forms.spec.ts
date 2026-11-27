@@ -5,7 +5,7 @@ import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
 
 /**
- * Documentation captures for embeddable forms (FEATURES.md section 10b): the
+ * Documentation captures for embeddable forms (docs/reference/features.md section 10b): the
  * form list, the builder (the edit page of one form, never saved) and the
  * form's detail page with its embed snippet and one submission.
  *

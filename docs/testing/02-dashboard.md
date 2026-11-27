@@ -27,17 +27,17 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - `gocrm-ui/e2e/tests/{login,registration,admin-entity-suite}.spec.ts`,
   `gocrm-ui/e2e/pages/dashboard.page.ts`, `gocrm-ui/e2e/helpers/admin-auth.ts`,
   `gocrm-ui/e2e/fixtures/admin-user.ts`
-- `docs/FEATURES.md` sections 2.1, 2.2, 10b ("Dashboard analytics"), Gap Summary G15/G34;
-  `docs/ROADMAP.md` ("Follow-ups from the backend build-out")
-- Visual reference: `docs/screenshots/dashboard/01-overview.png`
+- `docs/reference/features.md` sections 2.1, 2.2, 10b ("Dashboard analytics"), Gap Summary G15/G34;
+  `docs/reference/roadmap.md` ("Follow-ups from the backend build-out")
+- Visual reference: `docs/assets/dashboard/01-overview.png`
 
 **Constraints**
 
-- `docs/FEATURES.md` row 2.1 claims `admin-entity-suite.spec.ts` "navigation includes dashboard".
+- `docs/reference/features.md` row 2.1 claims `admin-entity-suite.spec.ts` "navigation includes dashboard".
   It does not: the navigation test iterates Leads, Customers, Tickets, Tasks and Users only. The
   dashboard is reached incidentally by `AdminAuthHelper.ensureAdminLoggedIn()`, which waits for
   `waitForURL('/')`. Treat the dashboard as effectively unautomated.
-- `docs/ROADMAP.md` used to list `/dashboard/stats` as unguarded. It is guarded now —
+- `docs/reference/roadmap.md` used to list `/dashboard/stats` as unguarded. It is guarded now —
   `SetupDashboardRoutes` applies `RequireRole(admin, sales, support)` to all nine routes
   (`internal/handler/routes.go` `SetupDashboardRoutes`) — and ROADMAP no longer lists it. Cases here
   assert the guard, not the old defect.
@@ -105,7 +105,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** every call returns **403** with body
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
   (`middleware.RequireRole` → `utils.RespondForbidden`). No endpoint leaks counts to a customer.
-- **Known issue:** `docs/ROADMAP.md` historically listed `/dashboard/stats` as unguarded; the guard
+- **Known issue:** `docs/reference/roadmap.md` historically listed `/dashboard/stats` as unguarded; the guard
   now exists in `internal/handler/routes.go` `SetupDashboardRoutes`. This case pins it so the regression cannot return.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
@@ -204,7 +204,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `status IN ('pending','in_progress')`.
 - **Known issue:** the card labels are narrower than the query. A ticket in `in_progress` is
   reported as "Open" and a task in `in_progress` as "Pending"; a user reconciling the card against
-  a status filter on `/tickets` or `/tasks` will get a different number. FEATURES.md row 2.1 is
+  a status filter on `/tickets` or `/tasks` will get a different number. reference/features.md row 2.1 is
   marked **gap** — no test asserts the values at all.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
@@ -224,7 +224,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   customers, including those created directly through `POST /customers`, while `total_leads` counts
   leads that are still present — and a lead that converts stays in the lead table with status
   `converted`, so it is counted on both sides. The number is not a conversion rate in any useful
-  sense and is unbounded above. FEATURES.md row 2.1 (**gap**), G15.
+  sense and is unbounded above. reference/features.md row 2.1 (**gap**), G15.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-011 — Conversion Rate is 0.0 % when there are no leads
@@ -271,7 +271,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   query runs under GORM's soft-delete scope, so the row stops being counted and stops appearing in
   `ListRecent`. Re-registering the same email afterwards succeeds — erasure replaced the stored
   address with a random `.invalid` one.
-- **Known issue:** deletion is irreversible GDPR erasure (FEATURES.md section 12). Only delete
+- **Known issue:** deletion is irreversible GDPR erasure (reference/features.md section 12). Only delete
   records the test created.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
@@ -306,7 +306,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** the four buttons navigate to `/leads/new`, `/tickets/new`, `/tasks/new` and
   `/customers` respectively (the `navigate('/leads/new')`, `navigate('/tickets/new')`, `navigate('/tasks/new')` and
   `navigate('/customers')` handlers in `gocrm-ui/src/pages/Dashboard.tsx`) and the target page renders.
-  FEATURES.md row 2.2 is **untested**.
+  reference/features.md row 2.2 is **untested**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-016 — Quick Actions: New Ticket only for admin and support, View Customers not for the customer role
@@ -686,7 +686,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Expected:** four cards sit on the first row and Conversion Rate alone on the second. Each card
   is `flex: 1 1 calc(25% - 18px)` at the `md` breakpoint inside a `flexWrap: 'wrap'` container, so
   the fifth card necessarily wraps — this is the layout captured in
-  `docs/screenshots/dashboard/01-overview.png`, not a rendering fault.
+  `docs/assets/dashboard/01-overview.png`, not a rendering fault.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-037 — The Dashboard sidebar item is visible to every role and is the post-login landing page

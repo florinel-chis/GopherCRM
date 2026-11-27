@@ -273,7 +273,7 @@ rows yet (a later frontend task).
 ## Ticket intake
 
 A double opt-in form with `create_ticket` opens a ticket for the matching live customer when a
-submission is confirmed (#213; see [DEV_RUNTIMES.md](../DEV_RUNTIMES.md#form-ticket-intake-213)).
+submission is confirmed (#213; see [form-background-work.md](../development/form-background-work.md#form-ticket-intake-213)).
 The builder offers it as the "Create a support ticket" submission action (#335: it forces double
 opt-in, excludes lead creation and sends no owner) and FormDetail shows "Creates tickets"; the
 submission list and detail still show no ticket outcome, link or key. The hosted view renders one

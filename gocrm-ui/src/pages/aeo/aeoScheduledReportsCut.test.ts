@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 // Issue #320: scheduled or emailed AEO client reports are recorded as a deliberate cut in
-// docs/ROADMAP.md, with three prerequisites. These documentation tests pin the cut bullet, the
-// trimmed follow-ups bullet, the USE_CASES gap references and the CHANGELOG entry.
+// docs/reference/roadmap.md, with three prerequisites. These documentation tests pin the cut bullet, the
+// trimmed follow-ups bullet, the use-cases.md gap references and the CHANGELOG entry.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -41,8 +41,8 @@ function occurrences(text: string, needle: string): number {
 }
 
 describe('AEO scheduled client reports deliberate cut (#320)', () => {
-  it('ROADMAP.md has one cut bullet under Backend and delivery after the AEO reporting bullet', () => {
-    const lines = readRepo('docs/ROADMAP.md').split('\n');
+  it('roadmap.md has one cut bullet under Backend and delivery after the AEO reporting bullet', () => {
+    const lines = readRepo('docs/reference/roadmap.md').split('\n');
     const cut = linesStartingWith(lines, CUT_PREFIX);
     expect(cut).toHaveLength(1);
 
@@ -65,7 +65,7 @@ describe('AEO scheduled client reports deliberate cut (#320)', () => {
   });
 
   it('the cut bullet names the three prerequisites with #229, #216 and #238', () => {
-    const lines = readRepo('docs/ROADMAP.md').split('\n');
+    const lines = readRepo('docs/reference/roadmap.md').split('\n');
     const bullet = onlyBullet(lines, CUT_PREFIX);
     for (const phrase of [
       '#320',
@@ -94,7 +94,7 @@ describe('AEO scheduled client reports deliberate cut (#320)', () => {
   });
 
   it('the AEO reporting follow-ups bullet no longer lists scheduled or emailed reports as still open', () => {
-    const lines = readRepo('docs/ROADMAP.md').split('\n');
+    const lines = readRepo('docs/reference/roadmap.md').split('\n');
     const bullet = onlyBullet(lines, FOLLOW_UPS_PREFIX);
     for (const stale of ['scheduled, emailed', 'scheduled client reports']) {
       expect(bullet, stale).not.toContain(stale);
@@ -110,19 +110,19 @@ describe('AEO scheduled client reports deliberate cut (#320)', () => {
     }
   });
 
-  it('USE_CASES.md points the scheduled report gap to the roadmap cut instead of #244', () => {
-    const raw = readRepo('docs/USE_CASES.md');
+  it('use-cases.md points the scheduled report gap to the roadmap cut instead of #244', () => {
+    const raw = readRepo('docs/reference/use-cases.md');
     const text = collapse(raw);
     for (const stale of ['client reports remain a gap: #244', 'no scheduled client report: #244']) {
       expect(text, stale).not.toContain(stale);
     }
     const sentences = [
       'Threshold alerts remain a gap; scheduled or emailed client reports are a deliberate cut ' +
-        '(#320, docs/ROADMAP.md).',
+        '(#320, docs/reference/roadmap.md).',
       'there is no threshold alerting, and scheduled client reports are a deliberate cut ' +
-        '(#320, docs/ROADMAP.md).',
+        '(#320, docs/reference/roadmap.md).',
       'Still open: threshold alerting; scheduled or emailed client reports are a deliberate cut ' +
-        '(#320, docs/ROADMAP.md);',
+        '(#320, docs/reference/roadmap.md);',
     ];
     for (const sentence of sentences) {
       expect(occurrences(text, sentence), sentence).toBe(1);

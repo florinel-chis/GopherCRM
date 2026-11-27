@@ -20,7 +20,7 @@ import (
 // the index (LOWER(domain) did exactly that) fails here.
 //
 // SQLite is checked on every run. The MySQL and MariaDB plans were measured
-// by hand and are recorded in docs/datamodel.md; the SQL migration's index
+// by hand and are recorded in docs/reference/data-model.md; the SQL migration's index
 // names and columns are pinned against AutoMigrate by
 // cmd/migrate TestLookupIndexesMigration.
 

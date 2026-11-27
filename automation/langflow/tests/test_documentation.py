@@ -48,12 +48,12 @@ class DocumentationTests(unittest.TestCase):
         selected = docs.suggestions(['internal/service/customer_service.go', 'migrations/new.sql',
             '.github/workflows/ci.yml', 'docs/NEW.md'])
         paths = {d['path'] for d in selected}
-        self.assertTrue({'docs/FEATURES.md', 'docs/ROADMAP.md', 'docs/testing/04-customers.md',
-            'docs/datamodel.md', 'docs/SETUP.md', 'docs/NEW.md', 'docs/DEVELOPMENT.md',
-            'automation/langflow/README.md', 'docs/VALIDATION_RELEASE.md'}.issubset(paths))
+        self.assertTrue({'docs/reference/features.md', 'docs/reference/roadmap.md', 'docs/testing/04-customers.md',
+            'docs/reference/data-model.md', 'docs/development/local-setup.md', 'docs/NEW.md', 'docs/development/README.md',
+            'automation/langflow/README.md', 'docs/maintainers/validation-and-releases.md'}.issubset(paths))
         self.assertEqual(selected, docs.suggestions(list(reversed([
             'internal/service/customer_service.go', 'migrations/new.sql', '.github/workflows/ci.yml', 'docs/NEW.md']))))
-        self.assertIn('docs/DEVELOPMENT.md', {d['path'] for d in docs.suggestions(['unknown.bin'])})
+        self.assertIn('docs/development/README.md', {d['path'] for d in docs.suggestions(['unknown.bin'])})
 
     def test_actual_updates_and_specific_no_impact_are_accepted(self):
         selected = self.candidate()
@@ -145,15 +145,15 @@ class DocumentationTests(unittest.TestCase):
 
     def test_auth_and_workflow_changes_suggest_the_developer_topic_pages(self):
         auth = {d['path'] for d in docs.suggestions(['internal/middleware/auth.go'])}
-        self.assertTrue({'docs/DEVELOPMENT.md', 'docs/DEV_AUTH.md', 'docs/DEV_RBAC.md'}.issubset(auth))
+        self.assertTrue({'docs/development/README.md', 'docs/development/auth.md', 'docs/development/roles.md'}.issubset(auth))
         workflow = {d['path'] for d in docs.suggestions(['.github/workflows/ci.yml'])}
-        self.assertIn('docs/DEV_TESTING_CI.md', workflow)
-        self.assertNotIn('docs/DEV_TESTING_CI.md', {d['path'] for d in docs.suggestions(['internal/middleware/auth.go'])})
+        self.assertIn('docs/development/testing.md', workflow)
+        self.assertNotIn('docs/development/testing.md', {d['path'] for d in docs.suggestions(['internal/middleware/auth.go'])})
 
     def test_container_and_deployment_changes_include_operational_guides(self):
         for path in ('Dockerfile', 'docker-compose.yml', '.dockerignore', '.github/workflows/deploy.yml'):
             selected = {d['path'] for d in docs.suggestions([path])}
-            self.assertTrue({'docs/SETUP.md', 'docs/DOCKER.md'}.issubset(selected))
+            self.assertTrue({'docs/development/local-setup.md', 'docs/operations/docker.md'}.issubset(selected))
 
     def test_route_schema_and_configuration_changes_include_fork_guides(self):
         for path in ('internal/handler/routes.go', 'internal/handler/aeo_routes.go',
@@ -162,13 +162,13 @@ class DocumentationTests(unittest.TestCase):
                      'internal/config/config.go', 'cmd/main.go'):
             with self.subTest(path=path):
                 selected = {d['path'] for d in docs.suggestions([path])}
-                self.assertTrue({'docs/FORKING.md', 'docs/EXTENDING.md'}.issubset(selected))
+                self.assertTrue({'docs/development/forking.md', 'docs/development/extending.md'}.issubset(selected))
         for path in ('internal/handler/lead_handler.go', 'internal/service/customer_service.go',
                      'gocrm-ui/src/pages/leads/LeadList.tsx', 'cmd/create-admin/main.go',
-                     'docs/FEATURES.md'):
+                     'docs/reference/features.md'):
             with self.subTest(path=path):
                 selected = {d['path'] for d in docs.suggestions([path])}
-                self.assertFalse({'docs/FORKING.md', 'docs/EXTENDING.md'} & selected)
+                self.assertFalse({'docs/development/forking.md', 'docs/development/extending.md'} & selected)
 
     def test_forms_automation_ticket_and_quote_changes_include_use_cases(self):
         for path in ('internal/service/form_service.go', 'internal/service/automation_engine.go',
@@ -181,7 +181,7 @@ class DocumentationTests(unittest.TestCase):
                      'gocrm-ui/src/pages/tickets/TicketList.tsx', 'internal/service/form_service_test.go'):
             with self.subTest(path=path):
                 selected = docs.suggestions([path])
-                use_cases = next(d for d in selected if d['path'] == 'docs/USE_CASES.md')
+                use_cases = next(d for d in selected if d['path'] == 'docs/reference/use-cases.md')
                 self.assertEqual(use_cases['reasons'], ['use-case recipes'])
         for path in ('internal/service/customer_service.go', 'automation/langflow/README.md',
                      'automation/langflow/gophercrm_runner/engine.py', 'migrations/new.up.sql',
@@ -189,16 +189,16 @@ class DocumentationTests(unittest.TestCase):
                      'gocrm-ui/src/pages/deals/dealFormat.ts', 'gocrm-ui/src/pages/leads/LeadForm.tsx',
                      'gocrm-ui/src/components/form/FormSelect.tsx', 'internal/service/platform_info.go'):
             with self.subTest(path=path):
-                self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([path])})
+                self.assertNotIn('docs/reference/use-cases.md', {d['path'] for d in docs.suggestions([path])})
 
     def test_frozen_scope_patterns_keep_use_case_guidance(self):
         for pattern in ('internal/service/form*.go', 'internal/handler/form*.go', 'internal/models/form*',
                         'internal/service/automation_*.go', 'internal/handler/ticket*.go', 'internal/models/quote*.go'):
             with self.subTest(pattern=pattern):
-                self.assertIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+                self.assertIn('docs/reference/use-cases.md', {d['path'] for d in docs.suggestions([pattern])})
         for pattern in ('internal/service/*.go', 'internal/service/user*.go', 'gocrm-ui/src/pages/deals/*.tsx'):
             with self.subTest(pattern=pattern):
-                self.assertNotIn('docs/USE_CASES.md', {d['path'] for d in docs.suggestions([pattern])})
+                self.assertNotIn('docs/reference/use-cases.md', {d['path'] for d in docs.suggestions([pattern])})
 
     def test_api_annotation_sources_suggest_the_whole_generated_reference(self):
         reference = {'api/swagger.json', 'api/swagger.yaml', 'api/index.html'}
@@ -221,8 +221,23 @@ class DocumentationTests(unittest.TestCase):
 
     def test_changed_fork_documents_are_always_assessed(self):
         selected = {d['path'] for d in docs.suggestions(
-            ['docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'])}
-        self.assertEqual(selected, {'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md'})
+            ['docs/development/forking.md', 'docs/development/extending.md', 'docs/reference/use-cases.md'])}
+        self.assertEqual(selected, {'docs/development/forking.md', 'docs/development/extending.md', 'docs/reference/use-cases.md'})
+
+    def test_every_suggested_path_is_a_tracked_file(self):
+        # One changed path per branch of suggestions(), and one service file per
+        # feature guide, so a map entry naming a moved or deleted file fails here.
+        changed = ['Dockerfile', 'scripts/deploy/x.sh', 'Makefile', '.github/workflows/ci.yml',
+                   'internal/models/lead.go', 'migrations/x.sql', 'internal/middleware/auth.go',
+                   'internal/config/x.go', 'cmd/main.go', 'internal/handler/routes.go', 'internal/forms/x.go',
+                   'internal/aeo/x.go', 'unknown.bin', 'scripts/docs/swag-overrides']
+        changed += ['internal/service/%s.go' % feature for feature in docs.FEATURE_DOCS]
+        repo = Path(__file__).resolve().parents[3]
+        tracked = set(subprocess.check_output(['git', 'ls-files'], cwd=repo, text=True).splitlines())
+        suggested = {d['path'] for d in docs.suggestions(changed)}
+        for name in (*docs.PRODUCT, *docs.WORKFLOW, *docs.FORK_GUIDES, docs.USE_CASES):
+            self.assertIn(name, suggested)
+        self.assertEqual(sorted(suggested - tracked), [])
 
     def test_legacy_prepared_batch_policy_retains_observed_v050_identity(self):
         from dataclasses import replace

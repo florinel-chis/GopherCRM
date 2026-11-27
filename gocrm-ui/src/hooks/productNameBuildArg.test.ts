@@ -108,8 +108,8 @@ describe('buildTimeProductName with the image default', () => {
 });
 
 describe('VITE_APP_NAME build argument documentation', () => {
-  it('DOCKER.md documents docker build --build-arg VITE_APP_NAME, explains the public bundle and drops the retired wording', () => {
-    const text = collapse(readRepo('docs/DOCKER.md'));
+  it('operations/docker.md documents docker build --build-arg VITE_APP_NAME, explains the public bundle and drops the retired wording', () => {
+    const text = collapse(readRepo('docs/operations/docker.md'));
     for (const phrase of ['docker build --build-arg VITE_APP_NAME=', '#308', 'not a secret', 'JavaScript']) {
       expect(text, phrase).toContain(phrase);
     }
@@ -124,20 +124,20 @@ describe('VITE_APP_NAME build argument documentation', () => {
     }
   });
 
-  it('FORKING.md no longer says the Docker UI image ignores VITE_APP_NAME or bakes nothing else', () => {
-    const text = collapse(readRepo('docs/FORKING.md'));
+  it('development/forking.md no longer says the Docker UI image ignores VITE_APP_NAME or bakes nothing else', () => {
+    const text = collapse(readRepo('docs/development/forking.md'));
     expect(text).toContain('--build-arg VITE_APP_NAME');
     for (const stale of [
       'ignores `VITE_APP_NAME`',
-      '(not shipped; see [DOCKER.md](DOCKER.md))',
+      '(not shipped; see [docker.md](../operations/docker.md))',
       'and nothing else (`gocrm-ui/Dockerfile:16-17`)',
     ]) {
       expect(text, stale).not.toContain(stale);
     }
   });
 
-  it('FORKING.md cites the Dockerfile lines that hold both build arguments', () => {
-    const forking = readRepo('docs/FORKING.md');
+  it('development/forking.md cites the Dockerfile lines that hold both build arguments', () => {
+    const forking = readRepo('docs/development/forking.md');
     const citations = [...forking.matchAll(/gocrm-ui\/Dockerfile:(\d+)-(\d+)/g)];
     expect(citations.length).toBeGreaterThan(0);
 
@@ -155,16 +155,16 @@ describe('VITE_APP_NAME build argument documentation', () => {
     }
   });
 
-  it('USE_CASES.md drops the missing build argument and cites #308 for Compose build.args', () => {
-    const text = collapse(readRepo('docs/USE_CASES.md'));
+  it('reference/use-cases.md drops the missing build argument and cites #308 for Compose build.args', () => {
+    const text = collapse(readRepo('docs/reference/use-cases.md'));
     expect(text).not.toContain('takes no `VITE_APP_NAME` build argument');
     expect(text).not.toContain('build argument (no issue yet)');
     expect(text).toContain('build.args');
     expect(text).toContain('#308');
   });
 
-  it('ROADMAP.md tracks the Compose build.args pass-through under #308', () => {
-    const text = collapse(readRepo('docs/ROADMAP.md'));
+  it('reference/roadmap.md tracks the Compose build.args pass-through under #308', () => {
+    const text = collapse(readRepo('docs/reference/roadmap.md'));
     expect(text).toContain('build.args');
     expect(text).toContain('VITE_APP_NAME');
     expect(text).toContain('#308');
@@ -184,7 +184,7 @@ describe('VITE_APP_NAME build argument documentation', () => {
   });
 
   it('the edited documents keep the stale #222 phrases out', () => {
-    for (const rel of ['docs/DOCKER.md', 'docs/FORKING.md', 'docs/USE_CASES.md', 'CHANGELOG.md']) {
+    for (const rel of ['docs/operations/docker.md', 'docs/development/forking.md', 'docs/reference/use-cases.md', 'CHANGELOG.md']) {
       const text = collapse(readRepo(rel));
       for (const stale of [
         'build argument is tracked in #222',

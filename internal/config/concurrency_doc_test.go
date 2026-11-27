@@ -11,11 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The tests in this file pin docs/CONCURRENCY.md (#323) to the code it
+// The tests in this file pin docs/development/concurrency.md (#323) to the code it
 // describes: its structure, the status and the key facts of every flow, the
 // lock chains, the retry rule, the #175 failure modes, every cited path, the
-// flow -> ticket map, and the links that point to it from EXTENDING,
-// DEVELOPMENT, DEV_AUTH, DEV_ENTITIES, ROADMAP, the docs/README.md index and CHANGELOG
+// flow -> ticket map, and the links that point to it from development/extending.md,
+// development/README.md, development/auth.md, development/entities.md, reference/roadmap.md,
+// the docs/README.md index and CHANGELOG
 // (README.md must not list it: docs/README.md is the index). The document cites code by path
 // and symbol, never by line (#743); scripts/ci/check-doc-citations.py checks
 // that each cited symbol is declared in its file. Every citation of the auth
@@ -25,7 +26,12 @@ import (
 // lock that is or is not taken, a helper that is or is not used) the code is
 // read too, so the document and the code cannot drift apart silently.
 
-const concurrencyDocFile = "docs/CONCURRENCY.md"
+const concurrencyDocFile = "docs/development/concurrency.md"
+
+// concurrencyChangelogPath is the path the released and [Unreleased] CHANGELOG
+// entries of #323 and #385 name. CHANGELOG entries are history, so they keep the
+// path the guide had when they were written (#798 moved it to concurrencyDocFile).
+const concurrencyChangelogPath = "docs/CONCURRENCY.md"
 
 var concurrencyDocSectionsInOrder = []string{
 	"Global lock order",
@@ -999,7 +1005,7 @@ const (
 )
 
 // concurrencyDocAuthServicePins lists, in document order, the statements the
-// auth service citations of docs/CONCURRENCY.md rely on (#581, #639); a cited
+// auth service citations of docs/development/concurrency.md rely on (#581, #639); a cited
 // function may carry several pins.
 var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	// Retry rule: the login, request and confirm roots.
@@ -1157,8 +1163,8 @@ func TestConcurrencyDocTicketMap(t *testing.T) {
 }
 
 func TestConcurrencyDocExtendingLinks(t *testing.T) {
-	text := readRepositoryFile(t, "docs/EXTENDING.md")
-	const link = "[CONCURRENCY.md](CONCURRENCY.md)"
+	text := readRepositoryFile(t, "docs/development/extending.md")
+	const link = "[concurrency.md](concurrency.md)"
 
 	var rules, recipe string
 	for _, s := range concurrencyDocSplit(text, "## ") {
@@ -1166,7 +1172,7 @@ func TestConcurrencyDocExtendingLinks(t *testing.T) {
 			rules = s.body
 		}
 	}
-	require.NotEmpty(t, rules, "EXTENDING.md section 1")
+	require.NotEmpty(t, rules, "development/extending.md section 1")
 	rows := 0
 	for _, line := range strings.Split(rules, "\n") {
 		if !strings.HasPrefix(line, "|") {
@@ -1184,12 +1190,12 @@ func TestConcurrencyDocExtendingLinks(t *testing.T) {
 			recipe = s.body
 		}
 	}
-	require.NotEmpty(t, recipe, "EXTENDING.md section 3.10")
+	require.NotEmpty(t, recipe, "development/extending.md section 3.10")
 	named := 0
 	for _, sentence := range concurrencyDocSentences(recipe) {
 		if strings.Contains(sentence, "#183") {
 			named++
-			assert.Contains(t, sentence, "](CONCURRENCY.md)", "3.10 sentence naming #183: %q", sentence)
+			assert.Contains(t, sentence, "](concurrency.md)", "3.10 sentence naming #183: %q", sentence)
 		}
 	}
 	assert.Greater(t, named, 0, "section 3.10 names #183")
@@ -1197,21 +1203,21 @@ func TestConcurrencyDocExtendingLinks(t *testing.T) {
 
 func TestConcurrencyDocCrossLinks(t *testing.T) {
 	for _, link := range []struct{ path, start string }{
-		{"docs/DEV_AUTH.md", "**Lock order for session writes**"},
-		{"docs/DEV_ENTITIES.md", "**Lead and company lock order (#182)**"},
+		{"docs/development/auth.md", "**Lock order for session writes**"},
+		{"docs/development/entities.md", "**Lead and company lock order (#182)**"},
 	} {
 		page := readRepositoryFile(t, link.path)
-		assert.Contains(t, concurrencyDocParagraph(t, page, link.start, link.path), "](CONCURRENCY.md)", link.start)
+		assert.Contains(t, concurrencyDocParagraph(t, page, link.start, link.path), "](concurrency.md)", link.start)
 	}
 
-	bullets := concurrencyDocBullets(readRepositoryFile(t, "docs/ROADMAP.md"))
+	bullets := concurrencyDocBullets(readRepositoryFile(t, "docs/reference/roadmap.md"))
 	bulletStarting := func(start string) string {
 		for _, b := range bullets {
 			if strings.HasPrefix(b, start) {
 				return b
 			}
 		}
-		t.Errorf("docs/ROADMAP.md has no bullet starting %q", start)
+		t.Errorf("docs/reference/roadmap.md has no bullet starting %q", start)
 		return ""
 	}
 	for _, start := range []string{
@@ -1219,19 +1225,19 @@ func TestConcurrencyDocCrossLinks(t *testing.T) {
 	} {
 		b := bulletStarting(start)
 		assert.Contains(t, b, "#183", start)
-		assert.Contains(t, b, "](CONCURRENCY.md)", start)
+		assert.Contains(t, b, "](../development/concurrency.md)", start)
 	}
 	// Login issues its session under the owner lock since #336 (C2): the gap
 	// bullet is gone.
 	for _, b := range bullets {
 		assert.False(t, strings.HasPrefix(b, "- **Login issued from an obsolete verification**"),
-			"docs/ROADMAP.md still lists the closed login gap")
+			"docs/reference/roadmap.md still lists the closed login gap")
 	}
 
 	// The bulk task batch locks its tasks since #558: the gap bullet is gone.
 	for _, b := range bullets {
 		assert.False(t, strings.HasPrefix(b, "- **Unlocked completed-task check in the bulk task status batch**"),
-			"docs/ROADMAP.md still lists the closed bulk task gap")
+			"docs/reference/roadmap.md still lists the closed bulk task gap")
 		assert.NotContains(t, b, "GetTasksByIDs", "no ROADMAP bullet names GetTasksByIDs")
 	}
 }
@@ -1453,8 +1459,8 @@ func leadErasurePlanBody(t *testing.T, rel string) string {
 func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	// docs/README.md is the only docs index: the guide has exactly one bullet
 	// there, and README.md lists it neither in a table row nor in a bullet.
-	assertOneLabelledIndexBullet(t, docLines(readRepositoryFile(t, "docs/README.md")), "CONCURRENCY.md")
-	const readmeLink = "[docs/CONCURRENCY.md](docs/CONCURRENCY.md)"
+	assertOneLabelledIndexBullet(t, docLines(readRepositoryFile(t, "docs/README.md")), "development/concurrency.md")
+	const readmeLink = "[docs/development/concurrency.md](docs/development/concurrency.md)"
 	for _, line := range strings.Split(readRepositoryFile(t, "README.md"), "\n") {
 		line = strings.TrimRight(line, "\r")
 		assert.False(t, strings.HasPrefix(line, "| "+readmeLink), "README.md has no table row starting %q: docs/README.md is the index", "| "+readmeLink)
@@ -1470,7 +1476,7 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	}
 	var entry bool
 	for _, b := range concurrencyDocBullets(unreleased) {
-		if strings.Contains(b, "docs/CONCURRENCY.md") && strings.Contains(b, "#323") {
+		if strings.Contains(b, concurrencyChangelogPath) && strings.Contains(b, "#323") {
 			entry = true
 		}
 	}
@@ -1478,7 +1484,7 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	// #385: the erasure lock order has its own entry.
 	var erasure bool
 	for _, b := range concurrencyDocBullets(unreleased) {
-		if strings.Contains(b, "#385") && strings.Contains(b, "docs/CONCURRENCY.md") &&
+		if strings.Contains(b, "#385") && strings.Contains(b, concurrencyChangelogPath) &&
 			strings.Contains(b, "ErrErasureGraphChanged") && strings.Contains(b, "check-go.py transaction") {
 			erasure = true
 		}

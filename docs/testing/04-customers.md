@@ -23,7 +23,7 @@ depend on that are flagged.
 - `gocrm-ui/e2e/tests/admin-customers.spec.ts`, `gocrm-ui/e2e/pages/customers.page.ts`,
   `gocrm-ui/e2e/helpers/admin-auth.ts`, `gocrm-ui/e2e/fixtures/admin-user.ts`,
   `gocrm-ui/e2e/screenshots/04-customers.spec.ts`
-- `docs/FEATURES.md` rows 4.1–4.9, row 5.9, section 10b "Customers", section 12; `docs/ROADMAP.md`
+- `docs/reference/features.md` rows 4.1–4.9, row 5.9, section 10b "Customers", section 12; `docs/reference/roadmap.md`
 
 **Constraints**
 
@@ -504,7 +504,7 @@ depend on that are flagged.
 - **Expected:** 204 on the delete. The lead no longer appears in `/leads`, and its email address is
   free for reuse — the cascade runs in the same transaction via `leads.customer_id`
   (`internal/repository/erasure_cascade.go`; the cascade lives in the plain customer repository).
-  FEATURES.md 12.6 covers this at the integration level only.
+  reference/features.md 12.6 covers this at the integration level only.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; may need to live in a
   cross-entity spec alongside `admin-entity-suite.spec.ts`)
 
@@ -585,7 +585,7 @@ depend on that are flagged.
   (`handleSearch` and `queryKey: ['customers', filters]` in `gocrm-ui/src/pages/customers/CustomerList.tsx`).
 - **Known issue:** Undebounced search against a route covered by `RateLimitModerate` (120/min,
   burst 30); a fast typist on a long term can approach the limit. Compare the roadmap note on rate
-  limiting having no integration coverage (FEATURES.md 11.2 / G22).
+  limiting having no integration coverage (reference/features.md 11.2 / G22).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ---
@@ -604,7 +604,7 @@ depend on that are flagged.
   toggling `asc` → `desc`) and `sort_by=email`, plus `page=1`. `CustomerList.handleSort` maps
   `company_name → company`, `contact_name → first_name`, `email → email`, `created_at → created_at`;
   all four are on the handler's `customerSortColumns` allowlist, so the ordering actually changes.
-- **Known issue:** FEATURES.md 4.6 is **partial** — no E2E test exists (the sort-E2E gap family,
+- **Known issue:** reference/features.md 4.6 is **partial** — no E2E test exists (the sort-E2E gap family,
   G21).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new), mirroring
   `leads-sorting-search.spec.ts`
@@ -625,7 +625,7 @@ depend on that are flagged.
 - **Known issue:** The Phone header looks sortable but is inert. Dropping the unknown column is
   the deliberate SQL-injection guard, so the fix is either `sortable: false` on Phone or `phone`
   in the handler allowlist (`utils.AllowedSortColumns` already lists it for customers). Recorded
-  in `docs/ROADMAP.md` ("Sortable columns the backend has no mapping for").
+  in `docs/reference/roadmap.md` ("Sortable columns the backend has no mapping for").
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ---
@@ -654,7 +654,7 @@ depend on that are flagged.
   2. Change "Rows per page" to 25.
 - **Expected:** `GET /api/v1/customers?page=1&limit=25` — `handleRowsPerPageChange` resets
   `page: 1`. 200; 25 rows render. A request with `limit` above 100 would be capped by
-  `utils.ParseOffsetLimit`, and `limit=0` is coerced away rather than producing a 500 (FEATURES.md
+  `utils.ParseOffsetLimit`, and `limit=0` is coerced away rather than producing a 500 (reference/features.md
   11.5 / G28 regression).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
@@ -672,7 +672,7 @@ depend on that are flagged.
 - **Expected:** No such control exists anywhere on the page. `customersApi.exportCustomers` is
   implemented in `gocrm-ui/src/api/endpoints/customers.ts` (`exportCustomers`) but has no caller — the frontend
   API surface is the intended contract, and the missing piece here is the UI, not the backend.
-- **Known issue:** FEATURES.md 10b lists the endpoint as delivered; the UI half is outstanding.
+- **Known issue:** reference/features.md 10b lists the endpoint as delivered; the UI half is outstanding.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; assert the absence
   today, invert the assertion when the button ships)
 
@@ -819,7 +819,7 @@ depend on that are flagged.
   subjects. The correctly scoped route exists and is ownership-checked
   (`TicketHandler.ListByCustomer`), but `gocrm-ui/src/pages/customers/CustomerDetail.tsx` calls
   `ticketsApi.getTickets({ customer_id })` instead. Related to the G27 IDOR that was fixed on the
-  other route; FEATURES.md 5.9 records "still no E2E test" but not this frontend mismatch.
+  other route; reference/features.md 5.9 records "still no E2E test" but not this frontend mismatch.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-041 — A customer user cannot read another customer's tickets

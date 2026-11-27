@@ -12,7 +12,7 @@ from tickets and tasks still resolve: business records survive, the person does 
 Erasure follows the person, not the table: a lead, the customer it was converted into and that
 customer's own customer-role login are erased together whichever of them you delete. Staff
 accounts are never erased that way, and only an admin may delete a converted lead. Erasures made
-before this rule existed are not repaired automatically: `docs/DEV_ERASURE.md` lists the queries
+before this rule existed are not repaired automatically: `docs/development/erasure.md` lists the queries
 that find the ones with a live row left, and the supervised way to finish them; graphs whose rows
 are all soft-deleted have no supported path yet.
 
@@ -24,7 +24,7 @@ transaction overwrites it: deal titles become `[redacted]` and their notes and l
 emptied, quote titles become `[redacted]` and their notes are emptied whatever the quote status,
 quote line descriptions are reset to the product names, and notifications about those deals are
 deleted (#245). A client response link mailed for a quote of an erased customer stops working
-(#395). Ticket and task text is kept; see `docs/DEV_ERASURE.md` for the ticket redaction
+(#395). Ticket and task text is kept; see `docs/development/erasure.md` for the ticket redaction
 procedure.
 
 ## Consequences
@@ -45,4 +45,4 @@ Rows soft-deleted *before* this behaviour existed still hold personal data;
 deliberately not wired into auto-migration.
 
 Full rationale, the cascade rules for converted leads, and the operational caveats are in
-[docs/DEV_ERASURE.md](../DEV_ERASURE.md#deleting-personal-data).
+[docs/development/erasure.md](../development/erasure.md#deleting-personal-data).

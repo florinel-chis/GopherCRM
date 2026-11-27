@@ -28,7 +28,7 @@
 #   scripts/e2e/quote-pdf-smoke.sh /tmp/quote.pdf
 #
 # The backend must run with QUOTE_PDF_CHROME_PATH set and an APP_BASE_URL it
-# can reach; the recipe is in docs/DEV_ENTITIES.md. The script starts nothing,
+# can reach; the recipe is in docs/development/quotes.md. The script starts nothing,
 # prints neither the password nor a token, and creates data, so it refuses a
 # BASE_URL whose host is not localhost or 127.0.0.1. It is a manual tool: no
 # workflow, Makefile target or gate runs it.
