@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A plain-language capabilities page, `docs/CAPABILITIES.md` (#793), that says area by area what
+  GopherCRM can do, from sign-in and roles to forms, automation, privacy and running it. The
+  README Features section and the documentation index link it for "what can it do", and
+  `docs/FEATURES.md` is now described as the test-coverage matrix for contributors. In
+  `docs/FEATURES.md` the 80 table rows longer than 1,000 characters keep their place and id with
+  short cells, and their full descriptions, test lists and known issues moved into notes under
+  each table; no row, test citation or heading was removed.
+
 - The documentation check `scripts/ci/check-doc-citations.py` has two new rules and a wider
   link rule (#797). A Markdown table whose header row and delimiter row have different column
   counts now fails (`table header has N columns, separator M`, columns counted the way GitHub
