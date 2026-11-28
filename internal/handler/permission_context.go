@@ -83,6 +83,12 @@ func dealViewer(c *gin.Context) service.LeadViewer {
 	return viewerFor(c, permissions.DealsView)
 }
 
+// customerViewer is the caller as service.CanViewCustomer sees it:
+// customers.view decides whether a task customer link is shown.
+func customerViewer(c *gin.Context) service.LeadViewer {
+	return viewerFor(c, permissions.CustomersView)
+}
+
 // dealTaskViewer is the caller of GET /deals/{id}/tasks: deals.view decides
 // which deals it may open and tasks.view which of their tasks it gets.
 func dealTaskViewer(c *gin.Context) service.LeadViewer {
