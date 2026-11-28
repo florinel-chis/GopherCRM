@@ -540,18 +540,20 @@ func (h *TaskHandler) ListByDeal(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, responseData, pageMeta(c, offset, limit, total))
 }
 
-// redactTaskLinks removes the lead and the deal the caller may not see from a
-// task about to be returned. Every handler answering with a task goes through
-// this or redactTaskLinksOfPage.
+// redactTaskLinks removes the lead, the deal and the customer the caller may
+// not see from a task about to be returned. Every handler answering with a
+// task goes through this or redactTaskLinksOfPage.
 func redactTaskLinks(c *gin.Context, task *models.Task) {
 	service.RedactTaskLead(leadViewer(c), task)
 	service.RedactTaskDeal(dealViewer(c), task)
+	service.RedactTaskCustomer(customerViewer(c), task)
 }
 
 // redactTaskLinksOfPage is redactTaskLinks for a page of tasks.
 func redactTaskLinksOfPage(c *gin.Context, tasks []models.Task) {
 	service.RedactTaskLeads(leadViewer(c), tasks)
 	service.RedactTaskDeals(dealViewer(c), tasks)
+	service.RedactTaskCustomers(customerViewer(c), tasks)
 }
 
 // Update godoc
